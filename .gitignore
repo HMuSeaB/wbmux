@@ -10,6 +10,10 @@
 /.wbmux/
 *.log
 
+# 开发期临时目录
+/.tmp*/
+/tmp/
+
 # 编辑器
 .idea/
 .vscode/*
