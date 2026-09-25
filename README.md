@@ -114,6 +114,8 @@ wbmux run cn               # 用国内后端启动
 wbmux run intl --dry-run   # 只打印将要执行的内容，不启动
 wbmux run intl --native    # 用国际版自己的安装原生启动，作对照
 wbmux export intl -o x.json  # 只生成合并配置，不启动
+wbmux migrate                # 看看另一侧有什么历史可以搬过来
+wbmux migrate intl cn --yes  # 把国际版的会话搬进国内版
 ```
 
 ### 图形界面
@@ -145,6 +147,40 @@ wbmux gui --idle off              # 不自动退出
 代价是二进制约 6.3 MB（纯命令行版 2.5 MB），多出来的部分是 `net/http`
 带进来的 `crypto/tls` 与 `crypto/x509`。压缩后的下载体积从 1.1 MB 涨到 2.6 MB。
 零依赖与交叉编译不受影响。
+
+### 历史搬运
+
+两套后端的账号体系不互通、数据目录也不同，所以在国际版里干过的活切回国内版
+就看不见。`migrate` 把一侧的会话、技能与记忆搬到另一侧。
+
+```bash
+wbmux migrate                       # 只读，列出另一侧有什么可以搬
+wbmux migrate intl cn --yes         # 真正执行
+wbmux migrate --kind skills --yes   # 只搬技能
+wbmux migrate --dry-run             # 预演，明确不做任何改动
+```
+
+默认**不加 `--yes` 就只列清单，一个字节都不动**。图形界面里也有同样入口。
+
+**为什么不能只复制会话文件。** 会话列表读的是数据目录下 `workbuddy.db` 的
+`sessions` 表，不是 `projects/` 目录。客户端那个"从 `projects/` 重建索引"的函数
+只在**数据库损坏自愈**时才被调用，正常启动不会跑。所以只把 `.jsonl` 复制过去，
+列表里什么都不会出现——必须同时写一行索引。
+
+**它保证不覆盖。** 目标端已有同名文件、已有同 id 会话行，一律跳过。写索引前
+先把目标端数据库整份备份（含 `-wal` / `-shm`）。只给"jsonl 确实落在目标目录"
+的会话写索引，不会造出打不开的列表项。连跑两次不会产生新增。
+
+**写数据库没有引入任何依赖。** Go 标准库没有 SQLite 驱动，而本项目零第三方
+依赖。解法是借用**客户端自己捆的** better-sqlite3：Electron 主程序加上
+`ELECTRON_RUN_AS_NODE=1` 就是普通 Node 运行时，再把它的 `better_sqlite3.node`
+通过 `nativeBinding` 选项喂给 better-sqlite3 的 JS 封装（绕开打包时留在
+`app.asar` 里、拿不到的 `bindings` 模块）。好处是既不新增依赖，又天然与客户端
+同一次构建、同 ABI。
+
+搬运会按会话自带的 `cwd` 把它放进目标端对应的工作区目录（目录名是 cwd 的
+有损压缩，规则已用本机 11 个真实目录逐一验证）。放不进去的（读不到 `cwd`）
+会跳过并说明原因，而不是凭空造一个工作区。
 
 ### 体检输出
 
