@@ -24,8 +24,29 @@ type Config struct {
 	ExtraEndpoints []string `json:"extraEndpoints,omitempty"`
 }
 
+// rootOverride 允许把设置目录临时指向别处，供测试使用。
+//
+// 存在的理由：runner 与 webui 的测试需要走完整的"生成配置 → 回读校验"路径，
+// 若设置目录固定读真实主目录，测试就会写进用户的 ~/.wbmux，还会被
+// 用户自己的设置影响。跨包测试访问不到未导出符号，因此这个接缝必须导出。
+//
+// 生产代码从不设置它，对真实行为没有影响。
+var rootOverride string
+
+// SetRoot 把设置目录改到 dir，返回恢复原值的函数。
+//
+// 仅供测试。调用方必须 defer 恢复，否则会影响同进程内的其它用例。
+func SetRoot(dir string) (restore func()) {
+	prev := rootOverride
+	rootOverride = dir
+	return func() { rootOverride = prev }
+}
+
 // Dir 返回设置目录，不保证已存在。
 func Dir() (string, error) {
+	if rootOverride != "" {
+		return rootOverride, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("无法确定用户主目录: %w", err)
