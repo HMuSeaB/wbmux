@@ -22,12 +22,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      # 缓存键用 go.mod 而不是默认的 go.sum：本项目零第三方依赖，
+      # 根本没有 go.sum，用默认值会每次报 "Dependencies file is not found"，
+      # 缓存等于没开。
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
           cache: true
+          cache-dependency-path: go.mod
 
       # gofmt 只在 Linux 上跑：Windows 下它输出的路径带反斜杠，
       # 与脚本里的比较容易对不上。格式问题与平台无关，查一遍就够。
@@ -64,12 +68,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
           cache: true
+          cache-dependency-path: go.mod
 
       - name: go test
         run: go test ./...
@@ -80,12 +85,13 @@ jobs:
     name: 安装探测（Windows）
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
           cache: true
+          cache-dependency-path: go.mod
 
       - name: 探测相关测试
         run: go test -v ./internal/variant/... ./internal/doctor/...
