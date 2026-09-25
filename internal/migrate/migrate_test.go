@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -355,4 +356,179 @@ func keysOf(m map[string]sessionFiles) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestPathRewritesCoversAllThreeForms 验证三种书写形态都能被覆盖。
+//
+// 同一个路径在会话文件里可能以三种形态出现，漏掉任何一种都会有一半引用
+// 改不到——而漏改的表现是"图片静默裂掉"，不会报错，所以这里必须逐条验。
+func TestPathRewritesCoversAllThreeForms(t *testing.T) {
+	src := `C:\Users\me\.workbuddy-ai`
+	dst := `C:\Users\me\.workbuddy`
+	rs := pathRewrites(src, dst)
+	if len(rs) != 3 {
+		t.Fatalf("应给出 3 条替换规则，得到 %d", len(rs))
+	}
+
+	cases := []struct{ in, want string }{
+		{
+			// JSON 字符串里的转义形态
+			`"p":"C:\\Users\\me\\.workbuddy-ai\\blobs\\ab\\x.png"`,
+			`"p":"C:\\Users\\me\\.workbuddy\\blobs\\ab\\x.png"`,
+		},
+		{
+			// 正文里的原样形态
+			`见 C:\Users\me\.workbuddy-ai\clipboard-images\y.png 这张图`,
+			`见 C:\Users\me\.workbuddy\clipboard-images\y.png 这张图`,
+		},
+		{
+			// 正斜杠形态
+			`path=C:/Users/me/.workbuddy-ai/blobs/cd/z.png`,
+			`path=C:/Users/me/.workbuddy/blobs/cd/z.png`,
+		},
+	}
+
+	for _, c := range cases {
+		got := c.in
+		for _, r := range rs {
+			got = strings.ReplaceAll(got, r[0], r[1])
+		}
+		if got != c.want {
+			t.Errorf("改写不完整\n  输入 %s\n  得到 %s\n  期望 %s", c.in, got, c.want)
+		}
+	}
+
+	// 不该动到别的目录
+	other := `C:\Users\me\.workbuddy-ai-backup\x.png`
+	got := other
+	for _, r := range rs {
+		got = strings.ReplaceAll(got, r[0], r[1])
+	}
+	if got != other {
+		t.Errorf("误改了前缀相近但不同的目录: %s", got)
+	}
+}
+
+// TestCopyFileWithRewrites 验证改写落盘、不覆盖、且回报改写次数。
+func TestCopyFileWithRewrites(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.jsonl")
+	dst := filepath.Join(dir, "out", "in.jsonl")
+	src2 := `C:\Users\me\.workbuddy-ai`
+
+	// 三种形态各出现一次
+	mustWrite(t, src,
+		`{"a":"C:\\Users\\me\\.workbuddy-ai\\blobs\\ab\\x.png"}`+"\n"+
+			"见 C:\\Users\\me\\.workbuddy-ai\\clipboard-images\\y.png\n"+
+			"path=C:/Users/me/.workbuddy-ai/blobs/cd/z.png\n")
+
+	rs := pathRewrites(src2, `C:\Users\me\.workbuddy`)
+	n, err := copyFileWithRewrites(src, dst, rs)
+	if err != nil {
+		t.Fatalf("copyFileWithRewrites: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("应改写 3 处，得到 %d", n)
+	}
+
+	out := mustRead(t, dst)
+	if strings.Contains(out, ".workbuddy-ai") {
+		t.Errorf("仍残留来源端路径:\n%s", out)
+	}
+	if !strings.Contains(out, `.workbuddy\\blobs\\ab\\x.png`) {
+		t.Errorf("转义形态没改对:\n%s", out)
+	}
+
+	// 再写一次必须被挡下，绝不覆盖
+	if _, err := copyFileWithRewrites(src, dst, rs); !errors.Is(err, errExists) {
+		t.Errorf("目标已存在时应返回 errExists，得到 %v", err)
+	}
+}
+
+// TestCollectAssetRefs 验证只收被引用到的附件，且忽略不存在与越界的。
+func TestCollectAssetRefs(t *testing.T) {
+	probe := hermeticProbe(t)
+	dataDir := filepath.Join(probe.Home, ".workbuddy-ai")
+	dir := filepath.Join(dataDir, "projects", "c-Users-me-proj")
+
+	// 真的存在、且被引用
+	mustWrite(t, filepath.Join(dataDir, "blobs", "ab", "used.png"), "PNG")
+	mustWrite(t, filepath.Join(dataDir, "clipboard-images", "clip.png"), "PNG")
+	// 存在但没被引用 —— 不该被收
+	mustWrite(t, filepath.Join(dataDir, "blobs", "cd", "unused.png"), "PNG")
+
+	// 会话文件里写的是**真实的**数据目录路径，不能写死一个假的——
+	// collectAssetRefs 只收落在来源数据目录下的引用，路径对不上就会收成 0 个。
+	// 转义形态（双反斜杠）正是它在 JSON 字符串里的样子。
+	escDir := strings.ReplaceAll(dataDir, `\`, `\\`)
+
+	mustWrite(t, filepath.Join(dir, "aaaa.jsonl"),
+		`{"type":"message","cwd":"c:/Users/me/proj","timestamp":1}`+"\n"+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"`+
+			`抄送 `+escDir+`\\blobs\\ab\\used.png 与 `+
+			escDir+`\\clipboard-images\\clip.png `+
+			`还有个不存在的 `+escDir+`\\blobs\\ff\\gone.png `+
+			`以及别处的 D:\\other\\blobs\\zz\\n.png"}]}`+"\n")
+
+	sessions, err := scanSessions(dataDir)
+	if err != nil {
+		t.Fatalf("scanSessions: %v", err)
+	}
+	refs, err := collectAssetRefs(dataDir, sessions)
+	if err != nil {
+		t.Fatalf("collectAssetRefs: %v", err)
+	}
+
+	want := []string{`blobs\ab\used.png`, `clipboard-images\clip.png`}
+	if len(refs) != len(want) {
+		t.Fatalf("应收 %d 个附件，得到 %d 个：%v", len(want), len(refs), refs)
+	}
+	for _, w := range want {
+		if _, ok := refs[w]; !ok {
+			t.Errorf("缺少附件 %s；实际收到 %v", w, refs)
+		}
+	}
+	if _, ok := refs[`blobs\cd\unused.png`]; ok {
+		t.Error("没被引用到的附件不该被收")
+	}
+}
+
+// TestApplyContentCopiesFilesAndSkipsExisting 验证内容类文件的只新增语义。
+func TestApplyContentCopiesFilesAndSkipsExisting(t *testing.T) {
+	probe := hermeticProbe(t)
+	src := filepath.Join(probe.Home, ".workbuddy-ai")
+	dst := filepath.Join(probe.Home, ".workbuddy")
+
+	mustWrite(t, filepath.Join(src, "SOUL.md"), "国际版的人格\n")
+	mustWrite(t, filepath.Join(src, "models.json"), `{"m":1}`)
+	mustWrite(t, filepath.Join(src, "connectors", "a.json"), `{"c":1}`)
+
+	// 目标端已有 SOUL.md，且内容不同 —— 绝不能被盖掉
+	const mine = "国内版的人格\n"
+	mustWrite(t, filepath.Join(dst, "SOUL.md"), mine)
+
+	// 设备绑定文件不该被搬
+	mustWrite(t, filepath.Join(src, "keyblob"), "SECRET")
+
+	rep, err := Apply(Options{Source: variant.Intl, Target: variant.CN, Probe: probe},
+		Selection{Kinds: []Kind{KindContent}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if got := mustRead(t, filepath.Join(dst, "SOUL.md")); got != mine {
+		t.Errorf("目标端已有文件被覆盖了！得到 %q", got)
+	}
+	if got := mustRead(t, filepath.Join(dst, "models.json")); got != `{"m":1}` {
+		t.Errorf("models.json 没搬过来: %q", got)
+	}
+	if got := mustRead(t, filepath.Join(dst, "connectors", "a.json")); got != `{"c":1}` {
+		t.Errorf("目录内文件没搬过来: %q", got)
+	}
+	if fileExists(filepath.Join(dst, "keyblob")) {
+		t.Error("设备绑定文件 keyblob 被搬过去了——这是个严重问题")
+	}
+	if rep.SkippedItems != 1 {
+		t.Errorf("应整项跳过 1 个（SOUL.md），得到 %d", rep.SkippedItems)
+	}
 }

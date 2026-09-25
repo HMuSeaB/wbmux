@@ -93,6 +93,8 @@ type SurveyResult struct {
 	TargetDataDir string `json:"targetDataDir"`
 
 	Sessions []Candidate `json:"sessions"`
+	Content  []Candidate `json:"content"`
+	Assets   []Candidate `json:"assets"`
 	Skills   []Candidate `json:"skills"`
 	Memory   []Candidate `json:"memory"`
 
@@ -116,9 +118,14 @@ type Report struct {
 	SkippedFiles int `json:"skippedFiles"`
 	// SkippedItems 是因为"目标端已有"而整项没动的数量，
 	// 与 SkippedFiles 不同：后者是项内个别文件撞名，前者是整个条目被跳过。
-	SkippedItems int      `json:"skippedItems"`
-	RowsInserted int      `json:"rowsInserted"`
-	RowsSkipped  int      `json:"rowsSkipped"`
+	SkippedItems int `json:"skippedItems"`
+	RowsInserted int `json:"rowsInserted"`
+	RowsSkipped  int `json:"rowsSkipped"`
+	// PathRewrites 是被改写掉的附件路径引用数。
+	//
+	// 会显示出来是因为它意味着"搬过去的会话文件与来源不再逐字节一致"，
+	// 用户有权知道这件事发生了什么、发生了多少次。
+	PathRewrites int      `json:"pathRewrites"`
 	BackupDir    string   `json:"backupDir"`
 	Details      []string `json:"details"`
 	Warnings     []string `json:"warnings"`
@@ -149,7 +156,17 @@ type workItem struct {
 	skipWhy string
 }
 
-type fileCopy struct{ src, dst string }
+type fileCopy struct {
+	src, dst string
+
+	// replace 非空时，写入目标前按顺序做字符串替换。
+	//
+	// 目前只用于会话文件：把里面引用的附件绝对路径从来源端数据目录改到
+	// 目标端。不改写的话，图片会一直依赖来源端目录存在，迁移就不算完成。
+	// 见 content.go 的 pathRewrites。
+	replace [][2]string
+}
+
 type treeCopy struct{ srcDir, dstDir string }
 
 // memoryFill 描述一次"填空模板"操作。
@@ -218,6 +235,10 @@ func Survey(opts Options) (SurveyResult, error) {
 		switch it.kind {
 		case KindSessions:
 			out.Sessions = append(out.Sessions, c)
+		case KindContent:
+			out.Content = append(out.Content, c)
+		case KindAssets:
+			out.Assets = append(out.Assets, c)
 		case KindSkills:
 			out.Skills = append(out.Skills, c)
 		case KindMemory:
@@ -258,14 +279,35 @@ func buildWork(opts Options, sel Selection) ([]workItem, []string, error) {
 	all := len(sel.Kinds) == 0
 	incl := func(k Kind) bool { return all || want[k] }
 
+	// projects 目录只扫一次：会话与附件两项都要用它的结果，
+	// 各扫一遍是纯粹重复的 IO（会话多时是几百 MB）。
+	var srcSessions map[string]sessionFiles
+	if incl(KindSessions) || incl(KindAssets) {
+		got, err := scanSessions(srcDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("扫描来源端会话失败: %w", err)
+		}
+		srcSessions = got
+	}
+
 	if incl(KindSessions) {
 		// 会话的"全选"看的是 SessionIDs 空不空，不是 Kinds 空不空。
 		// 早先把两者混用一个布尔量，导致"只要了会话这一类但没列具体 id"
 		// 会被当成"一条都不要"——正是这个 bug 被 TestBuildWorkSessions 抓住。
-		got, w, err := planSessions(probe, opts, srcDir, dstDir, sel, len(sel.SessionIDs) == 0)
+		got, w, err := planSessions(probe, opts, srcSessions, srcDir, dstDir, sel, len(sel.SessionIDs) == 0)
 		if err != nil {
 			return nil, nil, err
 		}
+		items = append(items, got...)
+		warns = append(warns, w...)
+	}
+	if incl(KindContent) {
+		got, w := planContent(srcDir, dstDir)
+		items = append(items, got...)
+		warns = append(warns, w...)
+	}
+	if incl(KindAssets) {
+		got, w := planAssets(srcDir, dstDir, srcSessions)
 		items = append(items, got...)
 		warns = append(warns, w...)
 	}
@@ -282,14 +324,10 @@ func buildWork(opts Options, sel Selection) ([]workItem, []string, error) {
 	return items, warns, nil
 }
 
-// planSessions 规划会话搬运。
-func planSessions(probe *variant.Probe, opts Options, srcDir, dstDir string, sel Selection, all bool) ([]workItem, []string, error) {
+// planSessions 规划会话搬运。src 由调用方扫好传入，避免重复扫描。
+func planSessions(probe *variant.Probe, opts Options, src map[string]sessionFiles, srcDir, dstDir string, sel Selection, all bool) ([]workItem, []string, error) {
 	var warns []string
 
-	src, err := scanSessions(srcDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("扫描来源端会话失败: %w", err)
-	}
 	dst, err := scanSessions(dstDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("扫描目标端会话失败: %w", err)
@@ -363,7 +401,13 @@ func planSessions(probe *variant.Probe, opts Options, srcDir, dstDir string, sel
 
 		targetDir := filepath.Join(dstDir, "projects", slug)
 		jsonl := filepath.Join(targetDir, id+".jsonl")
-		it.files = append(it.files, fileCopy{src: sf.JSONL, dst: jsonl})
+		// 会话正文里带的是来源端的附件绝对路径，落盘时要改写到目标端，
+		// 否则图片会一直依赖来源端数据目录存在。
+		it.files = append(it.files, fileCopy{
+			src:     sf.JSONL,
+			dst:     jsonl,
+			replace: pathRewrites(srcDir, dstDir),
+		})
 		if sf.Meta != "" {
 			it.files = append(it.files, fileCopy{src: sf.Meta, dst: filepath.Join(targetDir, id+".meta.json")})
 		}
@@ -561,13 +605,27 @@ func Apply(opts Options, sel Selection) (Report, error) {
 			continue
 		}
 		for _, f := range it.files {
-			switch err := copyFile(f.src, f.dst); {
+			if len(f.replace) == 0 {
+				switch err := copyFile(f.src, f.dst); {
+				case errors.Is(err, errExists):
+					rep.SkippedFiles++
+				case err != nil:
+					rep.Warnings = append(rep.Warnings, fmt.Sprintf("复制 %s 失败：%v", filepath.Base(f.src), err))
+				default:
+					rep.CopiedFiles++
+				}
+				continue
+			}
+			// 需要改写内容的（目前只有会话文件），走另一条路径。
+			changed, err := copyFileWithRewrites(f.src, f.dst, f.replace)
+			switch {
 			case errors.Is(err, errExists):
 				rep.SkippedFiles++
 			case err != nil:
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("复制 %s 失败：%v", filepath.Base(f.src), err))
 			default:
 				rep.CopiedFiles++
+				rep.PathRewrites += changed
 			}
 		}
 		for _, t := range it.trees {

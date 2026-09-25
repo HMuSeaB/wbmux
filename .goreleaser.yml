@@ -23,16 +23,18 @@ builds:
       - windows
       - darwin
       - linux
+    # 只出 amd64 与 arm64。
+    #
+    # 原先还在构建 386，那是历史包袱：32 位 Windows/Linux 已基本绝迹，
+    # 构建它只是往下载列表里塞两个没人会点的文件。用户原话是"感觉比较麻烦"，
+    # 这个观感是合理的——虽然多构建不花额外成本，但会让该下哪个变得不清楚。
+    #
+    # windows/arm64 反而补上了：Go 能构建，且 ARM 版 Windows 在增长。
+    # 需要说明的是**客户端目前没有 ARM Windows 发行版**，所以这一项的实际
+    # 用途是"将来有客户端时不用回头改配置"，现在未必有人会用到。
     goarch:
       - amd64
       - arm64
-      - '386'
-    ignore:
-      # Windows/386 与 arm64 的客户端发行版不存在，构建出来没有意义。
-      - goos: windows
-        goarch: arm64
-      - goos: darwin
-        goarch: '386'
     ldflags:
       - -s -w
       - -X github.com/HMuSeaB/wbmux/internal/version.Version={{.Version}}

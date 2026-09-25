@@ -129,6 +129,8 @@ func printSurvey(u *ui, s migrate.SurveyResult) {
 	}
 
 	printGroup(u, "会话", s.Sessions)
+	printGroup(u, "附件", s.Assets)
+	printGroup(u, "内容与配置", s.Content)
 	printGroup(u, "技能", s.Skills)
 	printGroup(u, "记忆", s.Memory)
 }
@@ -168,6 +170,9 @@ func printMigrateReport(u *ui, r migrate.Report) {
 		u.kv("整项跳过", fmt.Sprintf("%d 项（目标端已有）", r.SkippedItems))
 	}
 	u.kv("复制文件", fmt.Sprintf("%d 个（跳过已存在 %d 个）", r.CopiedFiles, r.SkippedFiles))
+	if r.PathRewrites > 0 {
+		u.kv("改写路径", fmt.Sprintf("%d 处", r.PathRewrites))
+	}
 	if r.RowsInserted > 0 || r.RowsSkipped > 0 {
 		u.kv("写入索引", fmt.Sprintf("%d 行（已存在 %d 行）", r.RowsInserted, r.RowsSkipped))
 	}

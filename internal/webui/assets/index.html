@@ -203,8 +203,13 @@
   <section>
     <h2>历史搬运</h2>
     <p class="hint" style="margin-top:0">
-      把一侧的会话、技能与记忆搬到另一侧。两套后端的账号体系不互通、数据目录也不同，
-      官方没有同步途径——这是把另一侧的历史带过来的唯一办法。
+      把一侧的会话、附件、内容配置、技能与记忆搬到另一侧。两套后端的账号体系不互通、
+      数据目录也不同，官方没有同步途径——这是把另一侧的东西带过来的唯一办法。
+    </p>
+    <p class="hint" style="margin-top:6px">
+      会话里的图片存的是绝对路径，所以搬会话时会同时把被引用到的图片搬过来，
+      并把会话内的路径改写到目标端数据目录。代价是副本与原文件不再逐字节一致，
+      换来的是你可以放心删掉来源端数据目录。
     </p>
     <div class="row" style="margin-top:12px">
       <button id="btn-mig-scan">扫描两侧数据</button>
@@ -615,6 +620,8 @@
   function migGroups(sv) {
     return [
       { kind: "sessions", label: "会话", list: sv.sessions || [] },
+      { kind: "assets", label: "附件（会话里引用到的图片）", list: sv.assets || [] },
+      { kind: "content", label: "内容与配置", list: sv.content || [] },
       { kind: "skills", label: "技能", list: sv.skills || [] },
       { kind: "memory", label: "记忆", list: sv.memory || [] }
     ];
@@ -800,6 +807,8 @@
       ["复制文件", rep.copiedFiles + " 个（跳过已存在 " + rep.skippedFiles + " 个）"],
       ["写入索引", rep.rowsInserted + " 行（已存在 " + rep.rowsSkipped + " 行）"]
     ];
+    // 改写路径意味着搬过去的会话文件与来源不再逐字节一致，用户有权知道。
+    if (rep.pathRewrites) rows.push(["改写图片路径", rep.pathRewrites + " 处（会话内指向目标端数据目录）"]);
     if (rep.backupDir) rows.push(["数据库备份", rep.backupDir]);
 
     box.appendChild(el("dl", { class: "kv" }, rows.map(function (r) {
