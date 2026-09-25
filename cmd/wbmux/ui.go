@@ -93,9 +93,16 @@ func (u *ui) blank() {
 	fmt.Fprintln(u.w)
 }
 
+// kvWidth 是 kv 的标签列宽（以显示列为单位）。
+//
+// 必须大于最长标签的显示宽度，否则那一个标签会把值推到右边一格。
+// 目前实际用到的 kv 标签里最长的是"宿主主程序"（10 列）。
+// 加更长的标签时记得调大这里——调小了只会让对齐略歪，不影响功能。
+const kvWidth = 12
+
 // kv 打印"标签 值"，标签按显示宽度补齐，中文也能对齐。
 func (u *ui) kv(label, value string) {
-	pad := 10 - dispWidth(label)
+	pad := kvWidth - dispWidth(label)
 	if pad < 1 {
 		pad = 1
 	}
