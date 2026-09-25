@@ -2,6 +2,7 @@ package variant
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,9 @@ type Probe struct {
 	Getenv   func(string) string
 	Exists   func(string) bool
 	ReadFile func(string) ([]byte, error)
+	// Registry 返回注册表里登记的已安装程序。
+	// 为 nil 时跳过注册表探测；测试里注入固定数据即可脱离真实注册表。
+	Registry func() []RegistryEntry
 }
 
 // DefaultProbe 返回绑定真实环境的探测器。
@@ -53,6 +57,7 @@ func DefaultProbe() *Probe {
 		Getenv:   os.Getenv,
 		Exists:   exists,
 		ReadFile: os.ReadFile,
+		Registry: registryInstallsCached,
 	}
 }
 
@@ -84,38 +89,83 @@ func (p *Probe) Detect(id ID, explicitExe string) Install {
 	inst := Install{Variant: id, DataDir: p.DataDir(id)}
 	p.readLaunchInfo(&inst)
 
-	type strategy struct {
-		name string
-		exe  string
-	}
-	var candidates []strategy
-
+	// 显式路径是权威的，必须单独处理：不存在就直接失败，
+	// 绝不能悄悄退回自动探测——用户明确指定了路径，却启动了另一处安装，
+	// 是最坏的一类失败（会连到非预期的后端）。
 	if explicitExe != "" {
-		candidates = append(candidates, strategy{"显式配置", explicitExe})
-	}
-	if exe := p.fromDataDirHint(id); exe != "" {
-		candidates = append(candidates, strategy{"数据目录线索", exe})
-	}
-	for _, dir := range p.commonDirs(b) {
-		candidates = append(candidates, strategy{"常见安装位置", p.exeInDir(b, dir)})
-	}
-	if exe := p.fromPathLookup(b); exe != "" {
-		candidates = append(candidates, strategy{"PATH", exe})
-	}
-
-	for _, c := range candidates {
-		if c.exe == "" {
-			continue
+		if !p.Exists(explicitExe) {
+			inst.Problems = append(inst.Problems, "指定的主程序不存在: "+explicitExe)
+			return inst
 		}
-		if !p.Exists(c.exe) {
-			continue
+		if other, ok := exeBelongsToOther(id, explicitExe); ok {
+			inst.Problems = append(inst.Problems, fmt.Sprintf(
+				"指定的主程序属于%s，与当前档位（%s）不符", other.DisplayName, b.DisplayName))
+			return inst
 		}
-		p.fill(&inst, b, c.exe, c.name)
+		p.fill(&inst, b, explicitExe, "显式配置")
 		return inst
 	}
 
-	inst.Problems = append(inst.Problems, "未找到该档位的安装，请用 `wbmux config` 指定主程序路径")
+	// 其余策略按可靠性排序，逐个惰性求值：
+	// 前一条命中就不必再查后面的，注册表枚举这种开销较大的动作因此可以省掉。
+	resolvers := []struct {
+		name string
+		find func() []string
+	}{
+		{"数据目录线索", func() []string { return one(p.fromDataDirHint(id)) }},
+		{"注册表", func() []string {
+			if p.Registry == nil {
+				return nil
+			}
+			return registryCandidates(p.Registry(), b)
+		}},
+		{"常见安装位置", func() []string { return p.commonDirCandidates(b) }},
+		{"PATH", func() []string { return one(p.fromPathLookup(b)) }},
+	}
+
+	for _, r := range resolvers {
+		for _, exe := range r.find() {
+			if exe == "" || !p.Exists(exe) {
+				continue
+			}
+			p.fill(&inst, b, exe, r.name)
+			return inst
+		}
+	}
+
+	inst.Problems = append(inst.Problems,
+		"未找到该档位的安装，可用 `wbmux config set --exe <主程序绝对路径>` 指定")
 	return inst
+}
+
+// exeBelongsToOther 判断某个可执行文件是否明显属于另一个档位。
+//
+// 用于在用户传了 --exe 却没说档位时挡住张冠李戴。只认文件名完全一致的
+// 情况：被重命名过的副本不做判断，交给用户用 --host 明确指定。
+func exeBelongsToOther(id ID, path string) (Backend, bool) {
+	base := strings.ToLower(filepath.Base(path))
+	for _, b := range All() {
+		if b.ID == id {
+			continue
+		}
+		for _, name := range []string{b.WinExecutableName + ".exe", b.LinuxExecutableName} {
+			if name == ".exe" || name == "" {
+				continue
+			}
+			if base == strings.ToLower(name) {
+				return b, true
+			}
+		}
+	}
+	return Backend{}, false
+}
+
+// one 把可能为空的单个候选包装成列表，便于统一处理。
+func one(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
 }
 
 // fill 补全一处已确认存在的安装信息，并校验关键文件。
@@ -190,6 +240,16 @@ func (p *Probe) fromDataDirHint(id ID) string {
 	return candidate
 }
 
+// commonDirCandidates 展开常见安装目录下的主程序候选路径。
+func (p *Probe) commonDirCandidates(b Backend) []string {
+	dirs := p.commonDirs(b)
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, p.exeInDir(b, dir))
+	}
+	return dedupe(out)
+}
+
 // commonDirs 返回各平台上的常见安装目录候选。
 func (p *Probe) commonDirs(b Backend) []string {
 	switch p.GOOS {
@@ -210,6 +270,16 @@ func (p *Probe) commonDirs(b Backend) []string {
 				filepath.Join(base, b.WinExecutableName),
 			)
 		}
+		// 盘根布局：实测存在直接装在盘根的情况（如 D:\WorkBuddyAI），
+		// 上面那些基于环境变量的位置覆盖不到。每盘符两次 stat，开销可忽略。
+		// 注册表探测通常已经命中，这一层是给"免安装解压"这类
+		// 没有登记卸载信息的情况兜底。
+		for _, root := range p.windowsDriveRoots() {
+			dirs = append(dirs,
+				filepath.Join(root, b.WinExecutableName),
+				filepath.Join(root, b.ProductName),
+			)
+		}
 		return dedupe(dirs)
 	case "darwin":
 		return []string{
@@ -222,6 +292,18 @@ func (p *Probe) commonDirs(b Backend) []string {
 			filepath.Join(p.Home, ".local", "share", b.LinuxExecutableName),
 		}
 	}
+}
+
+// windowsDriveRoots 返回本机存在的盘符根目录。
+func (p *Probe) windowsDriveRoots() []string {
+	var roots []string
+	for c := 'C'; c <= 'Z'; c++ {
+		root := string(c) + `:\`
+		if p.Exists(root) {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 // exeInDir 在给定安装目录里推导主程序路径；找不到返回空串。

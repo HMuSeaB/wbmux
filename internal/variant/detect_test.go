@@ -195,6 +195,71 @@ func TestPathLookup(t *testing.T) {
 	}
 }
 
+// 显式路径不存在时必须硬失败。
+//
+// 回归测试：早期实现会静默跳过不存在的显式路径，退回自动探测，
+// 结果用户指定了 A 却启动了 B——而且可能因此连上非预期的后端。
+func TestExplicitPathMustExist(t *testing.T) {
+	fs := newFakeFS()
+	// 让自动探测有东西可捡：注册表里有一条国内版记录。
+	realExe := `D:\Tools\WorkBuddy\WorkBuddy.exe`
+	fs.addFile(realExe, nil)
+	fs.addDir(`D:\Tools\WorkBuddy\resources`)
+	fs.addFile(`D:\Tools\WorkBuddy\resources\app.asar`, nil)
+	fs.addFile(`D:\Tools\WorkBuddy\resources\app.asar.unpacked\cli\product.json`, []byte(`{}`))
+
+	p := fs.probe("windows", `C:\Users\tester`, nil)
+	p.Registry = func() []RegistryEntry {
+		return []RegistryEntry{{DisplayName: "WorkBuddy 5.6.2", DisplayIcon: realExe + ",0"}}
+	}
+
+	inst := p.Detect(CN, `D:\nope\Nope.exe`)
+	if inst.Found {
+		t.Fatalf("显式路径不存在时不该退回自动探测，却找到了 %q", inst.Executable)
+	}
+	joined := strings.Join(inst.Problems, " | ")
+	if !strings.Contains(joined, "不存在") {
+		t.Errorf("问题说明应指出路径不存在，实际: %s", joined)
+	}
+}
+
+// 传了国际版主程序却按国内版探测，必须拒绝。
+func TestExplicitPathRejectsWrongVariant(t *testing.T) {
+	fs := newFakeFS()
+	exe := `D:\WorkBuddyAI\WorkBuddyAI.exe`
+	fs.addFile(exe, nil)
+	fs.addDir(`D:\WorkBuddyAI\resources`)
+
+	p := fs.probe("windows", `C:\Users\tester`, nil)
+
+	inst := p.Detect(CN, exe)
+	if inst.Found {
+		t.Fatal("国际版主程序不该被当作国内版接受")
+	}
+	if !strings.Contains(strings.Join(inst.Problems, " "), "国际版") {
+		t.Errorf("提示应说明档位不符，实际: %v", inst.Problems)
+	}
+
+	// 反过来，按国际版探测应当接受。
+	ok := p.Detect(Intl, exe)
+	if !ok.Found {
+		t.Fatalf("国际版主程序按国际版探测应成功: %v", ok.Problems)
+	}
+}
+
+// 被重命名过的副本不做档位判断，交给 --host 决定。
+func TestExplicitPathAcceptsRenamedBinary(t *testing.T) {
+	fs := newFakeFS()
+	exe := `D:\portable\wb.exe`
+	fs.addFile(exe, nil)
+	fs.addDir(`D:\portable\resources`)
+
+	p := fs.probe("windows", `C:\Users\tester`, nil)
+	if inst := p.Detect(CN, exe); !inst.Found {
+		t.Fatalf("重命名的副本应被接受: %v", inst.Problems)
+	}
+}
+
 func TestReadLaunchInfo(t *testing.T) {
 	fs := newFakeFS()
 	dataDir := filepath.Join(`C:\Users\tester`, ".workbuddy")
