@@ -47,6 +47,8 @@ func dispatch(args []string) error {
 		return cmdList(rest)
 	case "export":
 		return cmdExport(rest)
+	case "migrate", "sync":
+		return cmdMigrate(rest)
 	case "config", "cfg":
 		return cmdConfig(rest)
 	case "help", "-h", "--help":
@@ -121,6 +123,7 @@ func printHelp(u *ui) {
   doctor           体检：安装位置、配置、覆盖机制是否仍有效
   list             列出本机探测到的安装与可用后端
   export <后端>    只生成合并配置，不启动
+  migrate          把一侧的会话/技能/记忆搬到另一侧
   config           查看或修改设置
   version          打印版本
   help             打印本帮助
@@ -144,6 +147,8 @@ func printHelp(u *ui) {
   wbmux run intl
   wbmux run cn --dry-run
   wbmux run intl --native     用国际版自己的安装原生启动，作对照
+  wbmux migrate               看看另一侧有什么可以搬过来
+  wbmux migrate intl cn --yes 把国际版的会话搬进国内版
 `)
 }
 
