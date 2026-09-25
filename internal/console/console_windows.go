@@ -10,15 +10,21 @@ import (
 )
 
 var (
-	kernel32               = syscall.NewLazyDLL("kernel32.dll")
-	procSetConsoleOutputCP = kernel32.NewProc("SetConsoleOutputCP")
-	procSetConsoleCP       = kernel32.NewProc("SetConsoleCP")
-	procGetConsoleMode     = kernel32.NewProc("GetConsoleMode")
-	procSetConsoleMode     = kernel32.NewProc("SetConsoleMode")
+	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
+	procSetConsoleOutputCP    = kernel32.NewProc("SetConsoleOutputCP")
+	procSetConsoleCP          = kernel32.NewProc("SetConsoleCP")
+	procGetConsoleMode        = kernel32.NewProc("GetConsoleMode")
+	procSetConsoleMode        = kernel32.NewProc("SetConsoleMode")
+	procGetConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
+	procGetConsoleWindow      = kernel32.NewProc("GetConsoleWindow")
+	procShowWindow            = kernel32.NewProc("ShowWindow")
 )
 
 // enableVirtualTerminalProcessing 是 SetConsoleMode 的 ANSI 转义开关。
 const enableVirtualTerminalProcessing = 0x0004
+
+// swHide 是 ShowWindow 的 SW_HIDE。
+const swHide = 0
 
 // EnableUTF8 把控制台代码页切到 UTF-8，并尝试开启 ANSI 转义支持。
 //
@@ -43,4 +49,38 @@ func enableVT() {
 		return
 	}
 	_, _, _ = procSetConsoleMode.Call(uintptr(handle), uintptr(mode|enableVirtualTerminalProcessing))
+}
+
+// IsExclusiveConsole 判断当前进程是否独占一个控制台。
+//
+// 用途：区分"用户双击了 exe"和"用户在终端里敲了命令"。
+// 控制台子系统（-H=console，即默认）的程序被双击时，Windows 会**新开**一个
+// 控制台，此时控制台里只有我们一个进程；而在 cmd / PowerShell / Windows
+// Terminal 里运行时，shell 本身也挂在这个控制台上，进程数必然大于 1。
+//
+// 这比"看有没有父进程"或"看父进程是不是 explorer.exe"简单得多，
+// 也不需要遍历进程快照。
+//
+// 注意 GetConsoleProcessList 的返回值语义：缓冲区不足时返回所需容量，
+// 足够时返回实际写入的个数。我们只关心"是不是恰好 1 个"，给 2 个元素的
+// 缓冲即可区分 1 与大于 1。
+func IsExclusiveConsole() bool {
+	var pids [2]uint32
+	n, _, _ := procGetConsoleProcessList.Call(
+		uintptr(unsafe.Pointer(&pids[0])),
+		uintptr(len(pids)),
+	)
+	return n == 1
+}
+
+// HideConsoleWindow 隐藏当前控制台窗口。
+//
+// 双击启动图形界面时用：控制台子系统的程序双击必然先弹出一个黑窗口，
+// 我们没法阻止它出现，但可以立刻把它藏掉。
+func HideConsoleWindow() {
+	hwnd, _, _ := procGetConsoleWindow.Call()
+	if hwnd == 0 {
+		return
+	}
+	_, _, _ = procShowWindow.Call(hwnd, swHide)
 }

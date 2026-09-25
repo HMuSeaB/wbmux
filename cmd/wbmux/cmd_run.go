@@ -3,12 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/HMuSeaB/wbmux/internal/config"
-	"github.com/HMuSeaB/wbmux/internal/launch"
-	"github.com/HMuSeaB/wbmux/internal/product"
+	"github.com/HMuSeaB/wbmux/internal/runner"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -38,16 +35,72 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := variant.Get(targetID)
+
+	res, err := runner.Prepare(runner.Options{
+		Target:         targetID,
+		Native:         *native,
+		HostFlag:       *c.host,
+		ExeFlag:        *c.exe,
+		ExtraEndpoints: *extraEndpoints,
+		ParentEnv:      os.Environ(),
+	})
 	if err != nil {
 		return err
 	}
 
-	probe := variant.DefaultProbe()
-	if *native {
-		return runNative(u, target, probe, *dryRun)
+	printRunPlan(u, res)
+
+	if *dryRun {
+		u.section("将要执行")
+		u.kv("命令行", res.CommandLine)
+		if res.ConfigPath != "" {
+			u.kv("环境变量", "ACC_PRODUCT_CONFIG_PATH="+res.ConfigPath)
+		}
+		u.blank()
+		u.info("--dry-run：未真正启动")
+		return nil
 	}
-	return runOverride(u, target, probe, *dryRun, *extraEndpoints, *c.host, *c.exe)
+
+	if err := res.Launch(); err != nil {
+		return err
+	}
+	u.section("已启动")
+	u.info("客户端可能需要几秒才显示窗口。")
+	return nil
+}
+
+// printRunPlan 打印一次切换的完整预览。
+//
+// 两种模式的展示结构不同：原生模式没有改写项，硬套同一套输出会留下一片空白。
+func printRunPlan(u *ui, res runner.Result) {
+	if res.Native {
+		u.title("原生启动（不做任何改写）")
+		u.kv("目标后端", fmt.Sprintf("%s  %s", res.Target.DisplayName, res.Target.Endpoint))
+		u.kv("宿主程序", res.Executable)
+		u.kv("数据目录", res.DataDir)
+		reportStripped(u, res.Stripped)
+		return
+	}
+
+	u.title(fmt.Sprintf("%s → %s", res.Host.DisplayName, res.Target.DisplayName))
+	u.kv("目标后端", fmt.Sprintf("%s  %s", res.Target.DisplayName, res.Target.Endpoint))
+	u.kv("宿主程序", fmt.Sprintf("%s  %s", res.Host.DisplayName, res.Executable))
+	u.kv("生成配置", res.ConfigPath)
+	u.kv("数据目录", res.DataDir)
+	reportStripped(u, res.Stripped)
+
+	for _, w := range res.Warnings {
+		u.blank()
+		u.warn(w)
+	}
+
+	u.section(fmt.Sprintf("配置改写 %d 项", len(res.Changes)))
+	for _, ch := range res.Changes {
+		u.bullet(ch.String())
+	}
+	if len(res.Changes) == 0 {
+		u.bullet(u.dim("（无）"))
+	}
 }
 
 // singleTarget 从位置参数里取出唯一的目标后端。
@@ -59,149 +112,6 @@ func singleTarget(args []string) (variant.ID, error) {
 		return "", fmt.Errorf("只接受一个目标后端，收到 %d 个：%s", len(args), strings.Join(args, " "))
 	}
 	return variant.Parse(args[0])
-}
-
-// runNative 用目标档位自己的安装原生启动，不做任何改写。
-//
-// 存在的意义是留一条对照路径：当覆盖模式出现异常时，可以立刻判断
-// 是"覆盖机制的问题"还是"客户端本身的问题"。
-func runNative(u *ui, target variant.Backend, probe *variant.Probe, dryRun bool) error {
-	inst, err := installOf(target.ID, probe)
-	if err != nil {
-		return err
-	}
-
-	// 即便不注入配置，也把残留的覆盖变量剥掉，
-	// 否则用户环境里的旧值会让"原生"不再原生。
-	env, stripped := launch.CleanEnv(os.Environ())
-	plan := launch.Plan{
-		Variant:    target.ID,
-		Executable: inst.Executable,
-		DataDir:    inst.DataDir,
-		Env:        env,
-		Stripped:   stripped,
-	}
-
-	u.title("原生启动（不做任何改写）")
-	u.kv("目标后端", fmt.Sprintf("%s  %s", target.DisplayName, target.Endpoint))
-	u.kv("宿主程序", inst.Executable)
-	u.kv("数据目录", inst.DataDir)
-	reportStripped(u, stripped)
-
-	if dryRun {
-		u.section("将要执行")
-		u.kv("命令行", plan.CommandLine())
-		u.blank()
-		u.info("--dry-run：未真正启动")
-		return nil
-	}
-
-	if err := plan.Run(); err != nil {
-		return err
-	}
-	u.section("已启动")
-	return nil
-}
-
-// runOverride 是主路径：用宿主安装启动，但把后端指向 target。
-func runOverride(u *ui, target variant.Backend, probe *variant.Probe, dryRun bool, extraEndpoints []string, hostFlag, exeFlag string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	hostID, hostInst, err := resolveHost(cfg, hostFlag, exeFlag, probe)
-	if err != nil {
-		return err
-	}
-	host, err := variant.Get(hostID)
-	if err != nil {
-		return err
-	}
-
-	cacheDir, err := config.CacheDir()
-	if err != nil {
-		return err
-	}
-	outPath := filepath.Join(cacheDir, fmt.Sprintf("%s-to-%s.json", hostID, target.ID))
-
-	opts := product.Options{
-		ExtraEndpoints: append(append([]string{}, cfg.ExtraEndpoints...), extraEndpoints...),
-	}
-	changes, err := product.Generate(hostInst.ProductJSON, outPath, target, opts)
-	if err != nil {
-		return fmt.Errorf("生成产品配置失败: %w", err)
-	}
-	// 回读校验：写出去的配置必须真的指向目标后端。
-	// 这一步几乎不花时间，却能挡住"补丁字段名写错"这类静默失败。
-	if err := verifyEndpoint(outPath, target); err != nil {
-		return err
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("无法确定用户主目录: %w", err)
-	}
-
-	plan, err := launch.Build(launch.Options{
-		Install:    hostInst,
-		Target:     target,
-		ConfigPath: outPath,
-		DataDir:    filepath.Join(home, target.DataFolderName),
-		ParentEnv:  os.Environ(),
-	})
-	if err != nil {
-		return err
-	}
-
-	u.title(fmt.Sprintf("%s → %s", host.DisplayName, target.DisplayName))
-	u.kv("目标后端", fmt.Sprintf("%s  %s", target.DisplayName, target.Endpoint))
-	u.kv("宿主程序", fmt.Sprintf("%s  %s", host.DisplayName, plan.Executable))
-	u.kv("生成配置", outPath)
-	u.kv("数据目录", plan.DataDir)
-	reportStripped(u, plan.Stripped)
-
-	if hostID == target.ID {
-		u.blank()
-		u.warn("目标后端与宿主档位相同，本次不会改变任何字段")
-	}
-
-	u.section(fmt.Sprintf("配置改写 %d 项", len(changes)))
-	for _, ch := range changes {
-		u.bullet(ch.String())
-	}
-	if len(changes) == 0 {
-		u.bullet(u.dim("（无）"))
-	}
-
-	if dryRun {
-		u.section("将要执行")
-		u.kv("命令行", plan.CommandLine())
-		u.kv("环境变量", launch.ConfigPathEnv+"="+outPath)
-		u.blank()
-		u.info("--dry-run：未真正启动")
-		return nil
-	}
-
-	if err := plan.Run(); err != nil {
-		return err
-	}
-	u.section("已启动")
-	u.info("客户端可能需要几秒才显示窗口。")
-	return nil
-}
-
-// verifyEndpoint 回读生成配置，确认 endpoint 已指向目标后端。
-func verifyEndpoint(path string, target variant.Backend) error {
-	doc, err := product.Load(path)
-	if err != nil {
-		return fmt.Errorf("回读生成的配置失败: %w", err)
-	}
-	got, _ := doc["endpoint"].(string)
-	if got != target.Endpoint {
-		return fmt.Errorf("生成的配置校验失败：endpoint 为 %q，期望 %q", got, target.Endpoint)
-	}
-	return nil
 }
 
 func reportStripped(u *ui, stripped []string) {

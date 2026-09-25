@@ -229,6 +229,22 @@ func shortBuild(b string) string {
 	return b
 }
 
+// verifyEndpoint 回读生成配置，确认 endpoint 已指向目标后端。
+//
+// export 走的是自己的路径（不经过 runner），所以这里单独保留一份。
+// 少这一步就会漏掉"补丁字段名写错"这类静默失败。
+func verifyEndpoint(path string, target variant.Backend) error {
+	doc, err := product.Load(path)
+	if err != nil {
+		return fmt.Errorf("回读生成的配置失败: %w", err)
+	}
+	got, _ := doc["endpoint"].(string)
+	if got != target.Endpoint {
+		return fmt.Errorf("生成的配置校验失败：endpoint 为 %q，期望 %q", got, target.Endpoint)
+	}
+	return nil
+}
+
 func cmdExport(args []string) error {
 	f := newFlags()
 	c := addCommon(f)
