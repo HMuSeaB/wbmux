@@ -143,7 +143,7 @@ func (p *Probe) Detect(id ID, explicitExe string) Install {
 // 用于在用户传了 --exe 却没说档位时挡住张冠李戴。只认文件名完全一致的
 // 情况：被重命名过的副本不做判断，交给用户用 --host 明确指定。
 func exeBelongsToOther(id ID, path string) (Backend, bool) {
-	base := strings.ToLower(filepath.Base(path))
+	base := strings.ToLower(baseName(path))
 	for _, b := range All() {
 		if b.ID == id {
 			continue

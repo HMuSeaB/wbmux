@@ -93,11 +93,23 @@ func exeFromEntry(e RegistryEntry, b Backend) []string {
 
 	if icon := parseDisplayIcon(e.DisplayIcon); icon != "" {
 		// 只有文件名对得上才采纳：DisplayIcon 有时指向别的东西。
-		if strings.EqualFold(filepath.Base(icon), wantExe) {
+		if strings.EqualFold(baseName(icon), wantExe) {
 			out = append(out, icon)
 		}
 	}
 	return out
+}
+
+// baseName 取出路径的文件名部分，同时认 Windows 与类 Unix 两种分隔符。
+//
+// 不用 filepath.Base：它按当前平台的分隔符工作，在 Linux 上遇到
+// `D:\App\App.exe` 会把整串当成文件名。注册表里存的必然是 Windows 形式，
+// 但单测与交叉编译会在其它平台上跑，用 filepath.Base 会让那些测试假失败。
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `\/`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // parseDisplayIcon 从 DisplayIcon 里剥出可执行文件路径。

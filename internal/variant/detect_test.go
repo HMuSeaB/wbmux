@@ -182,11 +182,17 @@ func TestExeInDirPerPlatform(t *testing.T) {
 
 func TestPathLookup(t *testing.T) {
 	fs := newFakeFS()
-	exe := filepath.Join(`C:\bin`, "WorkBuddyAI.exe")
+	dir := `C:\bin`
+	exe := filepath.Join(dir, "WorkBuddyAI.exe")
 	fs.addFile(exe, nil)
 
+	// PATH 的分隔符随平台而变（Windows 分号、类 Unix 冒号），
+	// 用 filepath.ListSeparator 拼装，否则在 Linux/macOS 上
+	// filepath.SplitList 会把整串当成一个目录，测试必挂。
+	pathValue := strings.Join([]string{`C:\other`, dir}, string(filepath.ListSeparator))
+
 	p := fs.probe("windows", `C:\Users\tester`, map[string]string{
-		"PATH": `C:\other;C:\bin`,
+		"PATH": pathValue,
 	})
 	inst := p.Detect(Intl, "")
 	if !inst.Found {
