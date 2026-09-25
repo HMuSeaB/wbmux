@@ -47,6 +47,7 @@ type Backend struct {
 	Oversea           bool     `json:"oversea"`
 	AuthID            string   `json:"authID"`
 	AuthLabel         string   `json:"authLabel"`
+	AuthPlatform      string   `json:"authPlatform"`
 	Domains           Domains  `json:"domains"`
 
 	// 以下字段用于在本机定位对应的安装，不参与配置补丁。
@@ -77,6 +78,7 @@ var backends = map[ID]Backend{
 		Oversea:        false,
 		AuthID:         "workbuddy-desktop",
 		AuthLabel:      "TencentCloud",
+		AuthPlatform:   "workbuddy",
 		Domains: Domains{
 			Internal: []string{
 				"copilot.tencent.com",
@@ -127,6 +129,7 @@ var backends = map[ID]Backend{
 		Oversea:        true,
 		AuthID:         "workbuddy-desktop-ai",
 		AuthLabel:      "TencentCloud",
+		AuthPlatform:   "workbuddy-ai",
 		Domains: Domains{
 			Internal: []string{
 				"copilot.tencent.com",

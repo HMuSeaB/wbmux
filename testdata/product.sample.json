@@ -1,0 +1,43 @@
+{
+  "$schema": "product-schema.json",
+  "productName": "SampleHost",
+  "applicationName": "sample-host",
+  "endpoint": "https://www.sample-cn.test",
+  "stagingEndpoint": "https://staging.sample-cn.test",
+  "officialEndpoints": [
+    "https://www.sample-cn.test",
+    "https://staging.sample-cn.test"
+  ],
+  "dataFolderName": ".sample-host",
+  "authentication": {
+    "id": "sample-desktop",
+    "type": "cli-external-link",
+    "label": "SampleCloud",
+    "attributes": {
+      "platform": "sample",
+      "prefixPath": "/plugin",
+      "usernameHeader": "X-User-Id",
+      "tokenHeader": "Authorization",
+      "internalDomain": ["internal.sample-cn.test"],
+      "externalDomain": ["external.sample.test"],
+      "iOADomain": ["ioa.sample-cn.test"],
+      "cloudHostedDomain": ["*.sso.sample-cn.test"]
+    }
+  },
+  "updates": {
+    "startupForceAutoUpdate": true,
+    "apiVersion": "v2"
+  },
+  "models": [
+    { "id": "default", "name": "Default" },
+    { "id": "lite", "name": "Lite" }
+  ],
+  "productFeatures": {
+    "Skills": true,
+    "Sandbox": true
+  },
+  "bigIdentifier": 9007199254740993,
+  "nested": {
+    "keep": ["me", "intact"]
+  }
+}

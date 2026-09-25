@@ -88,6 +88,9 @@ func TestDescriptorsAreWellFormed(t *testing.T) {
 			if b.AuthID == "" {
 				t.Error("AuthID 不能为空")
 			}
+			if b.AuthPlatform == "" {
+				t.Error("AuthPlatform 不能为空")
+			}
 			if b.DisplayName == "" || b.ProductName == "" {
 				t.Error("DisplayName / ProductName 不能为空")
 			}
@@ -126,6 +129,9 @@ func TestBackendsDifferWhereItMatters(t *testing.T) {
 	}
 	if cn.AuthID == intl.AuthID {
 		t.Error("两套档位的 AuthID 相同")
+	}
+	if cn.AuthPlatform == intl.AuthPlatform {
+		t.Error("两套档位的 AuthPlatform 相同")
 	}
 	if cn.Oversea == intl.Oversea {
 		t.Error("两套档位的 Oversea 相同")
