@@ -23,7 +23,8 @@ package instance
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,12 +34,6 @@ import (
 
 // fileName 是运行标记的文件名，放在 wbmux 自己的设置目录下。
 const fileName = "run.json"
-
-// dialTimeout 是判活时连端口的等待上限。
-//
-// 目标是本机回环端口，能连上就是毫秒级的事；500 毫秒足够，
-// 又不会在"确实没人跑"时让用户干等。
-const dialTimeout = 500 * time.Millisecond
 
 // Info 是一个运行中实例的对外信息。
 type Info struct {
@@ -78,20 +73,61 @@ func Lookup() (Info, bool) {
 	if err := json.Unmarshal(raw, &info); err != nil || info.Addr == "" {
 		return Info{}, false
 	}
-	if !alive(info.Addr) {
+	if !alive(info) {
 		return Info{}, false
 	}
 	return info, true
 }
 
-// alive 连一下地址，判断那里是否真有服务在听。
-func alive(addr string) bool {
-	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+// pingTimeout 是确认身份时的等待上限。
+const pingTimeout = 800 * time.Millisecond
+
+// alive 确认那个地址上跑的**确实是 wbmux**，而不只是"有东西在监听"。
+//
+// # 为什么不能只做 TCP 连通性判断
+//
+// 曾经这里只 dial 一下，连上就算活着。但进程退出后，它占过的端口会被系统
+// 回收再分配给别的程序——这时 dial 照样成功，于是被判成"wbmux 还在跑"，
+// 用户被导向一个完全无关的服务，看到的是一堆看不懂的响应。
+//
+// 实测中出现的场景正是如此：关掉页面 → 旧进程稍后才退出 → 立刻再启动，
+// 恰好撞上端口被复用，表现成"又不行了"。
+//
+// 所以必须用一个只有真 wbmux 才答得对的请求：带令牌打 /api/ping。
+// 令牌是每次启动随机生成的一次性值，别的程序不可能碰巧有一份。
+//
+// # 故意不走 /api/state
+//
+// 那个接口要读注册表、扫目录，重得多。判活只需要一个能把身份坐实的轻请求。
+func alive(info Info) bool {
+	if info.Addr == "" || info.URL == "" {
+		return false
+	}
+	u, err := url.Parse(info.URL)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
-	return true
+	token := u.Query().Get("t")
+	base := u.Scheme + "://" + u.Host
+
+	req, err := http.NewRequest(http.MethodGet, base+"/api/ping", nil)
+	if err != nil {
+		return false
+	}
+	if token != "" {
+		req.Header.Set("X-Wbmux-Token", token)
+	}
+
+	client := &http.Client{Timeout: pingTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// 令牌正确时 wbmux 返回 200。别的服务不可能对这个自定义头
+	// 做出同样的响应。
+	return resp.StatusCode == http.StatusOK
 }
 
 // Claim 把自己登记为当前实例。
