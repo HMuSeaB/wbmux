@@ -1,0 +1,19 @@
+# 构建产物
+/wbmux
+/wbmux.exe
+/dist/
+/build/
+*.test
+*.out
+
+# 本地运行痕迹
+/.wbmux/
+*.log
+
+# 编辑器
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+.DS_Store
+Thumbs.db
