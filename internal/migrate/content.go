@@ -106,16 +106,16 @@ func planContent(srcDir, dstDir string) ([]workItem, []string) {
 
 // assetRefRe 匹配会话文本里的附件绝对路径。
 //
-// 两种形态都要认：JSON 字符串里是转义过的双反斜杠，正文里可能是单反斜杠。
-// 调用方会先把双反斜杠压平，所以这里按单反斜杠写即可。
+// 要同时认三种差异，漏任何一种都会静默漏掉一部分附件：
 //
-// 盘符后与各级之间都允许正反斜杠：实测客户端写的是反斜杠，但会话正文里的
-// 路径是模型自己生成的，出现过正斜杠写法。只认反斜杠会静默漏掉那一半。
+//   - 分隔符：客户端自己写反斜杠，而正文里的路径是模型生成的，出现过正斜杠
+//   - 路径形态：Windows 是 `C:\…`，macOS/Linux 是 `/Users/…`
+//   - 转义：JSON 字符串里是双反斜杠，正文里是单反斜杠（调用方会先压平）
 //
 // 字符类刻意排除了引号、反引号、尖括号、逗号、分号与括号——路径在文本里
 // 往往紧跟标点，不排掉会把标点吞进文件名。
 var assetRefRe = regexp.MustCompile(
-	`(?i)[a-z]:[\\/][^\s"'<>|?*()\[\]{},;]*?[\\/](?:blobs|clipboard-images)[\\/][^\s"'<>|?*()\[\]{},;]+`)
+	`(?i)(?:[a-z]:[\\/]|/)[^\s"'<>|?*()\[\]{},;]*?[\\/](?:blobs|clipboard-images)[\\/][^\s"'<>|?*()\[\]{},;]+`)
 
 // collectAssetRefs 找出会话实际引用到的附件，返回"相对数据目录的路径 → 绝对路径"。
 //
@@ -123,34 +123,42 @@ var assetRefRe = regexp.MustCompile(
 // 全搬毫无意义，引用是唯一有意义的判据。
 func collectAssetRefs(srcDataDir string, sessions map[string]sessionFiles) (map[string]string, error) {
 	out := map[string]string{}
-	root := strings.TrimRight(srcDataDir, `\/`)
 
-	for id, sf := range sessions {
+	// 一律转成正斜杠再比较：会话里两种分隔符都可能出现，
+	// 而数据目录本身在 Windows 用 \、在 macOS/Linux 用 /，直接比会全错。
+	root := strings.TrimRight(filepath.ToSlash(srcDataDir), "/")
+	if root == "" {
+		return out, nil
+	}
+	rootLower := strings.ToLower(root)
+
+	for _, sf := range sessions {
 		raw, err := os.ReadFile(sf.JSONL)
 		if err != nil {
 			// 单个文件读不动不该让整次扫描失败，跳过它继续。
 			continue
 		}
 		// 压平转义：把 \\ 变成 \，这样一套正则可以同时命中两种形态。
+		// 只是用来找路径，找到的位置另外处理，所以不会污染原文。
 		text := strings.ReplaceAll(string(raw), `\\`, `\`)
 
 		for _, m := range assetRefRe.FindAllString(text, -1) {
-			// 统一成正斜杠再比较，避免大小写与分隔符把同一路径算成两个。
-			norm := strings.ReplaceAll(m, "/", `\`)
-			if !strings.HasPrefix(strings.ToLower(norm), strings.ToLower(root)+`\`) {
+			norm := strings.ReplaceAll(m, `\`, "/")
+			// 大小写不敏感地判断归属，但切的时候用原串的偏移，
+			// 以保留路径真实的大小写。
+			if !strings.HasPrefix(strings.ToLower(norm), rootLower+"/") {
 				continue // 引用的不是本数据目录里的东西（比如别的盘）
 			}
-			abs := norm
+			rel := norm[len(root)+1:]
+			if rel == "" {
+				continue
+			}
+			abs := filepath.FromSlash(norm)
 			if !fileExists(abs) {
 				// 引用还在但文件已被清理，属正常情况，不报错也不收。
 				continue
 			}
-			rel := strings.TrimPrefix(norm, root+`\`)
-			if rel == "" {
-				continue
-			}
-			out[rel] = abs
-			_ = id
+			out[filepath.FromSlash(rel)] = abs
 		}
 	}
 	return out, nil

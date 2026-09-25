@@ -468,7 +468,10 @@ func TestCollectAssetRefs(t *testing.T) {
 			`抄送 `+escDir+`\\blobs\\ab\\used.png 与 `+
 			escDir+`\\clipboard-images\\clip.png `+
 			`还有个不存在的 `+escDir+`\\blobs\\ff\\gone.png `+
-			`以及别处的 D:\\other\\blobs\\zz\\n.png"}]}`+"\n")
+			`以及别处的 D:\\other\\blobs\\zz\\n.png `+
+			// 正斜杠写法：正文里的路径是模型生成的，实测出现过这种形态。
+			// 收不到就说明正则只认反斜杠，在 macOS/Linux 上会漏掉全部附件。
+			`再来一次正斜杠写法 `+strings.ReplaceAll(escDir, `\`, `/`)+`/blobs/ab/used.png"}]}`+"\n")
 
 	sessions, err := scanSessions(dataDir)
 	if err != nil {
@@ -479,7 +482,12 @@ func TestCollectAssetRefs(t *testing.T) {
 		t.Fatalf("collectAssetRefs: %v", err)
 	}
 
-	want := []string{`blobs\ab\used.png`, `clipboard-images\clip.png`}
+	// 期望值必须按当前平台的分隔符拼，不能写死反斜杠——
+	// 否则这个用例在 macOS/Linux 上会假失败。
+	want := []string{
+		filepath.Join("blobs", "ab", "used.png"),
+		filepath.Join("clipboard-images", "clip.png"),
+	}
 	if len(refs) != len(want) {
 		t.Fatalf("应收 %d 个附件，得到 %d 个：%v", len(want), len(refs), refs)
 	}
@@ -488,7 +496,7 @@ func TestCollectAssetRefs(t *testing.T) {
 			t.Errorf("缺少附件 %s；实际收到 %v", w, refs)
 		}
 	}
-	if _, ok := refs[`blobs\cd\unused.png`]; ok {
+	if _, ok := refs[filepath.Join("blobs", "cd", "unused.png")]; ok {
 		t.Error("没被引用到的附件不该被收")
 	}
 }
