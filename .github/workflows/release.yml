@@ -19,7 +19,10 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.22'
+          # 不能低于 1.24：Go 1.22 产出的 darwin/arm64 二进制缺 LC_UUID，
+          # 在 macOS 26 上会被 dyld 拒绝（abort trap）。
+          # 详见 ci.yml 里的说明。
+          go-version: '1.24'
           cache: true
           cache-dependency-path: go.mod
 

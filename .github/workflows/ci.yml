@@ -24,12 +24,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Go 1.22 的链接器不给 darwin/arm64 二进制写 LC_UUID，而 macOS 26
+      # 的 dyld 要求这个 load command，缺了就直接 abort trap：
+      #     dyld: missing LC_UUID load command
+      #     signal: abort trap
+      # 实测（解析 Mach-O 的 load commands）：
+      #     go1.22 → 无 LC_UUID    go1.24 → 有 LC_UUID
+      # 所以最低只到 1.24，别往下降。
+      #
+      # 这个坑一直存在，只是被 Go 的构建缓存遮住了——缓存命中时测试二进制
+      # 不会在 runner 上真正执行。一旦缓存失效（改了代码），它就会冒出来。
+      #
       # 缓存键用 go.mod 而不是默认的 go.sum：本项目零第三方依赖，
       # 根本没有 go.sum，用默认值会每次报 "Dependencies file is not found"，
       # 缓存等于没开。
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
           cache-dependency-path: go.mod
 
@@ -72,7 +83,9 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.22'
+          # 同 build 作业：Go 1.22 产出的 darwin/arm64 二进制缺 LC_UUID，
+          # 在 macOS 26 上会 abort trap。见文件上方说明。
+          go-version: '1.24'
           cache: true
           cache-dependency-path: go.mod
 
@@ -89,7 +102,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
           cache-dependency-path: go.mod
 
