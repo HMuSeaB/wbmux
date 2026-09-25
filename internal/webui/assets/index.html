@@ -201,6 +201,20 @@
   </section>
 
   <section>
+    <h2>历史搬运</h2>
+    <p class="hint" style="margin-top:0">
+      把一侧的会话、技能与记忆搬到另一侧。两套后端的账号体系不互通、数据目录也不同，
+      官方没有同步途径——这是把另一侧的历史带过来的唯一办法。
+    </p>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-mig-scan">扫描两侧数据</button>
+      <button class="ghost" id="btn-mig-swap" title="交换方向">⇄</button>
+      <span class="hint" id="mig-direction" style="margin:0"></span>
+    </div>
+    <div id="mig-body" style="margin-top:12px"></div>
+  </section>
+
+  <section>
     <h2>体检</h2>
     <div class="row">
       <button id="btn-doctor">检查当前配置</button>
@@ -576,10 +590,243 @@
       .catch(function (e) { toast(e.message, "bad"); });
   }
 
+  // ---------- 历史搬运 ----------
+
+  var migFrom = null;     // 来源档位
+  var migTo = null;       // 目标档位
+  var migSurvey = null;   // /api/migrate/survey 的结果
+  var migPicked = {};     // 勾选表，键形如 "sessions:<会话id>"
+
+  function migKey(kind, id) { return kind + ":" + id; }
+
+  function backendById(id) {
+    if (!state) return null;
+    for (var i = 0; i < state.backends.length; i++) {
+      if (state.backends[i].id === id) return state.backends[i];
+    }
+    return null;
+  }
+
+  function migTitle() {
+    var a = backendById(migFrom), b = backendById(migTo);
+    return (a ? a.displayName : migFrom) + " → " + (b ? b.displayName : migTo);
+  }
+
+  function migGroups(sv) {
+    return [
+      { kind: "sessions", label: "会话", list: sv.sessions || [] },
+      { kind: "skills", label: "技能", list: sv.skills || [] },
+      { kind: "memory", label: "记忆", list: sv.memory || [] }
+    ];
+  }
+
+  function humanSize(n) {
+    if (!n) return "";
+    if (n < 1024) return n + " B";
+    var units = ["KB", "MB", "GB", "TB"], i = -1, v = n;
+    do { v /= 1024; i++; } while (v >= 1024 && i < units.length - 1);
+    return v.toFixed(1) + " " + units[i];
+  }
+
+  function loadMigrate() {
+    var box = document.getElementById("mig-body");
+    document.getElementById("mig-direction").textContent = migTitle();
+    clear(box);
+    box.appendChild(el("div", { class: "hint" },
+      [el("span", { class: "spinner" }), "正在扫描两侧数据目录，第一次会比较慢…"]));
+
+    api("/api/migrate/survey?from=" + encodeURIComponent(migFrom) + "&to=" + encodeURIComponent(migTo))
+      .then(function (sv) {
+        migSurvey = sv;
+        // 默认只勾"目标端还没有"的。已存在的默认不勾——否则用户会以为
+        // 点一下就要覆盖对方的东西，而这个工具恰恰承诺从不覆盖。
+        migPicked = {};
+        migGroups(sv).forEach(function (g) {
+          g.list.forEach(function (c) {
+            if (c.state === "new") migPicked[migKey(g.kind, c.id)] = true;
+          });
+        });
+        renderMigrate();
+      })
+      .catch(function (e) {
+        clear(box);
+        box.appendChild(el("div", { class: "note bad", text: "扫描失败：" + e.message }));
+      });
+  }
+
+  function renderMigGroup(g) {
+    var box = el("div", { style: "margin-bottom:16px" });
+    // 只显示条目数，不显示"已选/总数"：后者在勾选变化时不会跟着更新，
+    // 会让人误以为默认全选。实时计数统一由页脚的"已选 N 项"负责。
+    box.appendChild(el("div", { class: "row", style: "margin-bottom:4px" }, [
+      el("b", { style: "font-size:13px", text: g.label }),
+      pill(g.list.length + " 项", "ghost")
+    ]));
+
+    g.list.forEach(function (c) {
+      var key = migKey(g.kind, c.id);
+      var cb = el("input", { type: "checkbox" });
+      cb.checked = !!migPicked[key];
+      cb.disabled = c.state === "blocked";
+      cb.addEventListener("change", function () {
+        migPicked[key] = cb.checked;
+        updateMigCount();
+      });
+
+      var bits = [];
+      if (c.size) bits.push(humanSize(c.size));
+      if (c.state === "exists") bits.push("目标端已有，跳过");
+      else if (c.state === "blocked") bits.push(c.note || "不可搬运");
+
+      box.appendChild(el("label", { class: "check", style: "padding:5px 0;border-bottom:1px solid #21262d" }, [
+        cb,
+        el("span", { style: "flex:1;min-width:0" }, [
+          el("span", { text: c.title }),
+          bits.length ? el("span", { class: "desc", text: bits.join("　") }) : null,
+          c.subtitle && c.subtitle !== c.title ? el("span", { class: "desc", text: c.subtitle }) : null
+        ])
+      ]));
+    });
+    return box;
+  }
+
+  // 勾选变化时只刷新计数与按钮状态，不重绘整棵列表——
+  // 重绘会让刚点的那一项失去焦点，键盘操作跑不了。
+  function updateMigCount() {
+    var n = 0;
+    Object.keys(migPicked).forEach(function (k) { if (migPicked[k]) n++; });
+    var cnt = document.getElementById("mig-count");
+    if (cnt) cnt.textContent = "已选 " + n + " 项";
+    var btn = document.getElementById("btn-mig-run");
+    if (btn) btn.disabled = n === 0;
+  }
+
+  function migPickAll(on) {
+    if (!migSurvey) return;
+    migGroups(migSurvey).forEach(function (g) {
+      g.list.forEach(function (c) {
+        if (c.state === "blocked") return;
+        migPicked[migKey(g.kind, c.id)] = on;
+      });
+    });
+    renderMigrate();
+  }
+
+  function renderMigrate() {
+    var sv = migSurvey;
+    var box = document.getElementById("mig-body");
+    clear(box);
+
+    box.appendChild(el("div", { class: "row", style: "margin-bottom:12px" }, [
+      pill(migTitle(), "info"),
+      sv.targetRunning ? pill("目标端正在运行", "warn") : null
+    ]));
+
+    if (sv.targetRunning) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-bottom:12px" }, [
+        el("b", { text: "目标端客户端还在运行。" }),
+        el("div", { text: "搬运可以照做，但会话列表是它启动时读进内存的，要重启后才会出现搬运来的历史。" })
+      ]));
+    }
+    (sv.warnings || []).forEach(function (w) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-bottom:10px", text: w }));
+    });
+
+    var total = 0;
+    migGroups(sv).forEach(function (g) {
+      total += g.list.length;
+      if (g.list.length) box.appendChild(renderMigGroup(g));
+    });
+
+    if (!total) {
+      box.appendChild(el("div", { class: "note ok", text: "另一侧没有可搬运的内容。" }));
+      return;
+    }
+
+    box.appendChild(el("div", { class: "row", style: "margin-top:14px" }, [
+      el("button", { class: "primary", id: "btn-mig-run", text: "开始搬运", onclick: runMigrate }),
+      el("button", { class: "ghost", text: "全选待搬项", onclick: function () { migPickAll(true); } }),
+      el("button", { class: "ghost", text: "全不选", onclick: function () { migPickAll(false); } }),
+      el("span", { class: "hint", id: "mig-count", style: "margin:0" })
+    ]));
+    box.appendChild(el("p", { class: "hint", text: "只新增，绝不覆盖：目标端已有的文件与索引行一律跳过。写索引前会先整份备份目标端数据库（含 -wal / -shm）。" }));
+    updateMigCount();
+  }
+
+  function runMigrate() {
+    if (busy || !migSurvey) return;
+
+    var kinds = [], ids = [];
+    migGroups(migSurvey).forEach(function (g) {
+      var any = false;
+      g.list.forEach(function (c) {
+        if (migPicked[migKey(g.kind, c.id)]) {
+          any = true;
+          if (g.kind === "sessions") ids.push(c.id);
+        }
+      });
+      if (any) kinds.push(g.kind);
+    });
+    if (!kinds.length) return;
+
+    busy = true;
+    var btn = document.getElementById("btn-mig-run");
+    if (btn) { btn.disabled = true; btn.textContent = "正在搬运…"; }
+
+    api("/api/migrate/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: migFrom, to: migTo, kinds: kinds, sessionIds: ids })
+    }).then(function (rep) {
+      renderMigReport(rep);
+      toast("搬运完成：复制 " + rep.copiedFiles + " 个文件，写入 " + rep.rowsInserted + " 条索引。", "ok");
+    }).catch(function (e) {
+      toast("搬运失败：" + e.message, "bad");
+      if (btn) { btn.disabled = false; btn.textContent = "开始搬运"; }
+    }).then(function () { busy = false; });
+  }
+
+  function renderMigReport(rep) {
+    var box = document.getElementById("mig-body");
+    clear(box);
+
+    box.appendChild(el("div", { class: "note ok", style: "margin-bottom:12px" }, [
+      el("b", { text: "搬运完成。" }),
+      el("div", { text: "重新启动" + (backendById(migTo) || {}).displayName + "客户端，即可在列表里看到搬运来的历史。" })
+    ]));
+
+    var rows = [
+      ["整项跳过", rep.skippedItems ? rep.skippedItems + " 项（目标端已有）" : "0 项"],
+      ["复制文件", rep.copiedFiles + " 个（跳过已存在 " + rep.skippedFiles + " 个）"],
+      ["写入索引", rep.rowsInserted + " 行（已存在 " + rep.rowsSkipped + " 行）"]
+    ];
+    if (rep.backupDir) rows.push(["数据库备份", rep.backupDir]);
+
+    box.appendChild(el("dl", { class: "kv" }, rows.map(function (r) {
+      return [el("dt", { text: r[0] }), el("dd", { text: r[1] })];
+    }).reduce(function (a, b) { return a.concat(b); }, [])));
+
+    (rep.warnings || []).forEach(function (w) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+    });
+
+    box.appendChild(el("div", { class: "row", style: "margin-top:14px" }, [
+      el("button", { text: "重新扫描", onclick: loadMigrate })
+    ]));
+  }
+
   // ---------- 启动 ----------
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
   document.getElementById("btn-quit").addEventListener("click", quit);
+  document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);
+  document.getElementById("btn-mig-swap").addEventListener("click", function () {
+    var t = migFrom;
+    migFrom = migTo;
+    migTo = t;
+    document.getElementById("mig-direction").textContent = migTitle();
+    if (migSurvey) loadMigrate();
+  });
   document.getElementById("native").addEventListener("change", function (ev) {
     nativeMode = ev.target.checked;
     loadPreview();
@@ -600,9 +847,20 @@
     renderBanner();
     if (target) loadPreview();
 
+    // 搬运的默认方向是"从另一侧搬向宿主档位"：两台都装着时，用户想要的
+    // 就是把不常开的那一侧的历史并进自己在用的这一侧。
+    migTo = st.hostId || null;
+    var other = st.backends.filter(function (b) { return b.id !== st.hostId; })[0];
+    migFrom = other ? other.id : null;
+    document.getElementById("mig-direction").textContent = migFrom ? migTitle() : "";
+    document.getElementById("btn-mig-scan").disabled = !(migFrom && migTo);
+
     // 支持 ?doctor=1 直接跑一遍体检。做成深链接是因为"先检查一下"
     // 往往是想反复做的事，可以把它存成书签而不用每次点按钮。
-    if (new URLSearchParams(location.search).get("doctor") === "1") runDoctor();
+    var q = new URLSearchParams(location.search);
+    if (q.get("doctor") === "1") runDoctor();
+    // ?migrate=1 同理：想同步历史时直接点书签就能到扫描结果。
+    if (q.get("migrate") === "1" && migFrom && migTo) loadMigrate();
   }).catch(function (e) {
     document.getElementById("banner").appendChild(
       el("div", { class: "note bad", text: "无法读取状态：" + e.message })
