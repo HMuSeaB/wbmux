@@ -265,3 +265,92 @@ $ wbmux run intl --dry-run
 
 调查中另有一类风险需要提醒：某些同类项目只提供 README、
 二进制通过群文件分发。这类产物无法审计，不建议使用。
+
+## 8. "远程控制"（claw 渠道）在切换后端后的行为
+
+这一节是对 FAQ「切换后"远程控制"还能用吗？」的证据支撑。
+
+### 它是什么
+
+`claw` 是远程控制的内部代号：绑定 IM 渠道（微信客服 / 企业微信 / QQ / 飞书 /
+钉钉 / 元宝 / Slack / Discord / Telegram 等），从 IM 侧给本机 Agent 下发任务。
+代码注释（`ProductFeature["RemoteControl"]`）：
+
+> 远程控制功能总开关。默认启用；仅当显式设置为 false 时才禁用
+> `/remote-control` 命令、Web UI 远程控制入口及相关渠道管理 API。
+
+注意"默认启用"这一语义——**未配置即为开**。实测两套 `product.json` 的
+`productFeatures` 里都没有显式设置 `RemoteControl`，因此两侧功能都是开着的。
+
+### 连接器代码两侧完全相同
+
+从两套 `app.asar` 中提取渠道类型定义：
+
+```
+国内版  CLAW_CHANNEL_TYPES = ["feishu","wecomaibot","qq","dingtalk","yuanbao",
+        "weixinClawBot","wecomIOA","wechatkf","slack","discord","wecomNew",
+        "custom","wechatmp","telegram","mobileApp"]        # 15 项
+国际版  CLAW_CHANNEL_TYPES = [……同上……,"telegram"]          # 14 项
+```
+
+唯一差别是国内版多一个 `mobileApp`。其余 14 个渠道两边都实现了。
+渠道字符串计数也一致（`claw.channel.` 196 / 197，各具体渠道均 6 / 6）。
+
+### 渠道是客户端主动外连，不经过 WorkBuddy 后端
+
+两套 asar 中出现的 WebSocket 主机**完全一致**，且都是 IM 服务商的官方地址：
+
+| 主机 | 国内版 | 国际版 | 归属 |
+|---|---|---|---|
+| `wss://openws.work.weixin.qq.com` | 13 | 13 | 企业微信官方 |
+| `wss://gateway.discord.gg` | 1 | 1 | Discord 官方 |
+| `wss://bot-wss.yuanbao.tencent.com` | 1 | 1 | 腾讯元宝 |
+
+`product.json` 里没有任何 `ws://` / `wss://` 地址，说明中继主机不是从后端配置
+下发的。渠道注册走的是 Electron 主进程与渲染进程之间的本地 RPC
+（`CLAW_RPC_CHANNELS`：`claw:registerChannel`、`claw:unregisterChannel`、
+`claw:getChannelStatus` 等），不是后端 HTTP。
+
+### 唯一的后端调用是 fail-open 的
+
+```
+CLAW_CONTROL_PATH_TEMPLATE = "/v2/enterprises/{enterpriseId}/claw/control"
+```
+
+代码注释：
+
+> 启用后，登录的企业账号（`account.enterpriseId` 非空）会每 5 分钟查询一次
+> GET /v2/enterprises/:enterpriseId/claw/control …… 字段缺失 / 非企业 /
+> 任何 HTTP / 解析 / 网络异常一律 fail-open（masterEnabled=true、channels 空）
+
+即接错后端时这条管控查不到，功能**保持开启**。
+
+### 但渠道入口可见性跟随宿主安装
+
+`ChannelSlack` / `ChannelDiscord` / `ChannelTelegram` / `ChannelWechatKf`
+住在 `productFeatures` 里，而该块被整块透传。实测（国内宿主 → 国际后端）：
+
+```
+源 productFeatures 124 项 → 产物 124 项，深度相等 == True
+
+产物中：ChannelSlack=False  ChannelDiscord=False  ChannelTelegram=False
+        ChannelWechatKf=True  EnableClawChannelControl=True
+对照（国际后端本该用的值）：
+        ChannelSlack=True   ChannelDiscord=True   ChannelTelegram=True
+        ChannelWechatKf=False
+```
+
+所以切到国际后端后，Slack / Discord / Telegram 的**入口仍被隐藏**。
+底层能力在，只是 feature flag 没跟着后端走。
+
+这是**有意的取舍**而非疏漏：`productFeatures` 里另有 `ImageGen`、
+`BrowserUse`、`ComputerUse`、`TencentDocsKnowledge`、`ImaKnowledge` 等
+大量与后端无关的开关（两侧共 23 + 31 项不对称），整块按后端改写会误伤它们。
+而渠道跟用户的 IM 账号和地区更相关，跟模型后端无关——
+用微信的人即使偶尔切到国际后端，多半还是想用微信渠道。
+
+### 治理缺口（仅企业账号）
+
+`EnableEnterpriseLicenseCheck` 国内为 `true`、国际缺失。企业渠道管控按
+`endpoint` 走，故国内企业账号若用国际宿主连国际后端，该管控 fail-open。
+个人账号无影响。此项**未实测**，由代码路径推导。

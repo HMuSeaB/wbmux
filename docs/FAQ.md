@@ -78,6 +78,52 @@ wbmux run intl --dry-run
 其余一律保持宿主原样——特别是 `updates`（避免国内版被引导去拉国际版安装包）
 和 `productName`（宿主身份）。
 
+`productFeatures` 整块（国内 124 项 / 国际 132 项）也**原样透传**，一项不动。
+它里面装着大量与后端无关的功能开关（`ImageGen`、`BrowserUse`、`ComputerUse`、
+`TencentDocsKnowledge` 等），按后端去改会误伤一堆东西。
+但这也带来一个真实限制，见下一节。
+
+## 切换后"远程控制"还能用吗？
+
+能。但**渠道入口跟随宿主安装，不随后端**——这是目前已知最需要留意的限制。
+
+先说结论的依据。"远程控制"（内部代号 `claw`）指的是通过 IM 渠道
+（微信客服 / 企业微信 / QQ / 飞书 / 钉钉 / 元宝 / Slack / Discord / Telegram 等）
+远程给本机 Agent 下发任务。实测两套安装的 `app.asar`：
+
+1. **连接器代码两侧完全相同**。渠道类型定义国内 15 项、国际 14 项，
+   唯一差别是国内多一个 `mobileApp`；其余 14 个渠道两边都实现了。
+   总开关 `RemoteControl` 两边都没显式设置——按代码注释是"默认启用"。
+2. **渠道是客户端主动外连 IM 服务商的官方网关**，不经过 WorkBuddy 后端。
+   两侧 asar 里的 WebSocket 主机完全一致，例如企业微信
+   `wss://openws.work.weixin.qq.com`、Discord `wss://gateway.discord.gg`。
+   所以"渠道能不能连上"与你连哪个后端无关。
+3. **唯一涉及后端的调用是企业渠道管控** `GET /v2/enterprises/{id}/claw/control`，
+   而且是 **fail-open**：代码注释明确写"任何 HTTP / 解析 / 网络异常一律
+   fail-open（masterEnabled=true）"。接错后端最坏情况是这条管控查不到，
+   功能照常开着。
+
+所以功能不会坏。但渠道入口的**可见性**由 `productFeatures` 里的
+`ChannelSlack` / `ChannelDiscord` / `ChannelTelegram` / `ChannelWechatKf` 决定，
+而这块整块透传宿主，于是：
+
+| 宿主安装 | 目标后端 | 菜单里能看到的渠道 |
+|---|---|---|
+| 国内版 | 国内 | 微信客服、企微、QQ、飞书、钉钉、元宝 |
+| 国内版 | 国际 | **同上**（Slack / Discord / Telegram 入口被隐藏） |
+| 国际版 | 国际 | Slack、Discord、Telegram |
+| 国际版 | 国内 | **同上**（微信客服入口被隐藏） |
+
+注意措辞：不是"连不上"，是**入口被功能开关隐藏**。底层能力都在。
+
+**怎么选宿主**：渠道跟你的 IM 账号和地区更相关，而不是跟模型后端相关。
+所以按"你平时用哪套渠道"来挑宿主，而不是按"你这次连哪个后端"。
+国内用户想同时用两个后端，用国内版安装做宿主更顺手。
+
+**一个治理缺口**（仅影响企业账号）：`EnableEnterpriseLicenseCheck` 国内为
+`true`、国际缺失，企业渠道管控按 `endpoint` 走。因此国内企业账号若用国际
+宿主连国际后端，这条管控会 fail-open，即管控策略失效。个人账号无影响。
+
 ## 会不会有法律风险？
 
 `wbmux` 不分发任何腾讯的产物。它只在运行时读你自己安装里的配置文件，
