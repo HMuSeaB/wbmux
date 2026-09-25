@@ -182,14 +182,15 @@ func TestExeInDirPerPlatform(t *testing.T) {
 
 func TestPathLookup(t *testing.T) {
 	fs := newFakeFS()
-	dir := `C:\bin`
+	// 目录刻意不带盘符：Windows 路径里的 `C:` 含冒号，在类 Unix 上会被
+	// filepath.SplitList 当成分隔符，把 `C:\bin` 切成 `C` 和 `\bin` 两段。
+	// 这个测试要验的是"PATH 会被查询"，与路径风格无关。
+	dir := "/opt/bin"
 	exe := filepath.Join(dir, "WorkBuddyAI.exe")
 	fs.addFile(exe, nil)
 
-	// PATH 的分隔符随平台而变（Windows 分号、类 Unix 冒号），
-	// 用 filepath.ListSeparator 拼装，否则在 Linux/macOS 上
-	// filepath.SplitList 会把整串当成一个目录，测试必挂。
-	pathValue := strings.Join([]string{`C:\other`, dir}, string(filepath.ListSeparator))
+	// 分隔符随平台而变（Windows 分号、类 Unix 冒号）。
+	pathValue := strings.Join([]string{"/opt/other", dir}, string(filepath.ListSeparator))
 
 	p := fs.probe("windows", `C:\Users\tester`, map[string]string{
 		"PATH": pathValue,

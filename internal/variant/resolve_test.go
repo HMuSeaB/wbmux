@@ -125,3 +125,98 @@ func TestExeBelongsToOther(t *testing.T) {
 		t.Error("无法识别的文件名不该被下判断")
 	}
 }
+
+// 绝对路径判断必须同时认两种平台的写法。
+//
+// 回归测试：原先直接用 filepath.IsAbs，在 Linux/macOS 上会把
+// `D:\App\App.exe` 判为相对路径，随后 filepath.Abs 把它拼到工作目录后面，
+// 路径被悄悄改坏，用户只看到"指定的主程序不存在"。
+func TestIsAbsolutePath(t *testing.T) {
+	cases := map[string]bool{
+		// Windows 盘符形式
+		`D:\App\App.exe`:   true,
+		`d:/App/App.exe`:   true,
+		`C:\`:              true,
+		`D:App`:            false, // 盘符相对路径，不是绝对路径
+		`D:App\App.exe`:    false,
+		`\\server\share\x`: true,  // UNC
+		`\App\App.exe`:     false, // 仅根相对
+
+		// 类 Unix 形式
+		"/opt/app/app": true,
+		"/":            true,
+		"relative/x":   false,
+		"./x":          false,
+		"../x":         false,
+		"":             false,
+	}
+	for in, want := range cases {
+		if got := IsAbsolutePath(in); got != want {
+			t.Errorf("IsAbsolutePath(%q) = %v, 期望 %v", in, got, want)
+		}
+	}
+}
+
+// Windows 路径在任何平台上都不该被拼上工作目录。
+//
+// 不断言字符串完全相等：filepath.Clean 会把分隔符归一到当前平台的风格
+// （`D:/App/App.exe` 在 Windows 上变成 `D:\App\App.exe`），这属于正常行为。
+// 真正要守住的是"没被拼上工作目录"。
+func TestNormalizePathKeepsForeignAbsolutePathsIntact(t *testing.T) {
+	cases := map[string]string{
+		`D:\App\App.exe`:    "App.exe",
+		`D:/App/App.exe`:    "App.exe",
+		`\\srv\share\a.exe`: "a.exe",
+		`/opt/app/tool`:     "tool",
+	}
+	for in, wantBase := range cases {
+		got, err := normalizePath(in)
+		if err != nil {
+			t.Fatalf("normalizePath(%q) 失败: %v", in, err)
+		}
+		if !IsAbsolutePath(got) {
+			t.Errorf("normalizePath(%q) = %q, 不再是绝对路径", in, got)
+		}
+		if base := baseName(got); base != wantBase {
+			t.Errorf("normalizePath(%q) = %q, 文件名 %q 期望 %q", in, got, base, wantBase)
+		}
+		// 被拼上工作目录的典型特征是路径里出现了 `..` 或层级变多。
+		if strings.Contains(got, "..") {
+			t.Errorf("normalizePath(%q) = %q, 疑似被拼上了工作目录", in, got)
+		}
+	}
+}
+
+func TestNormalizePathResolvesRelative(t *testing.T) {
+	got, err := normalizePath("relative/x.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("相对路径未被解析为绝对路径: %q", got)
+	}
+
+	if _, err := normalizePath(""); err == nil {
+		t.Error("空路径应报错")
+	}
+	if _, err := normalizePath("   "); err == nil {
+		t.Error("纯空白路径应报错")
+	}
+}
+
+// 端到端：给 Windows 路径、不给档位，应当靠路径推断出国际版。
+func TestResolveFromExeWithWindowsPathOnAnyPlatform(t *testing.T) {
+	fs := twoInstallFS()
+	p := withRegistry(fs)
+
+	id, inst, err := Resolve(p, "", `D:\WorkBuddyAI\WorkBuddyAI.exe`)
+	if err != nil {
+		t.Fatalf("Resolve 失败: %v", err)
+	}
+	if id != Intl {
+		t.Errorf("id = %q, 期望 intl", id)
+	}
+	if inst.Executable != `D:\WorkBuddyAI\WorkBuddyAI.exe` {
+		t.Errorf("Executable = %q", inst.Executable)
+	}
+}

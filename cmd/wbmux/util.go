@@ -4,16 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // absPath 把用户输入的路径转成绝对路径。
 //
-// 先展开 ~，再相对当前工作目录取绝对路径：用户手写 --exe 时
-// 常带波浪号或相对路径，直接用会导致后续比较与展示都不一致。
+// 先展开 ~，再对相对路径取绝对路径：用户手写 --exe 时常用波浪号或相对路径，
+// 直接拿去做后续比较与展示都不一致。
+//
+// 是否"绝对"由 variant.IsAbsolutePath 判断而不是 filepath.IsAbs：
+// 后者按当前平台判断，在 Linux/macOS 上会把 `D:\App\App.exe` 当成相对路径
+// 并拼上工作目录，把路径悄悄改坏。
 func absPath(p string) (string, error) {
-	p = expandHome(p)
+	p = expandHome(strings.TrimSpace(p))
 	if p == "" {
 		return "", fmt.Errorf("路径为空")
+	}
+	if variant.IsAbsolutePath(p) {
+		return filepath.Clean(p), nil
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
