@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>wbmux — 切换 WorkBuddy 后端</title>
+<style>
+  /* 配色沿用命令行的语义：青=标题、绿=通过、黄=警告、红=失败。
+     不用外部字体与图标，界面必须能在完全离线的机器上渲染。 */
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --dim: #8b949e;
+    --faint: #6e7681;
+    --accent: #39c5cf;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
+
+  header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  header.top h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
+  header.top h1 span { color: var(--accent); }
+  .ver { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .lede { color: var(--dim); margin: 0 0 22px; font-size: 13px; }
+
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  section > h2 {
+    font-size: 13px; text-transform: none; letter-spacing: .3px;
+    margin: 0 0 14px; color: var(--dim); font-weight: 600;
+  }
+  .hint { color: var(--faint); font-size: 12px; margin: 10px 0 0; }
+
+  /* ---- 通用小组件 ---- */
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card.selectable { cursor: pointer; transition: border-color .12s, background .12s; }
+  .card.selectable:hover { border-color: #4b5563; }
+  .card.selected { border-color: var(--accent); background: #12242a; }
+  .card.disabled { opacity: .5; cursor: not-allowed; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .card-title { font-weight: 600; font-size: 15px; }
+  .card-sub { color: var(--faint); font-size: 12px; font-family: var(--mono); }
+
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; border: 1px solid transparent;
+    vertical-align: middle;
+  }
+  .pill.ok   { color: var(--green);  border-color: #1f4d29; background: #0d1f13; }
+  .pill.warn { color: var(--yellow); border-color: #4d3c12; background: #211a08; }
+  .pill.bad  { color: var(--red);    border-color: #5c1f1c; background: #210d0d; }
+  .pill.info { color: var(--blue);   border-color: #1c3a5e; background: #0d1b2a; }
+  .pill.ghost { color: var(--faint); border-color: var(--border); background: transparent; }
+
+  dl.kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12.5px; }
+  dl.kv dt { color: var(--faint); white-space: nowrap; }
+  dl.kv dd { margin: 0; font-family: var(--mono); word-break: break-all; color: var(--dim); }
+
+  .path { font-family: var(--mono); font-size: 12px; color: var(--dim); word-break: break-all; }
+
+  button {
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 7px 15px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--border); background: #21262d; color: var(--text);
+    transition: background .12s, border-color .12s;
+  }
+  button:hover:not(:disabled) { background: #2d333b; border-color: #4b5563; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #2a7ff5; border-color: #2a7ff5; }
+  button.danger { color: var(--red); }
+  button.ghost { background: transparent; }
+
+  label.check { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-size: 13px; }
+  label.check input { margin-top: 3px; accent-color: var(--accent); }
+  label.check .desc { color: var(--faint); font-size: 12px; display: block; }
+
+  /* ---- 提示条 ---- */
+  .note {
+    border-radius: 8px; padding: 12px 14px; font-size: 13px;
+    border: 1px solid var(--border); background: var(--panel-2); margin-bottom: 14px;
+  }
+  .note.warn { border-color: #4d3c12; background: #1d1808; color: #e8d9a8; }
+  .note.bad  { border-color: #5c1f1c; background: #1f0f0e; color: #f0c2bf; }
+  .note.ok   { border-color: #1f4d29; background: #0d1c11; color: #b9e6c3; }
+  .note b { color: #fff; }
+  .note code { font-family: var(--mono); font-size: 12px; background: #00000040; padding: 1px 5px; border-radius: 4px; }
+  .note ul { margin: 6px 0 0; padding-left: 20px; }
+
+  /* ---- 改动清单 ---- */
+  table.changes { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.changes th {
+    text-align: left; font-weight: 600; color: var(--faint); font-size: 11.5px;
+    padding: 0 10px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  table.changes td { padding: 7px 10px 7px 0; border-bottom: 1px solid #21262d; vertical-align: top; }
+  table.changes td.field { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
+  table.changes td.from { font-family: var(--mono); color: var(--faint); word-break: break-all; }
+  table.changes td.to { font-family: var(--mono); color: var(--green); word-break: break-all; }
+  table.changes tr:last-child td { border-bottom: none; }
+
+  .cmdline {
+    font-family: var(--mono); font-size: 12px; color: var(--dim);
+    background: #010409; border: 1px solid var(--border); border-radius: 7px;
+    padding: 10px 12px; margin-top: 12px; white-space: pre-wrap; word-break: break-all;
+  }
+
+  /* ---- 体检 ---- */
+  .check { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  .check:last-child { border-bottom: none; }
+  .check .lvl { flex: 0 0 52px; }
+  .check .body { flex: 1; min-width: 0; }
+  .check .nm { font-weight: 600; }
+  .check .dt { color: var(--dim); font-size: 12.5px; word-break: break-word; }
+  .check .ht { color: var(--yellow); font-size: 12px; margin-top: 3px; }
+
+  footer { margin-top: 22px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .foot-note { color: var(--faint); font-size: 12px; }
+
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 6px;
+    border: 2px solid #ffffff30; border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: #21262d; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; box-shadow: 0 6px 22px #0008;
+    max-width: 90vw; z-index: 20;
+  }
+  .toast.bad { border-color: #5c1f1c; color: #f0c2bf; }
+  .toast.ok  { border-color: #1f4d29; color: #b9e6c3; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1><span>wbmux</span></h1>
+    <span class="ver" id="ver"></span>
+  </header>
+  <p class="lede">用一份安装连两套后端。改写的是客户端启动时读取的产品配置，安装目录本身不动。</p>
+
+  <div id="banner"></div>
+
+  <section>
+    <h2>本机安装</h2>
+    <div class="grid2" id="installs"></div>
+    <p class="hint" id="host-note"></p>
+  </section>
+
+  <section>
+    <h2>目标后端</h2>
+    <div class="grid2" id="backends"></div>
+    <p class="hint">选中哪个后端，就把宿主客户端指向哪个后端。切换不影响另一套安装本身。</p>
+    <div style="margin-top:14px">
+      <label class="check">
+        <input type="checkbox" id="native">
+        <span>原生模式
+          <span class="desc">不做任何改写，直接用目标档位自己的安装启动。用于对照排错：覆盖模式异常时，用它判断问题出在覆盖机制还是客户端本身。</span>
+        </span>
+      </label>
+    </div>
+  </section>
+
+  <section id="preview-sec" hidden>
+    <h2>将要做的改动</h2>
+    <div id="preview-body"></div>
+  </section>
+
+  <section>
+    <h2>体检</h2>
+    <div class="row">
+      <button id="btn-doctor">检查当前配置</button>
+      <span class="hint" style="margin:0">扫描安装包，确认客户端仍然支持配置覆盖机制。</span>
+    </div>
+    <div id="doctor-body" style="margin-top:12px"></div>
+  </section>
+
+  <footer>
+    <span class="foot-note" id="settings-note"></span>
+    <button class="ghost danger" id="btn-quit">关闭界面</button>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // 令牌由服务端写进访问地址，作为后续接口调用的凭据。
+  // 界面不把它存到 localStorage：每次启动都是新的，没有跨会话复用的必要。
+  var TOKEN = new URLSearchParams(location.search).get("t") || "";
+
+  var state = null;      // /api/state 的结果
+  var target = null;     // 当前选中的目标后端 id
+  var nativeMode = false;
+  var busy = false;
+
+  // ---------- 工具 ----------
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === "class") n.className = v;
+        else if (k === "text") n.textContent = v;   // 一律走 textContent，路径里出现尖括号也不会被解析
+        else if (k === "html") n.innerHTML = v;
+        else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), v);
+        else n.setAttribute(k, v);
+      });
+    }
+    (kids || []).forEach(function (c) {
+      if (c === null || c === undefined || c === false) return;
+      n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return n;
+  }
+
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ "X-Wbmux-Token": TOKEN }, opts.headers || {});
+    opts.headers = headers;
+    return fetch(path, opts).then(function (res) {
+      return res.json().catch(function () { return { error: "响应无法解析" }; })
+        .then(function (data) {
+          if (!res.ok) throw new Error(data && data.error ? data.error : "HTTP " + res.status);
+          return data;
+        });
+    });
+  }
+
+  function toast(msg, kind) {
+    var t = el("div", { class: "toast" + (kind ? " " + kind : ""), text: msg });
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, kind === "bad" ? 6000 : 3000);
+  }
+
+  function pill(text, kind) { return el("span", { class: "pill " + kind, text: text }); }
+
+  // ---------- 渲染：顶部 ----------
+
+  function renderHeader() {
+    // 版本号由构建期注入，本地 go build 时是 dev。
+    // 直接拼 "v" 会显示成 "vdev"，所以只在像版本号时才加前缀。
+    var v = state.version || "";
+    document.getElementById("ver").textContent =
+      /^\d/.test(v) ? "v" + v : v;
+    document.getElementById("settings-note").textContent =
+      state.settings.path ? "设置文件：" + state.settings.path : "";
+  }
+
+  // ---------- 渲染：提示条 ----------
+
+  function renderBanner() {
+    var box = document.getElementById("banner");
+    clear(box);
+
+    if (state.hostNote) {
+      box.appendChild(el("div", { class: "note bad" }, [
+        el("b", { text: "找不到可用的宿主客户端。" }),
+        el("div", { text: state.hostNote }),
+        el("div", { class: "hint", text: "确认至少安装了一套客户端，或用 --exe 显式指定主程序路径。" })
+      ]));
+      return;
+    }
+
+    // 目标与宿主不同档位时，说明会被影响的已知功能。
+    // 放在选择之前而不是埋在文档里：这是切换后端唯一的功能性代价。
+    if (target && target !== state.hostId) {
+      box.appendChild(el("div", { class: "note warn" }, [
+        el("b", { text: "「远程控制」里的微信系渠道会失效。" }),
+        el("div", { text: "微信小程序 / 微信客服 / 微信 bot / 企微回复都走目标后端域名下的 /v2/backgroundagent/… 代理接口，而那个域名正是被改写的 endpoint 字段。" }),
+        el("div", { style: "margin-top:6px", text: "Slack / Discord / Telegram / 企微 WebSocket 模式是客户端直连服务商，不受影响。" }),
+        el("div", { style: "margin-top:6px", text: "更麻烦的是入口仍然会显示——渠道开关住在 productFeatures 里，该块整块透传宿主，所以会「看得见、点不动」。" })
+      ]));
+    }
+  }
+
+  // ---------- 渲染：本机安装 ----------
+
+  function renderInstalls() {
+    var box = document.getElementById("installs");
+    clear(box);
+
+    state.installs.forEach(function (inst) {
+      var isHost = inst.id === state.hostId;
+      var card = el("div", { class: "card" });
+
+      var head = el("div", { class: "card-head" }, [
+        el("span", { class: "card-title", text: inst.displayName }),
+        inst.found
+          ? pill(isHost ? "当前宿主" : "已安装", isHost ? "ok" : "info")
+          : pill("未安装", "ghost")
+      ]);
+      card.appendChild(head);
+
+      if (!inst.found) {
+        card.appendChild(el("div", { class: "path", text: (inst.problems || []).join("；") || "未在本机找到。" }));
+        box.appendChild(card);
+        return;
+      }
+
+      var meta = [];
+      if (inst.version) meta.push(inst.version + (inst.build ? " (" + inst.build + ")" : ""));
+      if (inst.source) meta.push("定位方式：" + inst.source);
+      card.appendChild(el("div", { class: "card-sub", text: meta.join("　") }));
+
+      card.appendChild(el("dl", { class: "kv", style: "margin-top:9px" }, [
+        el("dt", { text: "主程序" }), el("dd", { text: inst.executable }),
+        el("dt", { text: "数据目录" }), el("dd", { text: inst.dataDir })
+      ]));
+
+      box.appendChild(card);
+    });
+  }
+
+  // ---------- 渲染：后端 ----------
+
+  function renderBackends() {
+    var box = document.getElementById("backends");
+    clear(box);
+
+    state.backends.forEach(function (b) {
+      var canRun = !!state.canRun[b.id];
+      var selected = target === b.id;
+
+      var cls = "card selectable";
+      if (selected) cls += " selected";
+      if (!canRun) cls += " disabled";
+
+      var card = el("div", {
+        class: cls,
+        onclick: function () {
+          if (!canRun || busy) return;
+          target = b.id;
+          renderBackends();
+          renderBanner();
+          loadPreview();
+        }
+      });
+
+      var badges = [];
+      if (b.isHost) badges.push(pill("宿主", "ok"));
+      if (b.installed) badges.push(pill("本机已装", "info"));
+      if (selected) badges.push(pill("已选中", "info"));
+
+      card.appendChild(el("div", { class: "card-head" }, [
+        el("span", { class: "card-title", text: b.displayName }),
+        el("span", {}, badges)
+      ]));
+
+      card.appendChild(el("dl", { class: "kv" }, [
+        el("dt", { text: "后端" }), el("dd", { text: b.endpoint }),
+        el("dt", { text: "数据目录" }), el("dd", { text: "~/" + b.dataFolderName })
+      ]));
+
+      if (!canRun) {
+        card.appendChild(el("div", { class: "hint", text: "宿主不可用，无法启动。" }));
+      }
+
+      box.appendChild(card);
+    });
+
+    document.getElementById("native").checked = nativeMode;
+  }
+
+  // ---------- 渲染：预览 ----------
+
+  function splitChange(s) {
+    var m = /^(.+?):\s(.*?)\s→\s(.*)$/.exec(s);
+    return m ? { field: m[1], from: m[2], to: m[3] } : { raw: s };
+  }
+
+  function renderPreview(pv) {
+    var sec = document.getElementById("preview-sec");
+    var box = document.getElementById("preview-body");
+    sec.hidden = false;
+    clear(box);
+
+    box.appendChild(el("div", { class: "row", style: "margin-bottom:12px" }, [
+      pill(pv.hostName + " → " + pv.targetName, "info"),
+      pv.native ? pill("原生模式：不改写配置", "warn") : null,
+      pill("目标 " + pv.targetUrl, "ghost")
+    ]));
+
+    if (!pv.native && pv.changes && pv.changes.length) {
+      var rows = pv.changes.map(function (c) {
+        var p = splitChange(c);
+        if (p.raw) {
+          return el("tr", {}, [el("td", { class: "from", colspan: "3", text: p.raw })]);
+        }
+        return el("tr", {}, [
+          el("td", { class: "field", text: p.field }),
+          el("td", { class: "from", text: p.from }),
+          el("td", { class: "to", text: p.to })
+        ]);
+      });
+
+      box.appendChild(el("table", { class: "changes" }, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", { text: "字段" }), el("th", { text: "当前" }), el("th", { text: "改为" })
+        ])]),
+        el("tbody", {}, rows)
+      ]));
+      box.appendChild(el("p", { class: "hint", text: "其余字段原样透传，包括 productName / updates / productFeatures。" }));
+    } else if (pv.native) {
+      box.appendChild(el("p", { class: "hint", text: "原生模式不生成补丁配置，直接启动目标档位自己的安装。" }));
+    } else {
+      box.appendChild(el("p", { class: "hint", text: "无需改写：宿主与目标后端已经是同一档位。" }));
+    }
+
+    if (pv.warnings && pv.warnings.length) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:12px" },
+        [el("b", { text: "提示" })].concat(pv.warnings.map(function (w) {
+          return el("div", { text: w });
+        }))));
+    }
+
+    box.appendChild(el("dl", { class: "kv", style: "margin-top:14px" }, [
+      el("dt", { text: "主程序" }), el("dd", { text: pv.executable }),
+      pv.configPath ? el("dt", { text: "配置" }) : null,
+      pv.configPath ? el("dd", { text: pv.configPath }) : null,
+      el("dt", { text: "数据目录" }), el("dd", { text: pv.dataDir })
+    ]));
+
+    if (pv.commandLine) {
+      box.appendChild(el("div", { class: "cmdline", text: pv.commandLine }));
+    }
+
+    var btn = el("button", {
+      class: "primary",
+      style: "margin-top:14px",
+      text: pv.launched ? "已启动" : "启动客户端",
+      disabled: pv.launched,
+      onclick: launch
+    });
+    btn.id = "btn-launch";
+    box.appendChild(btn);
+  }
+
+  function renderPreviewError(msg) {
+    var sec = document.getElementById("preview-sec");
+    var box = document.getElementById("preview-body");
+    sec.hidden = false;
+    clear(box);
+    box.appendChild(el("div", { class: "note bad", text: msg }));
+  }
+
+  // ---------- 渲染：体检 ----------
+
+  function renderDoctor(rep) {
+    var box = document.getElementById("doctor-body");
+    clear(box);
+
+    box.appendChild(el("div", {
+      class: "note " + (rep.passed ? "ok" : "bad"),
+      style: "margin-bottom:12px",
+      text: rep.summary
+    }));
+
+    rep.checks.forEach(function (c) {
+      var kind = c.level === "OK" ? "ok"
+        : c.level === "警告" ? "warn"
+        : c.level === "失败" ? "bad" : "ghost";
+      box.appendChild(el("div", { class: "check" }, [
+        el("span", { class: "lvl" }, [pill(c.level, kind)]),
+        el("span", { class: "body" }, [
+          el("div", { class: "nm", text: c.name }),
+          c.detail ? el("div", { class: "dt", text: c.detail }) : null,
+          c.hint ? el("div", { class: "ht", text: c.hint }) : null
+        ])
+      ]));
+    });
+  }
+
+  // ---------- 行为 ----------
+
+  function loadPreview() {
+    if (!target) return;
+    renderPreviewError("正在生成预览…");
+    api("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: target, native: nativeMode })
+    }).then(renderPreview).catch(function (e) {
+      renderPreviewError(e.message);
+    });
+  }
+
+  function launch() {
+    if (busy || !target) return;
+    busy = true;
+    var btn = document.getElementById("btn-launch");
+    if (btn) { btn.disabled = true; btn.textContent = "正在启动…"; }
+
+    api("/api/launch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: target, native: nativeMode })
+    }).then(function (pv) {
+      renderPreview(pv);
+      toast("已启动客户端，连接到" + pv.targetName + "后端。", "ok");
+    }).catch(function (e) {
+      toast("启动失败：" + e.message, "bad");
+      if (btn) { btn.disabled = false; btn.textContent = "启动客户端"; }
+    }).then(function () { busy = false; });
+  }
+
+  function runDoctor() {
+    if (busy) return;
+    busy = true;
+    var btn = document.getElementById("btn-doctor");
+    btn.disabled = true;
+    btn.textContent = "检查中…";
+    clear(document.getElementById("doctor-body"));
+    document.getElementById("doctor-body").appendChild(
+      el("div", { class: "hint" }, [el("span", { class: "spinner" }), "正在扫描安装包，这一步比较慢…"])
+    );
+
+    api("/api/doctor?target=" + encodeURIComponent(target || state.hostId || "cn"))
+      .then(renderDoctor)
+      .catch(function (e) {
+        var box = document.getElementById("doctor-body");
+        clear(box);
+        box.appendChild(el("div", { class: "note bad", text: e.message }));
+      })
+      .then(function () {
+        busy = false;
+        btn.disabled = false;
+        btn.textContent = "检查当前配置";
+      });
+  }
+
+  function quit() {
+    api("/api/quit", { method: "POST" })
+      .then(function () {
+        document.body.innerHTML =
+          '<div class="wrap"><div class="note ok">界面已关闭，可以关掉这个标签页了。</div></div>';
+      })
+      .catch(function (e) { toast(e.message, "bad"); });
+  }
+
+  // ---------- 启动 ----------
+
+  document.getElementById("btn-doctor").addEventListener("click", runDoctor);
+  document.getElementById("btn-quit").addEventListener("click", quit);
+  document.getElementById("native").addEventListener("change", function (ev) {
+    nativeMode = ev.target.checked;
+    loadPreview();
+  });
+
+  api("/api/state").then(function (st) {
+    state = st;
+    // 默认选另一套后端——这正是用户打开界面的原因。
+    target = st.backends.filter(function (b) {
+      return b.id !== st.hostId && st.canRun[b.id];
+    }).map(function (b) { return b.id; })[0]
+      || (st.backends.filter(function (b) { return st.canRun[b.id]; })[0] || {}).id
+      || null;
+
+    renderHeader();
+    renderInstalls();
+    renderBackends();
+    renderBanner();
+    if (target) loadPreview();
+
+    // 支持 ?doctor=1 直接跑一遍体检。做成深链接是因为"先检查一下"
+    // 往往是想反复做的事，可以把它存成书签而不用每次点按钮。
+    if (new URLSearchParams(location.search).get("doctor") === "1") runDoctor();
+  }).catch(function (e) {
+    document.getElementById("banner").appendChild(
+      el("div", { class: "note bad", text: "无法读取状态：" + e.message })
+    );
+  });
+
+  // 心跳：服务端在长时间无人访问后会自行退出，避免关掉标签页后
+  // 留下一个没有控制台窗口、只能靠任务管理器结束的残留进程。
+  // 标签页关掉后心跳自然停止，服务端据此判定为空闲。
+  setInterval(function () {
+    api("/api/ping").catch(function () { /* 服务端已退出，忽略 */ });
+  }, 60000);
+})();
+</script>
+</body>
+</html>

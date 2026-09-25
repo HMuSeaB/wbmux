@@ -15,7 +15,14 @@ import (
 func main() {
 	console.EnableUTF8()
 
-	if err := dispatch(os.Args[1:]); err != nil {
+	args := os.Args[1:]
+	// 无参数时区分两种来源：双击启动（Windows 会新开一个只有自己的控制台）
+	// 说明用户不是想敲命令，直接开图形界面；从终端里裸跑则打印帮助。
+	if len(args) == 0 && console.IsExclusiveConsole() {
+		args = []string{"gui"}
+	}
+
+	if err := dispatch(args); err != nil {
 		u := newUI(os.Stderr)
 		u.fail(err.Error())
 		os.Exit(1)
@@ -30,6 +37,8 @@ func dispatch(args []string) error {
 
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "gui", "ui":
+		return cmdGUI(rest)
 	case "run", "r":
 		return cmdRun(rest)
 	case "doctor", "check":
@@ -107,6 +116,7 @@ func printHelp(u *ui) {
   wbmux <命令> [选项]
 
 命令:
+  gui              打开图形界面（双击 wbmux.exe 同此）
   run <后端>       用指定后端启动客户端
   doctor           体检：安装位置、配置、覆盖机制是否仍有效
   list             列出本机探测到的安装与可用后端
@@ -128,6 +138,7 @@ func printHelp(u *ui) {
   -V, --version         打印版本
 
 示例:
+  wbmux gui
   wbmux list
   wbmux doctor
   wbmux run intl
