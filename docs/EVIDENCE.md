@@ -270,6 +270,10 @@ $ wbmux run intl --dry-run
 
 这一节是对 FAQ「切换后"远程控制"还能用吗？」的证据支撑。
 
+> **本节曾给出错误结论。** 早期版本只看到"客户端直连 IM 服务商网关"这一半，
+> 便写成"渠道不经过 WorkBuddy 后端、切换后端不受影响"。继续追查
+> `BgAgentApiClient` 后发现微信系渠道全部走后端代理，故重写本节。
+
 ### 它是什么
 
 `claw` 是远程控制的内部代号：绑定 IM 渠道（微信客服 / 企业微信 / QQ / 飞书 /
@@ -296,36 +300,74 @@ $ wbmux run intl --dry-run
 唯一差别是国内版多一个 `mobileApp`。其余 14 个渠道两边都实现了。
 渠道字符串计数也一致（`claw.channel.` 196 / 197，各具体渠道均 6 / 6）。
 
-### 渠道是客户端主动外连，不经过 WorkBuddy 后端
-
-两套 asar 中出现的 WebSocket 主机**完全一致**，且都是 IM 服务商的官方地址：
-
-| 主机 | 国内版 | 国际版 | 归属 |
-|---|---|---|---|
-| `wss://openws.work.weixin.qq.com` | 13 | 13 | 企业微信官方 |
-| `wss://gateway.discord.gg` | 1 | 1 | Discord 官方 |
-| `wss://bot-wss.yuanbao.tencent.com` | 1 | 1 | 腾讯元宝 |
-
-`product.json` 里没有任何 `ws://` / `wss://` 地址，说明中继主机不是从后端配置
-下发的。渠道注册走的是 Electron 主进程与渲染进程之间的本地 RPC
-（`CLAW_RPC_CHANNELS`：`claw:registerChannel`、`claw:unregisterChannel`、
-`claw:getChannelStatus` 等），不是后端 HTTP。
-
-### 唯一的后端调用是 fail-open 的
+后端接口路径也完全一致，两侧都含：
 
 ```
-CLAW_CONTROL_PATH_TEMPLATE = "/v2/enterprises/{enterpriseId}/claw/control"
+/v2/backgroundagent/localProxy/{register,upload,ping}
+/v2/backgroundagent/wecom/local-proxy/receive
+/v2/backgroundagent/wechatmpProxy/push
+/v2/backgroundagent/wechatkfProxy/{link,bindStatus,bind}
+/v2/backgroundagent/wechatbotProxy${suffix}
+/v2/agentos/localagent/registerWorkspace
 ```
 
-代码注释：
+**即客户端代码不是差异来源，差异在后端有没有实现这些端点。**
 
-> 启用后，登录的企业账号（`account.enterpriseId` 非空）会每 5 分钟查询一次
-> GET /v2/enterprises/:enterpriseId/claw/control …… 字段缺失 / 非企业 /
-> 任何 HTTP / 解析 / 网络异常一律 fail-open（masterEnabled=true、channels 空）
+### 渠道分两类：直连型与代理型
 
-即接错后端时这条管控查不到，功能**保持开启**。
+#### 直连型：客户端直接连服务商，切换后端不影响
 
-### 但渠道入口可见性跟随宿主安装
+| 渠道 | 连接方式 | 证据 |
+|---|---|---|
+| Slack | Socket Mode | `apps.connections.open`（6 处）、`socket_mode`（7 处） |
+| Discord | Gateway | `wss://gateway.discord.gg` |
+| Telegram | 长轮询 | `api.telegram.org`、`getUpdates` |
+| 企微 AIBot | 官方 WS | `wss://openws.work.weixin.qq.com`（13 处） |
+
+判定条件是渠道保存路径里的这段代码：
+
+```js
+if (config.connectionMode === "webhook" || config.registration?.webhookUrl
+    || channelType === "wecomaibot")
+  await this.registerChannelWithBackend(...);
+```
+
+**WebSocket 模式不做后端注册**，所以这几类不依赖后端。
+（对应的开关 `DisableBotWebhookUrl` 注释：*"设置为 true 时，Claw 渠道配置
+仅保留 WebSocket 模式"*。）
+
+#### 代理型：微信系全部走后端，切换后端即失效
+
+| 渠道 | 后端端点 |
+|---|---|
+| **微信小程序** | `POST /v2/backgroundagent/wechatmpProxy/push` |
+| 微信客服 | `POST /v2/backgroundagent/wechatkfProxy/{link,bindStatus,bind}` |
+| 微信 bot | `/v2/backgroundagent/wechatbotProxy/…` |
+| 企微回复 | `POST /v2/backgroundagent/wecom/local-proxy/receive` |
+
+没有 `slackProxy` / `discordProxy` / `telegramProxy` 之类的端点
+（实测计数均为 0），印证了上面的两分法。
+
+### 这些请求打到哪个域名：正是被切换的那个
+
+```js
+// packages/workbuddy-server/src/claw/bg-agent-api-client.ts
+getEndpoint() { return this.productManager.getEndpoint().replace(/\/+$/, ""); }
+
+// ClawService
+resolveApiContext() {
+  const endpoint = this.productManager.getEndpoint().replace(/\/+$/, "");
+  const userId = this.getCurrentUserId();
+  return { endpoint, headers: {...}, userId };
+}
+```
+
+`productManager.getEndpoint()` 返回产品配置的 `endpoint` 字段——
+**就是 `wbmux` 改写的那一项**（`https://www.workbuddy.cn` ↔
+`https://www.workbuddy.ai`）。所以国内宿主连国际后端时，小程序推送会打到
+`https://www.workbuddy.ai/v2/backgroundagent/wechatmpProxy/push`。
+
+### 渠道入口可见性跟随宿主，于是"看得见点不动"
 
 `ChannelSlack` / `ChannelDiscord` / `ChannelTelegram` / `ChannelWechatKf`
 住在 `productFeatures` 里，而该块被整块透传。实测（国内宿主 → 国际后端）：
@@ -340,17 +382,38 @@ CLAW_CONTROL_PATH_TEMPLATE = "/v2/enterprises/{enterpriseId}/claw/control"
         ChannelWechatKf=False
 ```
 
-所以切到国际后端后，Slack / Discord / Telegram 的**入口仍被隐藏**。
-底层能力在，只是 feature flag 没跟着后端走。
+结果：切到国际后端后，微信系入口**仍然显示**，但后端无对应服务 →
+**看得见、点不动**。这比"入口被隐藏"更糟。
 
-这是**有意的取舍**而非疏漏：`productFeatures` 里另有 `ImageGen`、
-`BrowserUse`、`ComputerUse`、`TencentDocsKnowledge`、`ImaKnowledge` 等
-大量与后端无关的开关（两侧共 23 + 31 项不对称），整块按后端改写会误伤它们。
-而渠道跟用户的 IM 账号和地区更相关，跟模型后端无关——
-用微信的人即使偶尔切到国际后端，多半还是想用微信渠道。
+同理，国际版的两个开关（实测值）：
 
-### 治理缺口（仅企业账号）
+| 开关 | 语义（代码注释） | 国内 | 国际 |
+|---|---|---|---|
+| `MobileConnectAppOnly` | 隐藏"连接移动端"面板的小程序 Tab | 缺失→显示 | `true`→隐藏 |
+| `DisableAutomationWechatMiniProgramPush` | 隐藏自动化任务里的"推送到小程序"开关 | 缺失→显示 | `true`→隐藏 |
+| `DisableWechatMiniProgramIntegration` | 隐藏会话列表与 Claw 设置里的小程序入口 | 缺失→显示 | `false`→显示 |
 
-`EnableEnterpriseLicenseCheck` 国内为 `true`、国际缺失。企业渠道管控按
-`endpoint` 走，故国内企业账号若用国际宿主连国际后端，该管控 fail-open。
-个人账号无影响。此项**未实测**，由代码路径推导。
+（`Channel*` 开关其实是厂商表达"这个后端支持哪些渠道"的方式。
+`wbmux` 整块透传后，这套开关与后端脱钩。）
+
+### 企业渠道管控是 fail-open 的
+
+```
+CLAW_CONTROL_PATH_TEMPLATE = "/v2/enterprises/{enterpriseId}/claw/control"
+```
+
+代码注释：
+
+> 启用后，登录的企业账号（`account.enterpriseId` 非空）会每 5 分钟查询一次
+> GET /v2/enterprises/:enterpriseId/claw/control …… 字段缺失 / 非企业 /
+> 任何 HTTP / 解析 / 网络异常一律 fail-open（masterEnabled=true、channels 空）
+
+`EnableEnterpriseLicenseCheck` 国内为 `true`、国际缺失。故国内企业账号若用
+国际宿主连国际后端，该管控会**静默失效**（fail-open 放行）。
+
+### 本节未实测的部分
+
+**"国际后端到底实现了哪些端点"没有实测。** 上面"用不了"的结论由两条推导：
+（a）代码里 `endpoint` 的来源明确是产品配置字段；
+（b）国际版 `product.json` 显式关闭了小程序相关入口。
+没有真实登录 + 抓包验证。企业管控缺口同理。

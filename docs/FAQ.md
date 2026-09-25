@@ -85,44 +85,99 @@ wbmux run intl --dry-run
 
 ## 切换后"远程控制"还能用吗？
 
-能。但**渠道入口跟随宿主安装，不随后端**——这是目前已知最需要留意的限制。
+**分两半，结论完全不同。** 渠道分两类：
 
-先说结论的依据。"远程控制"（内部代号 `claw`）指的是通过 IM 渠道
-（微信客服 / 企业微信 / QQ / 飞书 / 钉钉 / 元宝 / Slack / Discord / Telegram 等）
-远程给本机 Agent 下发任务。实测两套安装的 `app.asar`：
+- **客户端直连服务商的渠道**：切换后端**不影响**。
+- **必须走后端代理的渠道**（微信系全部）：**会失效**。
 
-1. **连接器代码两侧完全相同**。渠道类型定义国内 15 项、国际 14 项，
-   唯一差别是国内多一个 `mobileApp`；其余 14 个渠道两边都实现了。
-   总开关 `RemoteControl` 两边都没显式设置——按代码注释是"默认启用"。
-2. **渠道是客户端主动外连 IM 服务商的官方网关**，不经过 WorkBuddy 后端。
-   两侧 asar 里的 WebSocket 主机完全一致，例如企业微信
-   `wss://openws.work.weixin.qq.com`、Discord `wss://gateway.discord.gg`。
-   所以"渠道能不能连上"与你连哪个后端无关。
-3. **唯一涉及后端的调用是企业渠道管控** `GET /v2/enterprises/{id}/claw/control`，
-   而且是 **fail-open**：代码注释明确写"任何 HTTP / 解析 / 网络异常一律
-   fail-open（masterEnabled=true）"。接错后端最坏情况是这条管控查不到，
-   功能照常开着。
+> 本文档早期版本笼统写过"不受影响"，那是错的。微信系渠道确实依赖后端，
+> 详见下文第 2 条。
 
-所以功能不会坏。但渠道入口的**可见性**由 `productFeatures` 里的
-`ChannelSlack` / `ChannelDiscord` / `ChannelTelegram` / `ChannelWechatKf` 决定，
-而这块整块透传宿主，于是：
+"远程控制"（内部代号 `claw`）指通过 IM 渠道给本机 Agent 下发任务。
 
-| 宿主安装 | 目标后端 | 菜单里能看到的渠道 |
-|---|---|---|
-| 国内版 | 国内 | 微信客服、企微、QQ、飞书、钉钉、元宝 |
-| 国内版 | 国际 | **同上**（Slack / Discord / Telegram 入口被隐藏） |
-| 国际版 | 国际 | Slack、Discord、Telegram |
-| 国际版 | 国内 | **同上**（微信客服入口被隐藏） |
+### 1. 直连型渠道：不受影响
 
-注意措辞：不是"连不上"，是**入口被功能开关隐藏**。底层能力都在。
+| 渠道 | 连接方式 |
+|---|---|
+| Slack | `@slack/socket-mode`（`apps.connections.open`），客户端直连 |
+| Discord | `wss://gateway.discord.gg`，客户端直连 |
+| Telegram | `api.telegram.org` + `getUpdates` 长轮询，客户端直连 |
+| 企微 AIBot | `wss://openws.work.weixin.qq.com`，客户端直连（WebSocket 模式） |
 
-**怎么选宿主**：渠道跟你的 IM 账号和地区更相关，而不是跟模型后端相关。
-所以按"你平时用哪套渠道"来挑宿主，而不是按"你这次连哪个后端"。
-国内用户想同时用两个后端，用国内版安装做宿主更顺手。
+判定依据是渠道保存路径里的这段代码：
 
-**一个治理缺口**（仅影响企业账号）：`EnableEnterpriseLicenseCheck` 国内为
-`true`、国际缺失，企业渠道管控按 `endpoint` 走。因此国内企业账号若用国际
-宿主连国际后端，这条管控会 fail-open，即管控策略失效。个人账号无影响。
+```js
+if (config.connectionMode === "webhook" || config.registration?.webhookUrl
+    || channelType === "wecomaibot")
+  await this.registerChannelWithBackend(...);
+```
+
+即 **WebSocket 模式不做后端注册**，客户端与服务商直接通信。
+
+### 2. 代理型渠道：依赖目标后端
+
+微信系渠道没有直连通道，全部走 `${endpoint}/v2/backgroundagent/…`：
+
+| 渠道 | 后端端点 |
+|---|---|
+| **微信小程序** | `POST /v2/backgroundagent/wechatmpProxy/push` |
+| 微信客服 | `POST /v2/backgroundagent/wechatkfProxy/{link,bindStatus,bind}` |
+| 微信 bot | `/v2/backgroundagent/wechatbotProxy/…` |
+| 企微回复 | `POST /v2/backgroundagent/wecom/local-proxy/receive` |
+
+而这里的 `endpoint` **正是 `wbmux` 切换的那个字段**：
+
+```js
+getEndpoint() { return this.productManager.getEndpoint().replace(/\/+$/, ""); }
+```
+
+`BgAgentApiClient.getEndpoint()` 和 `resolveApiContext()` 都取自
+`productManager.getEndpoint()`。所以这些请求会打到目标后端的域名上。
+
+**结论：用国内版宿主连国际后端时，"小程序控制"会失效。**
+调用会打到 `https://www.workbuddy.ai/v2/backgroundagent/wechatmpProxy/push`，
+而国际后端大概率没有这个服务。
+
+### 3. 更糟的是：入口还会显示
+
+渠道入口的可见性由 `productFeatures` 里的 `ChannelSlack` / `ChannelDiscord` /
+`ChannelTelegram` / `ChannelWechatKf` 决定，而这块**整块透传宿主**。于是：
+
+| 宿主 | 目标后端 | 微信系入口 | 实际能否用 |
+|---|---|---|---|
+| 国内版 | 国内 | 显示 | 能用 |
+| 国内版 | **国际** | **仍然显示** | **用不了**（后端无对应服务） |
+| 国际版 | 国际 | 隐藏 | —— |
+| 国际版 | 国内 | 隐藏 | 本可用，但入口被藏住了 |
+
+第一行和第二行是问题所在：**看得见、点不动**。
+这比"入口被隐藏"更糟——用户会以为功能坏了。
+
+顺带说明，`productFeatures` 里的 `Channel*` 开关其实是厂商自己表达
+"这个后端支持哪些渠道"的方式：国内版开微信系、关 Slack/Discord/Telegram，
+国际版正好相反。`wbmux` 整块透传后，这套开关就与后端脱钩了。
+
+### 4. 怎么用
+
+- **只用国际后端**：用国际版安装做宿主，Slack / Discord / Telegram 正常。
+- **只用国内后端**：用国内版安装做宿主，微信系正常。
+- **要来回切**：接受"切到国际后端时微信系不可用"。
+  这是当前版本的已知限制，不是配置能绕过的。
+- 注意 `MobileConnectAppOnly`（国际版 `true`）还会隐藏"连接移动端"面板里的
+  小程序 Tab；`DisableAutomationWechatMiniProgramPush`（国际版 `true`）
+  隐藏自动化任务里的"推送到小程序"开关。这两个也随宿主走。
+
+### 5. 未实测的部分
+
+**"国际后端到底实现了哪些端点"我没有实测。** 上面的"用不了"是由
+（a）代码里 `endpoint` 的来源、（b）国际版 `product.json` 显式关闭小程序入口
+这两条**推导**出来的，没有真实登录 + 抓包验证。
+欢迎有条件的用户实测后反馈。
+
+另有一个仅影响企业账号的治理缺口：`EnableEnterpriseLicenseCheck` 国内为
+`true`、国际缺失，企业渠道管控 `GET /v2/enterprises/{id}/claw/control` 按
+`endpoint` 走（且 fail-open）。国内企业账号若用国际宿主连国际后端，
+该管控会静默失效。此项同为推导，未实测。
 
 ## 会不会有法律风险？
 
