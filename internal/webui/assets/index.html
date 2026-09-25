@@ -200,7 +200,7 @@
     <div id="preview-body"></div>
   </section>
 
-  <section>
+  <section id="migrate-sec">
     <h2>历史搬运</h2>
     <p class="hint" style="margin-top:0">
       把一侧的会话、附件、内容配置、技能与记忆搬到另一侧。两套后端的账号体系不互通、
@@ -642,7 +642,7 @@
     box.appendChild(el("div", { class: "hint" },
       [el("span", { class: "spinner" }), "正在扫描两侧数据目录，第一次会比较慢…"]));
 
-    api("/api/migrate/survey?from=" + encodeURIComponent(migFrom) + "&to=" + encodeURIComponent(migTo))
+    return api("/api/migrate/survey?from=" + encodeURIComponent(migFrom) + "&to=" + encodeURIComponent(migTo))
       .then(function (sv) {
         migSurvey = sv;
         // 默认只勾"目标端还没有"的。已存在的默认不勾——否则用户会以为
@@ -869,7 +869,16 @@
     var q = new URLSearchParams(location.search);
     if (q.get("doctor") === "1") runDoctor();
     // ?migrate=1 同理：想同步历史时直接点书签就能到扫描结果。
-    if (q.get("migrate") === "1" && migFrom && migTo) loadMigrate();
+    // 顺带滚到该区块——深链接的意义就是"直接到那儿"，
+    // 落回页首还得自己往下找就白做了。
+    if (q.get("migrate") === "1" && migFrom && migTo) {
+      // 必须等扫描回来再滚：那时区块高度才定型。
+      // 立刻滚的话滚的是"只有一行加载提示"的高度，内容一撑开位置就偏了。
+      loadMigrate().then(function () {
+        var sec = document.getElementById("migrate-sec");
+        if (sec) sec.scrollIntoView();
+      });
+    }
   }).catch(function (e) {
     document.getElementById("banner").appendChild(
       el("div", { class: "note bad", text: "无法读取状态：" + e.message })
