@@ -79,8 +79,10 @@ func TestExplicitPathWinsOverEverything(t *testing.T) {
 	if inst.Source != "显式配置" {
 		t.Errorf("Source = %q, 期望 显式配置", inst.Source)
 	}
-	if inst.InstallDir != `X:\Custom` {
-		t.Errorf("InstallDir = %q", inst.InstallDir)
+	// 用 filepath.Dir 而非字面量比较：路径分隔符的语义随平台而变，
+	// 断言"安装目录等于主程序所在目录"这个事实本身即可。
+	if want := filepath.Dir(exe); inst.InstallDir != want {
+		t.Errorf("InstallDir = %q, 期望 %q", inst.InstallDir, want)
 	}
 }
 

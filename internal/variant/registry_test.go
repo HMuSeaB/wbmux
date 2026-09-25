@@ -1,6 +1,9 @@
 package variant
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // 国内版产品名是国际版的前缀，这是最容易出错的地方。
 func TestMatchProductRejectsPrefixCollision(t *testing.T) {
@@ -119,8 +122,10 @@ func TestRegistryCandidatesUsesInstallLocation(t *testing.T) {
 	}
 	cn, _ := Get(CN)
 	got := registryCandidates(entries, cn)
-	if len(got) != 1 || got[0] != `C:\Program Files\WorkBuddy\WorkBuddy.exe` {
-		t.Errorf("候选 = %v", got)
+	// 用 filepath.Join 构造期望值，避免断言绑死某一平台的分隔符。
+	want := filepath.Join(`C:\Program Files\WorkBuddy`, "WorkBuddy.exe")
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("候选 = %v, 期望 %v", got, want)
 	}
 }
 
