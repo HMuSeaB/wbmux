@@ -102,9 +102,35 @@ func TestFilteredEnvStrippedListIsSorted(t *testing.T) {
 	}
 }
 
+// CleanEnv 用于 --native：只剥离，不注入。
+func TestCleanEnvStripsWithoutInjecting(t *testing.T) {
+	parent := []string{
+		"PATH=C:\\Windows",
+		"ACC_PRODUCT_CONFIG_PATH=C:\\old\\path.json",
+		"ACC_PRODUCT_CONFIG_V3=stale",
+	}
+	env, stripped := CleanEnv(parent)
+
+	if len(stripped) != 2 {
+		t.Errorf("应剥离 2 项, 实际 %v", stripped)
+	}
+	for _, e := range env {
+		if strings.HasPrefix(strings.ToUpper(e), "ACC_PRODUCT_CONFIG") {
+			t.Errorf("残留了覆盖变量: %s", e)
+		}
+	}
+	if len(env) != 1 || env[0] != "PATH=C:\\Windows" {
+		t.Errorf("Env = %v", env)
+	}
+}
+
 func TestBuildRejectsUnavailableInstall(t *testing.T) {
 	intl, _ := variant.Get(variant.Intl)
-	_, err := Build(variant.Install{Found: false, Problems: []string{"找不到主程序"}}, intl, "x.json", nil)
+	_, err := Build(Options{
+		Install:    variant.Install{Found: false, Problems: []string{"找不到主程序"}},
+		Target:     intl,
+		ConfigPath: "x.json",
+	})
 	if err == nil {
 		t.Fatal("宿主不可用时应报错")
 	}
@@ -121,7 +147,11 @@ func TestBuildRejectsMissingConfig(t *testing.T) {
 		Executable: filepath.Join(dir, "WorkBuddy.exe"),
 		DataDir:    filepath.Join(dir, "data"),
 	}
-	_, err := Build(inst, intl, filepath.Join(dir, "absent.json"), nil)
+	_, err := Build(Options{
+		Install:    inst,
+		Target:     intl,
+		ConfigPath: filepath.Join(dir, "absent.json"),
+	})
 	if err == nil {
 		t.Fatal("生成配置不存在时应报错")
 	}
@@ -139,10 +169,16 @@ func TestBuildProducesExpectedArgsAndEnv(t *testing.T) {
 	inst := variant.Install{
 		Found:      true,
 		Executable: filepath.Join(dir, "WorkBuddy.exe"),
-		DataDir:    dataDir,
+		DataDir:    filepath.Join(dir, ".workbuddy"),
 	}
 
-	plan, err := Build(inst, intl, cfg, []string{"ACC_PRODUCT_CONFIG_V3=stale", "PATH=/usr/bin"})
+	plan, err := Build(Options{
+		Install:    inst,
+		Target:     intl,
+		ConfigPath: cfg,
+		DataDir:    dataDir,
+		ParentEnv:  []string{"ACC_PRODUCT_CONFIG_V3=stale", "PATH=/usr/bin"},
+	})
 	if err != nil {
 		t.Fatalf("Build 失败: %v", err)
 	}
@@ -171,23 +207,41 @@ func TestBuildProducesExpectedArgsAndEnv(t *testing.T) {
 	}
 }
 
-func TestBuildFallsBackWhenDataDirUnknown(t *testing.T) {
+// 数据目录必须跟随**目标**档位。
+//
+// 回归测试：早期实现沿用了宿主安装的数据目录，会让两套后端共用同一份
+// profile，来回切换时互相冲掉登录态。
+func TestBuildDefaultsToTargetDataDirNotHostDataDir(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "generated.json")
 	if err := os.WriteFile(cfg, []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cn, _ := variant.Get(variant.CN)
-	inst := variant.Install{Found: true, Executable: filepath.Join(dir, "WorkBuddy.exe")}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("无法确定主目录: %v", err)
+	}
 
-	plan, err := Build(inst, cn, cfg, nil)
+	intl, _ := variant.Get(variant.Intl)
+	hostDataDir := filepath.Join(dir, ".workbuddy") // 宿主是国内版
+	inst := variant.Install{
+		Found:      true,
+		Executable: filepath.Join(dir, "WorkBuddy.exe"),
+		DataDir:    hostDataDir,
+	}
+
+	plan, err := Build(Options{Install: inst, Target: intl, ConfigPath: cfg})
 	if err != nil {
 		t.Fatalf("Build 失败: %v", err)
 	}
-	want := filepath.Join(dir, cn.DataFolderName)
+
+	want := filepath.Join(home, intl.DataFolderName)
 	if plan.DataDir != want {
-		t.Errorf("DataDir = %q, 期望 %q", plan.DataDir, want)
+		t.Errorf("DataDir = %q, 期望目标档位的 %q", plan.DataDir, want)
+	}
+	if plan.DataDir == hostDataDir {
+		t.Error("数据目录不应沿用宿主安装的")
 	}
 }
 

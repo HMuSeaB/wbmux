@@ -51,34 +51,58 @@ type Plan struct {
 	Stripped []string
 }
 
+// Options 描述一次启动的全部输入。
+type Options struct {
+	// Install 提供要运行的主程序。
+	Install variant.Install
+	// Target 提供要连接的后端。
+	Target variant.Backend
+	// ConfigPath 是已生成好的产品配置文件路径。
+	ConfigPath string
+
+	// DataDir 是客户端应当使用的数据目录。
+	//
+	// 这里必须给**目标档位**的数据目录，而不是宿主的：两套后端的账号体系
+	// 互不相通，让它们共用同一份 profile 会在来回切换时互相冲掉登录态。
+	// 留空时按目标档位推导为 <主目录>/<DataFolderName>。
+	DataDir string
+
+	// ParentEnv 是父进程环境变量，通常传 os.Environ()。
+	ParentEnv []string
+}
+
 // Build 依据宿主安装与目标后端拼装启动计划。
-//
-// inst 提供要运行的主程序，target 提供要连的后端，cfgPath 是已生成好的配置文件。
-func Build(inst variant.Install, target variant.Backend, cfgPath string, parentEnv []string) (Plan, error) {
+func Build(opts Options) (Plan, error) {
+	inst, target := opts.Install, opts.Target
+
 	if !inst.Found {
 		return Plan{}, fmt.Errorf("宿主安装不可用: %s", strings.Join(inst.Problems, "; "))
 	}
 	if inst.Executable == "" {
 		return Plan{}, fmt.Errorf("宿主安装缺少主程序路径")
 	}
-	if cfgPath == "" {
+	if opts.ConfigPath == "" {
 		return Plan{}, fmt.Errorf("缺少生成的产品配置文件路径")
 	}
-	if _, err := os.Stat(cfgPath); err != nil {
+	if _, err := os.Stat(opts.ConfigPath); err != nil {
 		return Plan{}, fmt.Errorf("生成的产品配置不存在: %w", err)
 	}
 
-	dataDir := inst.DataDir
+	dataDir := opts.DataDir
 	if dataDir == "" {
-		dataDir = filepath.Join(filepath.Dir(inst.Executable), target.DataFolderName)
+		if home, err := os.UserHomeDir(); err == nil {
+			dataDir = filepath.Join(home, target.DataFolderName)
+		} else {
+			dataDir = filepath.Join(filepath.Dir(inst.Executable), target.DataFolderName)
+		}
 	}
 
-	env, stripped := FilteredEnv(parentEnv, cfgPath)
+	env, stripped := FilteredEnv(opts.ParentEnv, opts.ConfigPath)
 
 	return Plan{
 		Variant:    target.ID,
 		Executable: inst.Executable,
-		ConfigPath: cfgPath,
+		ConfigPath: opts.ConfigPath,
 		DataDir:    dataDir,
 		Env:        env,
 		Args:       []string{UserDataDirFlag + "=" + dataDir},
@@ -86,11 +110,24 @@ func Build(inst variant.Install, target variant.Backend, cfgPath string, parentE
 	}, nil
 }
 
+// CleanEnv 剥离会干扰后端选择的互斥变量，但不注入新值。
+//
+// 供 --native 模式使用：让客户端完全按它自己的默认配置启动，
+// 同时避免父进程里残留的覆盖变量意外改变行为。
+func CleanEnv(parent []string) ([]string, []string) {
+	return stripEnv(parent, "")
+}
+
 // FilteredEnv 在 parent 的基础上剥离互斥变量并注入配置路径。
+func FilteredEnv(parent []string, configPath string) ([]string, []string) {
+	return stripEnv(parent, configPath)
+}
+
+// stripEnv 是 CleanEnv 与 FilteredEnv 的共同实现。
 //
 // 大小写不敏感：Windows 环境变量名不区分大小写，而 Go 的 os.Environ
 // 保留原始大小写，因此不能直接做字符串比较。
-func FilteredEnv(parent []string, configPath string) ([]string, []string) {
+func stripEnv(parent []string, configPath string) ([]string, []string) {
 	drop := make(map[string]bool, len(conflictingEnvs)+1)
 	for _, k := range conflictingEnvs {
 		drop[strings.ToUpper(k)] = true
@@ -112,7 +149,9 @@ func FilteredEnv(parent []string, configPath string) ([]string, []string) {
 		out = append(out, entry)
 	}
 
-	out = append(out, ConfigPathEnv+"="+configPath)
+	if configPath != "" {
+		out = append(out, ConfigPathEnv+"="+configPath)
+	}
 	sort.Strings(stripped)
 	return out, stripped
 }
