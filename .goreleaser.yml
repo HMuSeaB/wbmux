@@ -51,11 +51,15 @@ checksum:
 changelog:
   sort: asc
   filters:
+    # 面向用户的变更清单只留 feat / fix。构建、文档、测试、CI 这些
+    # 对使用者没有意义，混在里面只会淹掉真正要看的条目。
     exclude:
       - '^chore'
       - '^docs'
       - '^test'
       - '^ci'
+      - '^build'
+      - '^refactor'
       - typo
 
 release:
