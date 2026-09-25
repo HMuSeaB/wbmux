@@ -888,8 +888,23 @@
   // 心跳：服务端在长时间无人访问后会自行退出，避免关掉标签页后
   // 留下一个没有控制台窗口、只能靠任务管理器结束的残留进程。
   // 标签页关掉后心跳自然停止，服务端据此判定为空闲。
+  //
+  // 心跳失败时要把话说清楚。之前只是静默忽略，结果服务端一退出，
+  // 用户下次刷新看到的就是浏览器那句 ERR_CONNECTION_REFUSED——
+  // 他不知道这是"界面已关闭，重新打开即可"。这里直接把页面换掉。
   setInterval(function () {
-    api("/api/ping").catch(function () { /* 服务端已退出，忽略 */ });
+    api("/api/ping").catch(function () {
+      if (document.getElementById("gone-note")) return;
+      document.body.innerHTML =
+        '<div class="wrap"><div class="note warn" id="gone-note">' +
+        '<b>界面已经关闭了。</b>' +
+        '<div>wbmux 在长时间无人使用（默认 30 分钟）后会自行退出，' +
+        '也可能是进程被结束了。重新双击 wbmux.exe，或运行 ' +
+        '<code>wbmux gui</code> 即可恢复。</div>' +
+        '<div style="margin-top:6px">想让界面一直开着：' +
+        '<code>wbmux gui --idle off</code></div>' +
+        '</div></div>';
+    });
   }, 60000);
 })();
 </script>
