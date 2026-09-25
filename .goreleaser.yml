@@ -1,0 +1,70 @@
+# goreleaser v2 配置。本地未验证（需要 goreleaser 二进制与 tag），
+# 但字段取自 v2 官方文档的通用写法。
+version: 2
+
+project_name: wbmux
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: wbmux
+    main: ./cmd/wbmux
+    binary: wbmux
+    env:
+      # 单二进制、零运行时依赖是本项目的主要卖点之一，不要引入 cgo。
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - '386'
+    ignore:
+      # Windows/386 与 arm64 的客户端发行版不存在，构建出来没有意义。
+      - goos: windows
+        goarch: arm64
+      - goos: darwin
+        goarch: '386'
+    ldflags:
+      - -s -w
+      - -X github.com/HMuSeaB/wbmux/internal/version.Version={{.Version}}
+      - -X github.com/HMuSeaB/wbmux/internal/version.Commit={{.Commit}}
+      - -X github.com/HMuSeaB/wbmux/internal/version.Date={{.Date}}
+
+archives:
+  - id: default
+    formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - docs/*.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^chore'
+      - '^docs'
+      - '^test'
+      - '^ci'
+      - typo
+
+release:
+  draft: true
+  footer: |
+    ---
+
+    **本项目是非官方的第三方工具**，与 WorkBuddy、CodeBuddy、腾讯及其关联方
+    不存在隶属、授权或背书关系。它依赖客户端未公开的配置加载行为，该行为
+    可能在任何版本中变化或移除。
+
+    升级客户端后建议运行 `wbmux doctor` 确认机制仍然有效。

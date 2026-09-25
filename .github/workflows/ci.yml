@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # 格式、静态检查、跨平台构建。
+  #
+  # 构建这一项刻意覆盖全部目标平台：wbmux 的平台差异集中在安装探测
+  # （Windows 走注册表，其它平台走文件系统），漏掉某个平台
+  # 很容易到交叉编译时才暴露。
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      # gofmt 只在 Linux 上跑：Windows 下它输出的路径带反斜杠，
+      # 与脚本里的比较容易对不上。格式问题与平台无关，查一遍就够。
+      - name: gofmt
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化，请运行 gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 跨平台构建
+        shell: bash
+        run: |
+          set -e
+          for target in windows/amd64 windows/386 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "构建 $target"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -o /dev/null ./cmd/wbmux
+          done
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: go test
+        run: go test ./...
+
+  # 安装探测只在 Windows 上走注册表，这里单独跑一遍完整明细，
+  # 方便排查平台差异。
+  detect:
+    name: 安装探测（Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: 探测相关测试
+        run: go test -v ./internal/variant/... ./internal/doctor/...
