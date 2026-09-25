@@ -59,7 +59,26 @@ changelog:
       - typo
 
 release:
+  # 保持草稿：发布前需要人工过一眼，确认变更清单与已知限制都还准确。
+  # 要正式发布：gh release edit <tag> --draft=false
   draft: true
+  header: |
+    下载对应平台的 zip，解压后把 `wbmux` 放进 `PATH` 即可。零运行时依赖。
+
+    ```
+    wbmux list        # 看看本机探测到哪些安装
+    wbmux doctor      # 体检：机制是否仍然有效
+    wbmux run intl    # 用国际后端启动
+    ```
+
+    > **已知限制**：远程控制里的微信系渠道（小程序 / 微信客服 / 微信 bot）
+    > 走目标后端的代理接口，切到国际后端后会失效，且入口仍会显示
+    > （看得见、点不动）。Slack / Discord / Telegram 等直连型渠道不受影响。
+    > 详见 [README 的「已知限制」](https://github.com/HMuSeaB/wbmux#已知限制)。
+
+    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；未确认
+    > 启动后的客户端真的连上目标后端；未完成一次真实登录。
+
   footer: |
     ---
 
