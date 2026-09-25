@@ -73,9 +73,10 @@ type Options struct {
 
 // Report 是一次自检的完整结果。
 type Report struct {
-	Host   variant.Install
-	Target variant.Backend
-	Checks []Check
+	Host        variant.Install
+	HostVariant variant.ID
+	Target      variant.Backend
+	Checks      []Check
 
 	AsarPath string
 	AsarSize int64
@@ -130,31 +131,33 @@ func Run(opts Options) Report {
 
 	rep := Report{Target: target}
 
-	host, err := variant.Get(opts.HostVariant)
+	// 1. 定位宿主安装。档位判定也一并在这里完成，
+	// 这样"用户没指定档位"就不会被当成错误。
+	hostID, inst, err := variant.Resolve(probe, string(opts.HostVariant), opts.HostExe)
+	rep.Host = inst
+	if err != nil {
+		rep.Checks = append(rep.Checks, Check{
+			Name:   "定位宿主安装",
+			Level:  Fail,
+			Detail: err.Error(),
+			Hint:   "用 `wbmux config set --exe <主程序绝对路径>` 显式指定",
+		})
+		return rep
+	}
+
+	host, err := variant.Get(hostID)
 	if err != nil {
 		rep.Checks = append(rep.Checks, Check{
 			Name: "宿主档位", Level: Fail, Detail: err.Error(),
 		})
 		return rep
 	}
+	rep.HostVariant = hostID
 
-	// 1. 定位宿主安装
-	inst := probe.Detect(opts.HostVariant, opts.HostExe)
-	rep.Host = inst
-
-	if !inst.Found {
-		rep.Checks = append(rep.Checks, Check{
-			Name:   "定位宿主安装",
-			Level:  Fail,
-			Detail: strings.Join(inst.Problems, "; "),
-			Hint:   "用 `wbmux config set-host --exe <主程序绝对路径>` 显式指定",
-		})
-		return rep
-	}
 	rep.Checks = append(rep.Checks, Check{
 		Name:   "定位宿主安装",
 		Level:  OK,
-		Detail: fmt.Sprintf("%s（来源：%s）", inst.Executable, inst.Source),
+		Detail: fmt.Sprintf("%s（%s，来源：%s）", inst.Executable, host.DisplayName, inst.Source),
 	})
 
 	// 2. 宿主版本
