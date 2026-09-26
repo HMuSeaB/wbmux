@@ -257,6 +257,7 @@
     <div class="row" style="margin-top:12px">
       <button id="btn-usage-scan">查看额度与消耗</button>
       <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证后端通路与计费归属；优先用限时免费模型，基本零成本">🧪 一键测试</button>
+      <button class="ghost" id="btn-inject" title="把国际限时免费模型注入国内客户端的自定义模型清单（经本机代理转发、扣国际额度）；注入后重启国内客户端生效">📤 注入国际模型到国内客户端</button>
       <span class="hint" id="usage-note" style="margin:0"></span>
     </div>
     <div id="probe-body" style="margin-top:8px"></div>
@@ -667,6 +668,26 @@
         clear(box);
         box.appendChild(el("div", { class: "note bad", text: "测试失败：" + e.message }));
       });
+  }
+
+  function runInject() {
+    if (busy) return;
+    busy = true;
+    var btn = document.getElementById("btn-inject");
+    if (btn) { btn.disabled = true; btn.textContent = "注入中…"; }
+    api("/api/inject-custom-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (res) {
+      toast(res.note + "（注入 " + res.added + " 个）", "ok");
+      loadUsage();
+    }).catch(function (e) {
+      toast("注入失败：" + e.message, "bad");
+    }).then(function () {
+      busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = "📤 注入国际模型到国内客户端"; }
+    });
   }
 
   function launchBoth() {
@@ -1272,6 +1293,7 @@
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
   document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
   document.getElementById("btn-probe").addEventListener("click", runProbe);
+  document.getElementById("btn-inject").addEventListener("click", runInject);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
   document.getElementById("btn-quit").addEventListener("click", quit);
   document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);

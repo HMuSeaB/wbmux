@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
 	"github.com/HMuSeaB/wbmux/internal/migrate"
 	"github.com/HMuSeaB/wbmux/internal/runner"
@@ -112,6 +114,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
+	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
 	s.registerOpenAI(mux)
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
@@ -470,6 +473,53 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	view := toPreview(res)
 	view.Launched = true
 	writeJSON(w, view)
+}
+
+// handleInjectCustomModels 把国际限时免费模型注入国内客户端的自定义
+// 模型清单（经 wbmux 代理转发、扣国际额度），实现"国内壳子里无缝
+// 用国际模型"。代理地址取当前请求的 Host（同一台机器、同一个端口）。
+func (s *Server) handleInjectCustomModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	live := usage.LiveAccounts(s.probe())[string(variant.Intl)]
+	if live == nil || !live.OK {
+		msg := "国际侧凭据不可用，无法注入"
+		if live != nil && live.Err != "" {
+			msg = live.Err
+		}
+		writeErr(w, http.StatusServiceUnavailable, msg)
+		return
+	}
+	host := r.Host
+	host = strings.TrimPrefix(host, "localhost:")
+	host = strings.TrimPrefix(host, "[::1]:")
+	base := "http://" + host + "/v1/chat/completions"
+	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
+	added, err := custommodels.Sync(path, base, s.token, live.Models)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"added": added,
+		"note":  "已注入并备份原文件；重启国内客户端后在模型选择器底部可见（名称带「国际免费」）",
+	})
+}
+
+// SyncCustomModels 把国际限时免费模型同步进国内客户端的自定义清单，
+// 代理地址与令牌取自当前运行实例。GUI 每次启动都会调用：
+// 端口与令牌每次都变，不同步的话上次注入的模型会悄悄失效。
+// 模型清单要拉一次官方接口（约 2 秒），调用方放后台跑。
+func (s *Server) SyncCustomModels() (int, error) {
+	live := usage.LiveAccounts(s.probe())[string(variant.Intl)]
+	if live == nil || !live.OK {
+		return 0, fmt.Errorf("国际侧凭据不可用")
+	}
+	base := "http://" + s.Addr() + "/v1/chat/completions"
+	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
+	return custommodels.Sync(path, base, s.token, live.Models)
 }
 
 // launchBothResult 是一侧的双开结果。
