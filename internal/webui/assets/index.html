@@ -219,6 +219,23 @@
     <div id="mig-body" style="margin-top:12px"></div>
   </section>
 
+  <section id="usage-sec">
+    <h2>额度与计费</h2>
+    <p class="hint" style="margin-top:0">
+      两套后端各自限流、各自重置，界面上却长得一模一样。这里按
+      <strong>会话文件落在哪个数据目录</strong>判断归属——这是唯一可靠的判据，不靠猜。
+    </p>
+    <p class="hint" style="margin-top:6px">
+      <strong>频率超限</strong>等重置即可；<strong>额度用尽</strong>不会自己恢复，要充值或换模型。
+      两者都是 429，但对策完全不同，所以这里分开显示。
+    </p>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-usage-scan">查看限流状态</button>
+      <span class="hint" id="usage-note" style="margin:0"></span>
+    </div>
+    <div id="usage-body" style="margin-top:12px"></div>
+  </section>
+
   <section>
     <h2>体检</h2>
     <div class="row">
@@ -824,9 +841,73 @@
     ]));
   }
 
+  // ---------- 额度与计费 ----------
+
+  var usageData = null;
+
+  // 档位 id → 显示名。优先用 /api/state 里客户端自己的叫法，拿不到再退回固定说法。
+  function sideLabel(id) {
+    var b = backendById(id);
+    if (b && b.name) return b.name;
+    return id === "intl" ? "国际版" : "国内版";
+  }
+
+  function loadUsage() {
+    var box = document.getElementById("usage-body");
+    clear(box);
+    box.appendChild(el("div", { class: "hint", text: "正在扫描两侧的会话…" }));
+    return api("/api/usage").then(function (u) {
+      usageData = u;
+      renderUsage();
+    }).catch(function (e) {
+      clear(box);
+      box.appendChild(el("div", { class: "note bad", text: "读取失败：" + e.message }));
+    });
+  }
+
+  function renderUsage() {
+    var box = document.getElementById("usage-body");
+    var note = document.getElementById("usage-note");
+    clear(box);
+    if (!usageData) return;
+
+    var limits = usageData.limits || [];
+    if (!limits.length) {
+      note.textContent = "最近 7 天，两侧都没有发现限流记录";
+      box.appendChild(el("div", { class: "note ok", text: "没有被限流。" }));
+      return;
+    }
+    note.textContent = "共 " + limits.length + " 条";
+
+    limits.forEach(function (e) {
+      var exhausted = e.kind === "exhausted";
+      box.appendChild(el("div", { class: "note " + (exhausted ? "bad" : "warn"), style: "margin-bottom:8px" }, [
+        el("div", { class: "row", style: "margin-bottom:4px" }, [
+          el("b", { text: sideLabel(e.side) }),
+          pill(exhausted ? "额度用尽" : "频率超限", exhausted ? "bad" : "warn")
+        ]),
+        e.resetAt
+          ? el("div", { text: "重置时间：" + e.resetAt })
+          : el("div", { text: exhausted ? "这个不会自己恢复：需要充值，或换一个还能用的模型。" : "（这次没给出重置时间）" }),
+        e.model ? el("div", { text: "当时用的模型：" + e.model }) : null,
+        el("div", { class: "desc", text: "会话 " + String(e.sessionId || "").slice(0, 8) })
+      ]));
+    });
+
+    (usageData.warnings || []).forEach(function (w) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+    });
+
+    // 这栏读的是客户端自己的会话文件与数据库，属于依赖内部实现。
+    // 明说出来，不装成稳定接口——否则哪天读不出来，用户会当成 wbmux 坏了。
+    box.appendChild(el("div", { class: "hint", style: "margin-top:10px",
+      text: "这些数据来自客户端内部的会话文件与数据库；客户端升级改了结构就可能读不出来。" }));
+  }
+
   // ---------- 启动 ----------
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
+  document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
   document.getElementById("btn-quit").addEventListener("click", quit);
   document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);
   document.getElementById("btn-mig-swap").addEventListener("click", function () {
@@ -862,6 +943,10 @@
     var other = st.backends.filter(function (b) { return b.id !== st.hostId; })[0];
     migFrom = other ? other.id : null;
     document.getElementById("mig-direction").textContent = migFrom ? migTitle() : "";
+
+    // 限流状态默认就查一次：用户打开界面时，最想知道的往往就是
+    // "刚才那次 429 到底是哪一侧"。让他再点一次按钮才看到，等于没解决。
+    loadUsage();
     document.getElementById("btn-mig-scan").disabled = !(migFrom && migTo);
 
     // 支持 ?doctor=1 直接跑一遍体检。做成深链接是因为"先检查一下"

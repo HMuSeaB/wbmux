@@ -26,6 +26,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/doctor"
 	"github.com/HMuSeaB/wbmux/internal/migrate"
 	"github.com/HMuSeaB/wbmux/internal/runner"
+	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -113,6 +114,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
 	mux.HandleFunc("/api/ping", s.guard(s.handlePing))
+	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
 
 	s.http = &http.Server{
 		Handler:           mux,
@@ -554,6 +556,16 @@ func (s *Server) handleMigrateSurvey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	writeJSON(w, res)
+}
+
+// handleUsage 返回两侧的限流状态。
+//
+// 这是界面上「额度与计费」那一栏的第一部分。之所以先做限流而不是先做
+// 消耗统计：限流是**纯文件扫描**，不碰数据库，因此客户端正在跑也照样能看——
+// 而消耗要走数据库桥接，被运行时会被挡住。先给用户一个什么时候都可靠的部分。
+func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	res := usage.SurveyLimits(s.probe())
 	writeJSON(w, res)
 }
 
