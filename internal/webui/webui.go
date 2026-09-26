@@ -111,6 +111,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
+	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
@@ -512,6 +513,21 @@ func (s *Server) handleLaunchBoth(w http.ResponseWriter, r *http.Request) {
 			res.OK = true
 		}
 		results = append(results, res)
+	}
+	writeJSON(w, map[string]any{"results": results})
+}
+
+// handleProbe 一键测试：两侧各发一条最小消息并对比账单。
+// 逐侧汇报（模型/积分/账单差值），一侧失败不影响另一侧；
+// 消息本身已获用户授权（"让他消耗一点 token 去测试"）。
+func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var results []*usage.ChatProbeResult
+	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		results = append(results, usage.SendChatProbe(s.probe(), id))
 	}
 	writeJSON(w, map[string]any{"results": results})
 }

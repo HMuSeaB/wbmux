@@ -237,7 +237,11 @@
     </p>
     <div class="row" style="margin-top:12px">
       <button id="btn-usage-scan">查看额度与消耗</button>
+      <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证后端通路与计费归属；优先用限时免费模型，基本零成本">🧪 一键测试</button>
       <span class="hint" id="usage-note" style="margin:0"></span>
+    </div>
+    <div id="probe-body" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:4px">
     </div>
     <div id="usage-body" style="margin-top:12px"></div>
   </section>
@@ -614,6 +618,36 @@
     }).then(renderPreview).catch(function (e) {
       renderPreviewError(e.message);
     });
+  }
+
+  function runProbe() {
+    var box = document.getElementById("probe-body");
+    clear(box);
+    box.appendChild(el("div", { class: "hint", text: "正在两侧各发一条最小消息并对比账单…" }));
+    api("/api/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (res) {
+        clear(box);
+        (res.results || []).forEach(function (r) {
+          if (!r.ok) {
+            box.appendChild(el("div", { class: "note bad", style: "margin:4px 0",
+              text: "❌ " + sideLabel(r.side) + "：" + r.err }));
+            return;
+          }
+          var bill = r.billingChanged
+            ? "账单变化：" + r.delta
+            : "账单无变化";
+          box.appendChild(el("div", { class: "note ok", style: "margin:4px 0",
+            text: "✅ " + sideLabel(r.side) + "：" + (r.model || "?") +
+                 " · 消耗 " + (r.credit || 0).toFixed(2) + " 积分 · " +
+                 (r.promptTokens || 0) + "+" + (r.completionTokens || 0) + " tokens · " + bill }));
+          r.reply ? box.appendChild(el("div", { class: "hint", style: "margin:0 0 6px",
+            text: "回复：" + r.reply })) : null;
+        });
+      })
+      .catch(function (e) {
+        clear(box);
+        box.appendChild(el("div", { class: "note bad", text: "测试失败：" + e.message }));
+      });
   }
 
   function launchBoth() {
@@ -1197,6 +1231,7 @@
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
   document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
+  document.getElementById("btn-probe").addEventListener("click", runProbe);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
   document.getElementById("btn-quit").addEventListener("click", quit);
   document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);
