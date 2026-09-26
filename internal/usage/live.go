@@ -40,8 +40,14 @@ type LiveModel struct {
 	Name    string  `json:"name"`
 	Rate    float64 `json:"rate"`
 	RateRaw string  `json:"rateRaw"`
+	// Desc 是官方的中文描述（没有就退英文），界面照客户端样式展示。
+	Desc string `json:"desc"`
+	// Ctx 是上下文窗口长度（maxInputTokens，token 数）。
+	Ctx int `json:"ctx"`
 	// FreeNow 表示该模型当前被"限时免费"活动覆盖（折扣因子为 0 且在有效期内）。
 	FreeNow bool `json:"freeNow"`
+	// FreeLabel 是活动徽章原文（"Free now" / "限时免费"），界面照抄不翻译。
+	FreeLabel string `json:"freeLabel,omitempty"`
 }
 
 // LivePromo 是一条限时优惠活动。
@@ -191,7 +197,7 @@ func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 	}
 	endpoint := liveEndpoint[id]
 
-	models, promos, err := fetchLiveModels(endpoint, cred)
+	models, promos, err := fetchLiveModels(endpoint, cred, id)
 	if err != nil {
 		acc.Err = "拉模型清单失败：" + err.Error()
 		return acc
@@ -208,7 +214,9 @@ func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 }
 
 // liveJSON 发一次官方接口请求（10 秒超时）。只读。
-func liveJSON(endpoint, path, method, token, uid string, body io.Reader) ([]byte, error) {
+// extra 是额外请求头：/v3/config 必须带 X-Product 与 User-Agent，
+// 缺了会被网关 400 拒掉（实测 2026-09-26）。
+func liveJSON(endpoint, path, method, token, uid string, body io.Reader, extra map[string]string) ([]byte, error) {
 	req, err := http.NewRequest(method, endpoint+path, body)
 	if err != nil {
 		return nil, err
@@ -217,6 +225,9 @@ func liveJSON(endpoint, path, method, token, uid string, body io.Reader) ([]byte
 	req.Header.Set("X-User-Id", uid)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -244,21 +255,46 @@ func liveJSON(endpoint, path, method, token, uid string, body io.Reader) ([]byte
 	return envelope.Data, nil
 }
 
-// fetchLiveModels 拉实时模型清单与活动，顺带把 include 引用的公共配置
-// 合并进来（实测国际版 include: ["../common/product.json"]，DeepSeek 系列在那层）。
-func fetchLiveModels(endpoint string, cred liveCredentials) ([]LiveModel, []LivePromo, error) {
-	raw, err := liveJSON(endpoint, "/v2/enterprises/personal/models", "GET", cred.Token, cred.UID, nil)
+// xProductHeader 是产品请求必须带的 X-Product 值（= 各侧 deploymentType，
+// 来自两侧 product.json；拦截器对所有产品请求统一注入，/v3/config 缺了不行）。
+var xProductHeader = map[variant.ID]string{
+	variant.CN:   "workbuddy",
+	variant.Intl: "workbuddy-ai",
+}
+
+// liveCommonHeaders 各接口通用额外头。User-Agent 缺省值（Python-urllib 等）
+// 会被网关 400 拒掉，所以显式带上。
+func liveCommonHeaders(id variant.ID) map[string]string {
+	return map[string]string{
+		"X-Product":  xProductHeader[id],
+		"User-Agent": "WorkBuddy/5.6 (wbmux)",
+	}
+}
+
+// fetchLiveModels 拉实时模型清单与活动。
+//
+// 首选 GET /v3/config——渲染层模型选择器用的就是这份：26 个模型
+// （含 DeepSeek 系）、中文描述、上下文窗口、限时免费活动全在里面。
+// 失败时回退到 /v2/enterprises/personal/models（少 DeepSeek 层）。
+func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]LiveModel, []LivePromo, error) {
+	hdr := liveCommonHeaders(id)
+	raw, err := liveJSON(endpoint, "/v3/config", "GET", cred.Token, cred.UID, nil, hdr)
 	if err != nil {
-		return nil, nil, err
+		raw, err = liveJSON(endpoint, "/v2/enterprises/personal/models", "GET", cred.Token, cred.UID, nil, nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	var doc struct {
 		Models []struct {
-			ID      string `json:"id"`
-			Name    string `json:"name"`
-			Credits string `json:"credits"`
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			Credits        string `json:"credits"`
+			DescriptionZh  string `json:"descriptionZh"`
+			DescriptionEn  string `json:"descriptionEn"`
+			MaxInputTokens int    `json:"maxInputTokens"`
 		} `json:"models"`
 		Promotions []livePromoRaw `json:"modelPromotions"`
-		Include    []string       `json:"include"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, nil, err
@@ -279,23 +315,35 @@ func fetchLiveModels(endpoint string, cred liveCredentials) ([]LiveModel, []Live
 		byID[id] = lm
 		order = append(order, id)
 	}
+	// 描述就地补齐：同一模型可能出现在多个配置层，先到先得，
+	// 但描述/上下文字段允许后层补上（主体层没有这些字段）。
+	fill := func(m struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		Credits        string `json:"credits"`
+		DescriptionZh  string `json:"descriptionZh"`
+		DescriptionEn  string `json:"descriptionEn"`
+		MaxInputTokens int    `json:"maxInputTokens"`
+	}) {
+		if lm, ok := byID[m.ID]; ok {
+			if lm.Desc == "" {
+				lm.Desc = m.DescriptionZh
+				if lm.Desc == "" {
+					lm.Desc = m.DescriptionEn
+				}
+			}
+			if lm.Ctx == 0 {
+				lm.Ctx = m.MaxInputTokens
+			}
+			byID[m.ID] = lm
+		}
+	}
 	for _, m := range doc.Models {
 		add(m.ID, m.Name, m.Credits)
+		fill(m)
 	}
-	// include 引用的公共配置：实测国际版是 "../common/product.json"，
-	// 相对 /v2/enterprises/ 解析出来就是 /v2/common/product.json。
-	// 候选逐个试，成功即停；全失败也不影响主体清单（best-effort）。
-	for _, inc := range doc.Include {
-		base := strings.TrimPrefix(inc, "../")
-		if !strings.HasPrefix(base, "/") {
-			base = "/v2/" + base
-		}
-		if extra, err := fetchIncludedModels(endpoint+base, cred); err == nil {
-			for _, m := range extra {
-				add(m.ID, m.Name, m.Credits)
-			}
-		}
-	}
+	// v3/config 是完整配置，不再有 include 层；fetchIncludedModels 仅作
+	// 回退端点的旧结构保留。
 	out := make([]LiveModel, 0, len(order))
 	for _, id := range order {
 		out = append(out, byID[id])
@@ -306,20 +354,26 @@ func fetchLiveModels(endpoint string, cred liveCredentials) ([]LiveModel, []Live
 }
 
 // fetchIncludedModels 拉 include 引用的配置层，只取 models。
-func fetchIncludedModels(url string, cred liveCredentials) ([]struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Credits string `json:"credits"`
+func fetchIncludedModels(url string, cred liveCredentials, id variant.ID) ([]struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Credits        string `json:"credits"`
+	DescriptionZh  string `json:"descriptionZh"`
+	DescriptionEn  string `json:"descriptionEn"`
+	MaxInputTokens int    `json:"maxInputTokens"`
 }, error) {
-	raw, err := liveJSON(url, "", "GET", cred.Token, cred.UID, nil)
+	raw, err := liveJSON(url, "", "GET", cred.Token, cred.UID, nil, liveCommonHeaders(id))
 	if err != nil {
 		return nil, err
 	}
 	var doc struct {
 		Models []struct {
-			ID      string `json:"id"`
-			Name    string `json:"name"`
-			Credits string `json:"credits"`
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			Credits        string `json:"credits"`
+			DescriptionZh  string `json:"descriptionZh"`
+			DescriptionEn  string `json:"descriptionEn"`
+			MaxInputTokens int    `json:"maxInputTokens"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -394,6 +448,7 @@ func applyFreeNow(models []LiveModel, promos []livePromoRaw) {
 			for _, id := range p.ModelIDs {
 				if models[i].ID == id {
 					models[i].FreeNow = true
+					models[i].FreeLabel = p.Badge.Label
 				}
 			}
 		}
@@ -407,7 +462,7 @@ func sortLiveModels(models []LiveModel) {
 // fetchLivePackages 拉积分包余量。字段来自实测响应：
 // Packages[].Cycle{Total,Remain,Used,Frozen}Capacity + CapacityUnit。
 func fetchLivePackages(endpoint string, cred liveCredentials) ([]LivePackage, error) {
-	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-summary", "POST", cred.Token, cred.UID, strings.NewReader("{}"))
+	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-summary", "POST", cred.Token, cred.UID, strings.NewReader("{}"), nil)
 	if err != nil {
 		return nil, err
 	}
