@@ -111,6 +111,9 @@ type sqliteSpec struct {
 	LibPath       string `json:"libPath"`
 	NativeBinding string `json:"nativeBinding"`
 	Rows          []Row  `json:"rows,omitempty"`
+	// SQL 与 Params 只给 query 模式用。
+	SQL    string `json:"sql,omitempty"`
+	Params []any  `json:"params,omitempty"`
 }
 
 // sqliteResult 是脚本的输出。
@@ -119,6 +122,10 @@ type sqliteResult struct {
 	Rows     []Row    `json:"rows"`
 	Inserted []string `json:"inserted"`
 	Skipped  []string `json:"skipped"`
+	// Result 是 query 模式查到的行，每行是一个"列名 → 值"的字典。
+	// 之所以用字典而不是结构体：调用方要读的表各不相同，
+	// 写死结构体会漏字段，漏了还不容易发现。
+	Result []map[string]any `json:"result"`
 }
 
 // runSQLite 通过客户端自带的 Electron 在 Node 模式下执行一次数据库操作。
@@ -244,6 +251,51 @@ func readRows(rt runtimePaths, dbPath string) ([]Row, error) {
 		return nil, err
 	}
 	return res.Rows, nil
+}
+
+// Query 在指定档位的数据库上跑一条**只读**查询。
+//
+// 存在的理由：搬运只需要 sessions 表，但有些信息在别的表里——
+// 比如额度统计要看 session_usage.credit_json。与其为每张表各写一套读取逻辑，
+// 不如开一个受约束的口子。
+//
+// 约束有三层，缺一不可：
+//   - 连接以 readonly 打开
+//   - 脚本侧只放行以 SELECT 开头的单条语句
+//   - 这里同样先做一次检查，不把把关的责任全推给脚本
+//
+// 调用方不要把它当成通用数据库接口：它是为了读几个已知的表才存在的。
+func Query(probe *variant.Probe, id variant.ID, sql string, params ...any) ([]map[string]any, error) {
+	trimmed := strings.TrimSpace(sql)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "select") {
+		return nil, fmt.Errorf("Query 只接受 SELECT，收到 %q", trimmed)
+	}
+
+	// 优先用这一档位自己的安装：与它自己的数据库同一次构建，ABI 一致。
+	rt, err := detectRuntime(probe, id)
+	if err != nil {
+		return nil, err
+	}
+	dbPath := filepath.Join(probe.DataDir(id), "workbuddy.db")
+	if !fileExists(dbPath) {
+		return nil, fmt.Errorf("%s 侧还没有数据库：%s", id, dbPath)
+	}
+
+	res, err := runSQLite(rt, sqliteSpec{
+		Mode:          "query",
+		DBPath:        dbPath,
+		LibPath:       rt.libPath,
+		NativeBinding: rt.nativeBinding,
+		SQL:           sql,
+		Params:        params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.Error != "" {
+		return nil, errors.New(res.Error)
+	}
+	return res.Result, nil
 }
 
 // writeRows 写入会话索引行。已存在的 id 一律跳过，绝不覆盖。

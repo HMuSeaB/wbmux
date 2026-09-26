@@ -60,7 +60,19 @@ function main() {
 
   const options = { nativeBinding: spec.nativeBinding, timeout: 5000 };
   // 读的时候开只读：搬运的读取阶段绝不该有机会改动来源端。
-  if (spec.mode === 'read') options.readonly = true;
+  // query 同样开只读——它接收任意 SQL，更要靠这一层兜底。
+  if (spec.mode === 'read' || spec.mode === 'query') options.readonly = true;
+
+  // query 还要开 immutable。
+  //
+  // 光 readonly 不够：它仍然会去碰数据库旁边的 `-wal` / `-shm`，
+  // 而客户端正在跑时会占着这两个文件，结果就是
+  // "unable to open database file"——实测宿主档位必失败，另一档位正常。
+  //
+  // immutable 告诉 SQLite「这个库不会变」，完全跳过 WAL 文件，
+  // 于是客户端开着也能读。代价是拿到的是略微陈旧的快照（还没从 WAL
+  // 落到主库的部分看不到）——对看仪表盘完全够用。
+  if (spec.mode === 'query') options.immutable = true;
 
   let db;
   try {
@@ -103,6 +115,37 @@ function main() {
       run(spec.rows || []);
 
       return emit({ inserted: inserted, skipped: skipped });
+    }
+
+    // query：跑一条调用方给的查询，用于读那些搬运用不到的表
+    // （比如额度统计要看的 session_usage）。
+    //
+    // **只放行 SELECT**：这里接收的是任意 SQL，光靠 readonly 还不够
+    // ——readonly 是 SQLite 层面的约束，但"上层传了什么"得自己把关。
+    // 先去掉注释与空白再判断开头，避免 `-- x\nDROP` 这类绕过。
+    if (spec.mode === 'query') {
+      const sql = String(spec.sql || '').trim();
+      if (!sql) return fail('query 模式缺少 sql');
+
+      const stripped = sql
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/--[^\n]*/g, ' ')
+        .trim();
+      if (!/^select\b/i.test(stripped)) {
+        return fail('query 模式只允许 SELECT，收到：' + stripped.slice(0, 40));
+      }
+      // 顺手挡掉多语句：better-sqlite3 的 prepare 本身只接受一条，
+      // 但错误信息不直观，这里提前说清楚。
+      if (/;\s*\S/.test(stripped.replace(/;\s*$/, ''))) {
+        return fail('query 模式一次只能跑一条语句');
+      }
+
+      try {
+        const rows = db.prepare(sql).all(...(spec.params || []));
+        return emit({ result: rows });
+      } catch (e) {
+        return fail('查询失败：' + e.message);
+      }
     }
 
     return fail('未知 mode：' + spec.mode);
