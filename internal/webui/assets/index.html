@@ -882,6 +882,43 @@
     return id === "intl" ? "国际版" : "国内版";
   }
 
+  // prettyModel 把模型 id 翻译成人话。id 来自日志，是给机器看的；
+  // 界面展示用这个，原始 id 放 title 里悬停可查——翻译只是换行大小写
+  // 和空格，不发明新名字。
+  var MODEL_ALIAS = {
+    "auto": "Auto（自动路由）",
+    "balanced-model": "Balanced（均衡）",
+    "fast-model": "Fast（快速）",
+    "primary-model": "Primary（主力）",
+    "deep-model": "Deep（深度）",
+    "default": "默认",
+    "default-model": "Default（默认）",
+    "default-model-lite": "Default-Lite（轻量）"
+  };
+  var MODEL_WORD = {
+    deepseek: "DeepSeek", glm: "GLM", gpt: "GPT", kimi: "Kimi",
+    minimax: "MiniMax", hunyuan: "Hunyuan", gemini: "Gemini"
+  };
+  function prettyModel(id) {
+    if (!id) return "未识别模型";
+    if (MODEL_ALIAS[id]) return MODEL_ALIAS[id];
+    return id.split("-").map(function (seg) {
+      if (MODEL_WORD[seg]) return MODEL_WORD[seg];
+      if (/^v?[0-9]/.test(seg)) return seg; // v4.1、4.6、3b 这类版本号原样
+      return seg.charAt(0).toUpperCase() + seg.slice(1);
+    }).join(" ");
+  }
+
+  // countdown 把"重置时间戳"翻译成"还有多久"，比一串时间戳直观。
+  function countdown(ms) {
+    if (!ms) return "";
+    var d = ms - Date.now();
+    if (d <= 0) return "";
+    var h = Math.floor(d / 3600000), m = Math.round((d % 3600000) / 60000);
+    if (m >= 60) { h++; m = 0; }
+    return h > 0 ? h + " 小时 " + m + " 分" : m + " 分钟";
+  }
+
   function loadUsage() {
     var box = document.getElementById("usage-body");
     clear(box);
@@ -919,17 +956,23 @@
       // 可以同时被限着，各有各的重置时间。
       var mine = (usageData.byModel || []).filter(function (x) { return x.side === b.id; });
       var rows = mine.slice(0, 6).map(function (x) {
-        var expired = x.resetMs && x.resetMs < Date.now();
-        return el("div", { class: "desc", text:
-          (x.model || "未识别模型") + "：" +
-          (x.kind === "exhausted" ? "额度用尽，需充值"
-            : x.resetAt ? "重置 " + x.resetAt + (expired ? "（已过）" : "")
-            : "频率超限") });
+        if (x.kind === "exhausted") {
+          return el("div", { class: "desc",
+            text: "💸 " + prettyModel(x.model) + "：额度用尽，充值后恢复" });
+        }
+        if (x.resetMs && x.resetMs < Date.now()) {
+          return el("div", { class: "desc",
+            text: "✅ " + prettyModel(x.model) + "：限制已过，可以继续用（" + x.resetAt + " 重置）" });
+        }
+        var left = countdown(x.resetMs);
+        return el("div", { class: "desc",
+          text: "⏳ " + prettyModel(x.model) + "：还有 " + left + "恢复" +
+                (x.resetAt ? "（" + x.resetAt + "）" : "") });
       });
       tiles.appendChild(el("div", { class: "tile" }, [
         el("div", { class: "desc", text: sideLabel(b.id) }),
         el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
-          text: !e ? "正常" : e.kind === "exhausted" ? "额度用尽" : "频率超限" }),
+          text: !e ? "✅ 正常" : e.kind === "exhausted" ? "💸 额度用尽" : "⏳ 频率超限" }),
         !e ? el("div", { class: "desc", text: "最近 7 天没有限流记录。" }) : rows,
         el("div", { class: "desc", text: "读到的消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条）" })
       ]));
@@ -975,7 +1018,7 @@
         text: "模型 · 出现在几条会话里（不代表积分多少）" }));
       var chips = el("div", {});
       names.slice(0, 12).forEach(function (m) {
-        chips.appendChild(el("span", { class: "chip", text: m + " ×" + mc[m] }));
+        chips.appendChild(el("span", { class: "chip", title: m, text: prettyModel(m) + " ×" + mc[m] }));
       });
       box.appendChild(chips);
     }
@@ -991,7 +1034,7 @@
           el("span", { class: "desc",
             text: (e.resetAt ? "重置 " + e.resetAt : "不自动恢复") +
                   " · 会话 " + String(e.sessionId || "").slice(0, 8) +
-                  (e.model ? " · " + e.model : "") })
+                  (e.model ? " · " + prettyModel(e.model) : "") })
         ]));
       });
     }
