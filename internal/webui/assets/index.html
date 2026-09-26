@@ -1075,6 +1075,11 @@
         box.appendChild(el("div", { class: "hint", text: "没读到倍率数据。" }));
         return;
       }
+      // 免费的排最前：0.00x 是最想用的，按倍率从高到低排会沉到底部
+      list.sort(function (a, b) {
+        if (a.free !== b.free) return a.free ? -1 : 1;
+        return b.rate - a.rate;
+      });
       // 客户端同款卡片：名称+免费徽章+倍率 / 描述 / 消耗速度+上下文
       var grid = el("div", { class: "mcards" });
       // 全量显示：排序按倍率从高到低，最想看的 0.00x 免费模型恰恰排在
