@@ -117,10 +117,41 @@
   .note code { font-family: var(--mono); font-size: 12px; background: #00000040; padding: 1px 5px; border-radius: 4px; }
   .note ul { margin: 6px 0 0; padding-left: 20px; }
 
+  /* ---- 仪表盘（额度与计费） ---- */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 720px) { .tiles { grid-template-columns: 1fr; } }
+  .tile {
+    border: 1px solid var(--border); background: var(--panel-2);
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .tile .big { font-size: 17px; font-weight: 600; margin: 2px 0; }
+  .tile .big.warn { color: var(--yellow); }
+  .tile .big.bad  { color: var(--red); }
+  .tile .big.ok   { color: var(--green); }
+
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .bar-name {
+    width: 200px; flex: none; font-size: 12.5px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; color: var(--dim);
+  }
+  .bar-track {
+    flex: 1; height: 14px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  }
+  .bar-fill { display: block; height: 100%; min-width: 2px; }
+  .bar-fill.cn   { background: var(--blue); opacity: .75; }
+  .bar-fill.intl { background: var(--green); opacity: .75; }
+  .bar-num { width: 64px; flex: none; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--text); }
+
+  .chip {
+    display: inline-block; border: 1px solid var(--border); border-radius: 10px;
+    padding: 1px 9px; font-size: 12px; margin: 2px 6px 2px 0; color: var(--dim);
+    font-family: var(--mono);
+  }
+
   /* ---- 改动清单 ---- */
   table.changes { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   table.changes th {
-    text-align: left; font-weight: 600; color: var(--faint); font-size: 11.5px;
     padding: 0 10px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap;
   }
   table.changes td { padding: 7px 10px 7px 0; border-bottom: 1px solid #21262d; vertical-align: top; }
@@ -870,31 +901,77 @@
 
     var limits = usageData.limits || [];
     var costs = usageData.costs || [];
+    var latest = usageData.latest || {};
     note.textContent = "限流 " + limits.length + " · 消耗 " + costs.length +
       (costs.length >= 300 ? "（只取前 300）" : "");
 
-    if (!limits.length) {
-      box.appendChild(el("div", { class: "note ok", text: "最近 7 天没有被限流。" }));
-    }
-
-    // 当前状态每侧一行——用户要的就是"现在哪侧被限、何时恢复"。
-    var latest = usageData.latest || {};
+    // --- 状态瓷砖：一眼看清两侧现状 ---
+    var tiles = el("div", { class: "tiles" });
     (state ? state.backends : []).forEach(function (b) {
       var e = latest[b.id];
-      box.appendChild(el("div", { class: "row", style: "margin-bottom:4px" }, [
-        el("b", { text: sideLabel(b.id) }),
-        !e
-          ? pill("未见限流", "ok")
-          : pill(e.kind === "exhausted" ? "额度用尽" : "频率超限",
-                 e.kind === "exhausted" ? "bad" : "warn"),
-        !e ? null : el("span", { class: "desc",
-          text: e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需充值" })
+      var sum = 0, n = 0;
+      costs.forEach(function (c) {
+        if (c.side === b.id) { sum += (c.credits || 0); n++; }
+      });
+      tiles.appendChild(el("div", { class: "tile" }, [
+        el("div", { class: "desc", text: sideLabel(b.id) }),
+        el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
+          text: !e ? "正常" : e.kind === "exhausted" ? "额度用尽" : "频率超限" }),
+        el("div", { class: "desc",
+          text: !e ? "最近 7 天没有限流记录。"
+                   : e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需要充值。" }),
+        el("div", { class: "desc", text: "读到的消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条）" })
       ]));
     });
+    box.appendChild(tiles);
 
+    // --- 消耗榜：条形一眼比出谁吃得多，蓝=国内 绿=国际 ---
+    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
+      text: "消耗榜 · 前 10（积分，蓝=国内 绿=国际）" }));
+    if (!costs.length) {
+      box.appendChild(el("div", { class: "note",
+        text: "没读到消耗数据（两侧没用过、没登录，或表结构变了）。" }));
+    } else {
+      var max = 0;
+      costs.forEach(function (c) { if ((c.credits || 0) > max) max = c.credits; });
+      costs.slice(0, 10).forEach(function (c) {
+        var title = c.title || "会话 " + String(c.sessionId || "").slice(0, 8);
+        var w = max > 0 ? Math.max(1.5, (c.credits || 0) / max * 100) : 0;
+        box.appendChild(el("div", { class: "bar-row" }, [
+          el("span", { class: "bar-name", title: title, text: title }),
+          el("span", { class: "bar-track" }, [
+            el("span", { class: "bar-fill " + c.side, style: "width:" + w + "%" })
+          ]),
+          el("span", { class: "bar-num", text: (c.credits || 0).toFixed(2) })
+        ]));
+      });
+      if (costs.length > 10) {
+        var rest = 0;
+        costs.slice(10).forEach(function (c) { rest += (c.credits || 0); });
+        box.appendChild(el("div", { class: "hint",
+          text: "其余 " + (costs.length - 10) + " 条合计 " + rest.toFixed(2) + " 积分。" }));
+      }
+    }
+
+    // --- 模型分布：只数"出现在几条会话"，配不出积分（分项哈希拆不到模型） ---
+    var mc = {};
+    costs.forEach(function (c) {
+      (c.models || []).forEach(function (m) { mc[m] = (mc[m] || 0) + 1; });
+    });
+    var names = Object.keys(mc).sort(function (a, b) { return mc[b] - mc[a]; });
+    if (names.length) {
+      box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
+        text: "模型 · 出现在几条会话里（不代表积分多少）" }));
+      var chips = el("div", {});
+      names.slice(0, 12).forEach(function (m) {
+        chips.appendChild(el("span", { class: "chip", text: m + " ×" + mc[m] }));
+      });
+      box.appendChild(chips);
+    }
+
+    // --- 限流历史：一行一条，色标区分类型 ---
     if (limits.length) {
-      box.appendChild(el("div", { class: "hint", style: "margin:8px 0 2px", text: "限流历史" }));
-      // 历史压成一行一条：色标区分类型就够了，卡片式大块头只会把重点淹掉。
+      box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px", text: "限流历史" }));
       limits.forEach(function (e) {
         box.appendChild(el("div", { class: "row", style: "margin:2px 0" }, [
           pill(sideLabel(e.side), "ghost"),
@@ -908,46 +985,13 @@
       });
     }
 
-    box.appendChild(el("div", { class: "hint", style: "margin:10px 0 2px", text: "消耗（吃得多的在前）" }));
-    if (!costs.length) {
-      box.appendChild(el("div", { class: "note",
-        text: "没读到消耗数据（两侧没用过、没登录，或表结构变了）。" }));
-    } else {
-      costs.forEach(function (c) {
-        box.appendChild(el("div", { class: "row", style: "margin:2px 0" }, [
-          el("b", { text: shortTitle(c.title || String(c.sessionId || "").slice(0, 8)) }),
-          pill(sideShort(c.side), "ghost"),
-          el("span", { text: (c.credits || 0).toFixed(2) + " 积分" }),
-          el("span", { class: "desc", text: costDesc(c) })
-        ]));
-      });
-    }
-
     (usageData.warnings || []).forEach(function (w) {
-      box.appendChild(el("div", { class: "note warn", style: "margin-top:8px", text: w }));
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
     });
     box.appendChild(el("div", { class: "hint", style: "margin-top:8px",
       text: "数据来自客户端内部文件，升级后可能失效；credit 不是钱。" }));
   }
 
-  // 一行一条会话：标题截断、模型只留前两个、日期缩到 M-D hh:mm。
-  function shortTitle(t) { return t.length > 18 ? t.slice(0, 18) + "…" : t; }
-
-  function sideShort(id) { return sideLabel(id).replace(/版$/, ""); }
-
-  function costDesc(c) {
-    var parts = [];
-    if (c.models && c.models.length) {
-      parts.push(c.models.slice(0, 2).join("、") +
-        (c.models.length > 2 ? " 等" + c.models.length + "个" : ""));
-    }
-    if (c.updatedAt) {
-      var d = new Date(c.updatedAt >= 1e12 ? c.updatedAt : c.updatedAt * 1000);
-      parts.push((d.getMonth() + 1) + "-" + d.getDate() + " " +
-        ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2));
-    }
-    return parts.length ? "· " + parts.join(" · ") : "";
-  }
   // ---------- 启动 ----------
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
