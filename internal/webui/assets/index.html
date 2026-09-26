@@ -151,6 +151,16 @@
   a.chip { text-decoration: none; }
   a.chip:hover { color: var(--accent); border-color: var(--accent); }
 
+  /* 模型折叠块：默认收起，摘要行自带关键信息（数量+免费模型） */
+  details.fold { margin: 2px 0 10px; }
+  details.fold > summary {
+    cursor: pointer; color: var(--dim); font-size: 12.5px;
+    padding: 4px 0; user-select: none; list-style: none;
+  }
+  details.fold > summary::before { content: "▸ "; color: var(--faint); }
+  details.fold[open] > summary::before { content: "▾ "; }
+  details.fold > summary:hover { color: var(--text); }
+
   /* 模型卡片：照客户端选择器悬停卡的样式（名称+徽章+倍率/描述/上下文） */
   .mcards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0; }
   @media (max-width: 720px) { .mcards { grid-template-columns: 1fr; } }
@@ -1164,7 +1174,17 @@
           el("div", { class: "mmeta", text: meta.join(" · ") })
         ]));
       });
-      box.appendChild(grid);
+      // 折叠：默认收起，摘要行自带关键信息（数量+免费模型清单），
+      // 想细看再展开——卡片全量渲染但不再常驻撑长页面。
+      var freeNames = list.filter(function (r) { return r.free; })
+        .map(function (r) { return r.name; });
+      var summaryText = list.length + " 个模型" +
+        (freeNames.length ? " · 限时免费：" + freeNames.slice(0, 3).join("、") +
+          (freeNames.length > 3 ? " 等 " + freeNames.length + " 个" : "") : "");
+      box.appendChild(el("details", { class: "fold" }, [
+        el("summary", { text: summaryText }),
+        grid
+      ]));
 
     });
 
