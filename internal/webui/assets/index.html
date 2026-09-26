@@ -965,6 +965,8 @@
     var limits = usageData.limits || [];
     var costs = usageData.costs || [];
     var latest = usageData.latest || {};
+    // live 在后面的倍率区块也用；瓷砖里先读账号，声明必须提到最前
+    var live = usageData.live || {};
     note.textContent = "限流 " + limits.length + " · 消耗 " + costs.length +
       (costs.length >= 300 ? "（只取前 300）" : "");
 
@@ -993,8 +995,11 @@
           text: "⏳ " + prettyModel(x.model) + "：还有 " + left + "恢复" +
                 (x.resetAt ? "（" + x.resetAt + "）" : "") });
       });
+      var acc = live[b.id] || {};
+      var who = acc.nickname || (acc.uid ? acc.uid.slice(0, 8) + "…" : "");
       tiles.appendChild(el("div", { class: "tile" }, [
-        el("div", { class: "desc", text: sideLabel(b.id) }),
+        el("div", { class: "desc", text: sideLabel(b.id) +
+          (who ? " · " + who + (acc.credKind === "envelope" ? "（信封加密）" : "") : "") }),
         el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
           text: !e ? "✅ 正常" : e.kind === "exhausted" ? "💸 额度用尽" : "⏳ 频率超限" }),
         !e ? el("div", { class: "desc", text: "最近 7 天没有限流记录。" }) : rows,
@@ -1048,7 +1053,6 @@
     }
 
     // --- 实时模型清单与倍率：优先官方接口，读不到退回安装包快照 ---
-    var live = usageData.live || {};
     var rates = usageData.rates || {};
     box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
       text: "模型倍率 · 实时官方接口优先，读不到退回安装包快照（以客户端为准）" }));

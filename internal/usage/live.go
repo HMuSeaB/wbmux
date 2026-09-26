@@ -77,6 +77,14 @@ type LiveAccount struct {
 	Models   []LiveModel   `json:"models"`
 	Promos   []LivePromo   `json:"promos"`
 	Packages []LivePackage `json:"packages"`
+	// Nickname 是登录昵称。信封侧解不出来，为空；界面退回显示 UID 前缀。
+	Nickname string `json:"nickname,omitempty"`
+	// UID 是账号标识，界面只展示前 8 位。
+	UID string `json:"uid,omitempty"`
+	// CredKind 是凭据形态：plaintext=明文（可调官方接口），
+	// envelope=加密信封（只能看快照）。用户问"国内版到底行不行"时，
+	// 这一个字段就是答案的界面化。
+	CredKind string `json:"credKind,omitempty"`
 }
 
 // liveEndpoint 与两侧产品配置的 endpoint 字段一致（产品身份字段，不改）。
@@ -104,6 +112,8 @@ func liveAuthFile(probe *variant.Probe, id variant.ID) string {
 type liveCredentials struct {
 	Token string
 	UID   string
+	// Nickname 是登录昵称明文；信封侧为空。
+	Nickname string
 	// Envelope 为 true 表示 accessToken 是加密信封（WorkBuddy 5.6+），
 	// 客户端用 keyblob 自行解密，第三方拿不到明文就调不了接口。
 	Envelope bool
@@ -122,13 +132,21 @@ func readLiveCredentials(path string) (liveCredentials, error) {
 			AccessToken json.RawMessage `json:"accessToken"`
 		} `json:"auth"`
 		Account struct {
-			UID string `json:"uid"`
+			UID      json.RawMessage `json:"uid"`
+			Nickname json.RawMessage `json:"nickname"`
 		} `json:"account"`
 	}
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return liveCredentials{}, err
 	}
-	c := liveCredentials{UID: root.Account.UID}
+	c := liveCredentials{}
+	if err := json.Unmarshal(root.Account.UID, &c.UID); err != nil {
+		c.UID = ""
+	}
+	// 昵称与 token 同样可能是信封：是字符串才收，对象（信封）不碰。
+	if err := json.Unmarshal(root.Account.Nickname, &c.Nickname); err != nil {
+		c.Nickname = ""
+	}
 	var token string
 	if err := json.Unmarshal(root.Auth.AccessToken, &token); err == nil {
 		token = strings.TrimSpace(token)
@@ -183,6 +201,8 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 	acc := &LiveAccount{}
 	cred, err := readLiveCredentials(liveAuthFile(probe, id))
+	acc.UID = cred.UID
+	acc.Nickname = cred.Nickname
 	if err != nil {
 		if cred.Envelope {
 			acc.Err = err.Error() // 信封场景的报错本身已是完整说明，别再加前缀
@@ -193,8 +213,10 @@ func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 	}
 	if cred.Envelope {
 		acc.Err = "凭据是加密信封（WorkBuddy 5.6+），本地无法解密；实时倍率/余额请看客户端或官方账单页"
+		acc.CredKind = "envelope"
 		return acc
 	}
+	acc.CredKind = "plaintext"
 	endpoint := liveEndpoint[id]
 
 	models, promos, err := fetchLiveModels(endpoint, cred, id)
