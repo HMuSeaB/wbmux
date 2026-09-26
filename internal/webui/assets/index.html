@@ -306,8 +306,10 @@
         else n.setAttribute(k, v);
       });
     }
-    (kids || []).forEach(function (c) {
+    (kids || []).forEach(function add(c) {
       if (c === null || c === undefined || c === false) return;
+      // 数组递归展开：嵌套分组时直接传数组，别让 appendChild(数组) 炸掉
+      if (Array.isArray(c)) return c.forEach(add);
       n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
     });
     return n;
@@ -913,16 +915,22 @@
       costs.forEach(function (c) {
         if (c.side === b.id) { sum += (c.credits || 0); n++; }
       });
+      // 每个被限的模型一行：免费额度按模型单独计，deepseek 和 hy4
+      // 可以同时被限着，各有各的重置时间。
+      var mine = (usageData.byModel || []).filter(function (x) { return x.side === b.id; });
+      var rows = mine.slice(0, 6).map(function (x) {
+        var expired = x.resetMs && x.resetMs < Date.now();
+        return el("div", { class: "desc", text:
+          (x.model || "未识别模型") + "：" +
+          (x.kind === "exhausted" ? "额度用尽，需充值"
+            : x.resetAt ? "重置 " + x.resetAt + (expired ? "（已过）" : "")
+            : "频率超限") });
+      });
       tiles.appendChild(el("div", { class: "tile" }, [
         el("div", { class: "desc", text: sideLabel(b.id) }),
         el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
           text: !e ? "正常" : e.kind === "exhausted" ? "额度用尽" : "频率超限" }),
-        !e ? null : e.model
-          ? el("div", { class: "desc", text: "被限模型：" + e.model })
-          : null,
-        el("div", { class: "desc",
-          text: !e ? "最近 7 天没有限流记录。"
-                   : e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需要充值。" }),
+        !e ? el("div", { class: "desc", text: "最近 7 天没有限流记录。" }) : rows,
         el("div", { class: "desc", text: "读到的消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条）" })
       ]));
     });

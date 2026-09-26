@@ -434,3 +434,43 @@ func TestSurveyLimitsAttributesModelFromContext(t *testing.T) {
 		t.Errorf("Latest 应取最新事件：%+v", got)
 	}
 }
+
+// TestSurveyLimitsByModel 钉住"每侧每模型各取最新"。
+//
+// 免费额度按模型单独计：hy4 和 deepseek 可以同时被限着，各有各的
+// 重置时间。只看每侧最新一条会漏掉另一个模型的限制——用户就遇到过
+// "deepseek 也超频了但界面上看不见"。
+func TestSurveyLimitsByModel(t *testing.T) {
+	probe := hermeticProbe(t)
+	writeSession(t, probe, variant.CN, "c-a", "aaaa.jsonl",
+		`{"providerData":{"model":"hy4-preview-f"}}`+"\n"+
+			`{"content":[{"type":"output_text","text":"429 您的使用量已超出频率限制，将在 2026-09-27 11:19:18 UTC+8 重置"}]}`+"\n")
+	// deepseek 被限得更晚，还故意在同侧留一条更早的同模型记录，验证去重
+	writeSession(t, probe, variant.CN, "c-b", "bbbb.jsonl",
+		`{"providerData":{"model":"deepseek-v4.1-flash"}}`+"\n"+
+			`{"content":[{"type":"output_text","text":"429 您的使用量已超出频率限制，将在 2026-09-26 13:40:52 UTC+8 重置"}]}`+"\n"+
+			`{"providerData":{"model":"deepseek-v4.1-flash"}}`+"\n"+
+			`{"content":[{"type":"output_text","text":"429 您的使用量已超出频率限制，将在 2026-09-28 09:30:00 UTC+8 重置"}]}`+"\n")
+
+	s := SurveyLimits(probe)
+	if len(s.ByModel) != 2 {
+		t.Fatalf("两个模型应各一条，得到 %d 条：%+v", len(s.ByModel), s.ByModel)
+	}
+	// 按时间倒序：9-28 的 deepseek 在前
+	if s.ByModel[0].Model != "deepseek-v4.1-flash" || !strings.Contains(s.ByModel[0].ResetAt, "2026-09-28") {
+		t.Errorf("第一条应是 deepseek 的 9-28：%+v", s.ByModel[0])
+	}
+	if s.ByModel[1].Model != "hy4-preview-f" || !strings.Contains(s.ByModel[1].ResetAt, "2026-09-27") {
+		t.Errorf("第二条应是 hy4 的 9-27：%+v", s.ByModel[1])
+	}
+	// 同模型同侧只留最新：deepseek 的 9-26 那条不能出现
+	for _, e := range s.ByModel {
+		if strings.Contains(e.ResetAt, "2026-09-26") {
+			t.Errorf("同模型的旧记录没去重：%+v", e)
+		}
+	}
+	// ResetMs 供界面判断"重置时间是否已过"
+	if s.ByModel[1].ResetMs == 0 {
+		t.Errorf("resetMs 应解析出来，不能全靠原文：%+v", s.ByModel[1])
+	}
+}

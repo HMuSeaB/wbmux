@@ -46,6 +46,9 @@ type LimitEvent struct {
 	AtMs int64 `json:"atMs"`
 	// Model 是撞上限流时用的模型，取不到则为空。
 	Model string `json:"model"`
+	// ResetMs 是 ResetAt 的毫秒解析结果，解析不了为 0。
+	// 界面用它判断"重置时间是否已过"——原文照样展示，这只是补充。
+	ResetMs int64 `json:"resetMs"`
 }
 
 // sortMs 决定一条记录排多前。
@@ -131,6 +134,13 @@ type Survey struct {
 	// 而不是一份历史清单。只有 Limits 的话，他得自己在列表里翻找，
 	// 而列表的顺序会随客户端持续写文件而变化——最关键的那条未必排在第一个。
 	Latest map[string]LimitEvent `json:"latest"`
+	// ByModel 是每侧**每个模型**各取最新的一条，按时间倒序。
+	//
+	// 免费额度按模型单独计，"当前被限"不是一条而是一组：hy4 和 deepseek
+	// 可以同时被限着，各有各的重置时间。只看 Latest 会漏掉另一个模型的
+	// 限制——用户就遇到过"deepseek 也超频了但界面上看不见"。
+	// Model 为空的条目归为一组（界面显示"未识别模型"），不丢弃。
+	ByModel []LimitEvent `json:"byModel"`
 	// Limits 按时间倒序，最近的排最前。
 	Limits []LimitEvent `json:"limits"`
 	// Costs 是每条会话的额度消耗，按吃掉的量倒序。
@@ -144,14 +154,11 @@ type Survey struct {
 //
 // 不叫 Survey：包里已经有一个 Survey 类型，同一包内类型与函数不能同名。
 func Build(probe *variant.Probe) Survey {
-	limits := SurveyLimits(probe)
+	s := SurveyLimits(probe)
 	costs, warns := SurveyCosts(probe)
-	return Survey{
-		Latest:   limits.Latest,
-		Limits:   limits.Limits,
-		Costs:    costs,
-		Warnings: append(limits.Warnings, warns...),
-	}
+	s.Costs = costs
+	s.Warnings = append(s.Warnings, warns...)
+	return s
 }
 
 // recentWindow 是只看多久以内动过的会话文件。
@@ -197,10 +204,7 @@ func SurveyLimits(probe *variant.Probe) Survey {
 			continue
 		}
 		for _, f := range files {
-			ev, ok := scanFileForLimit(f, id)
-			if ok {
-				out.Limits = append(out.Limits, ev)
-			}
+			out.Limits = append(out.Limits, scanFileForLimits(f, id)...)
 		}
 	}
 
@@ -215,6 +219,23 @@ func SurveyLimits(probe *variant.Probe) Survey {
 		if _, ok := out.Latest[e.Side]; !ok {
 			out.Latest[e.Side] = e
 		}
+	}
+
+	// 每侧每个模型各取最新一条。Limits 已按事件时间倒序，
+	// 所以首次遇到即最新，后面的一律跳过。
+	type sideModel struct{ side, model string }
+	seen := map[sideModel]bool{}
+	for _, e := range out.Limits {
+		k := sideModel{e.Side, e.Model}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out.ByModel = append(out.ByModel, e)
+	}
+	// 历史清单只给界面看，太长会淹掉重点；Latest/ByModel 已经算完，这里才截。
+	if len(out.Limits) > maxLimitEvents {
+		out.Limits = out.Limits[:maxLimitEvents]
 	}
 	return out
 }
@@ -260,33 +281,36 @@ func recentSessionFiles(root string, cutoff time.Time, limit int) ([]string, err
 	return out, nil
 }
 
-// scanFileForLimit 在一个会话文件里找限流记录。
+// maxLimitEvents 是限流历史清单的上限，防止把界面淹掉。
+const maxLimitEvents = 30
+
+// scanFileForLimits 在一个会话文件里找限流记录，**每个模型各取最后一条**。
 //
-// 只取最后一条：用户关心的是"现在是不是被限着 / 什么时候能恢复"，
-// 历史上的每一次都列出来只会淹掉重点。
-func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
+// 只取最后一条（不管模型）的旧做法有个盲区：同一个文件里 hy4 和 deepseek
+// 先后都被限过，只剩时间靠后的那条，另一个模型的限制和它自己的重置时间
+// 就丢了（实测 2026-09-26：hy4 9-27 把 deepseek 9-26 挤掉了）。
+// 文件按行计时，"最后一条"就是该模型在本文件里最近的一次。
+func scanFileForLimits(path string, id variant.ID) []LimitEvent {
 	info, err := os.Stat(path)
 	if err != nil {
-		return LimitEvent{}, false
+		return nil
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return LimitEvent{}, false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 
 	// 先用缓冲逐行找，避免把几 MB 的文件整个读进内存。
 	// 记录只出现在某几行里，顺序扫描足够。
-	var (
-		ev        LimitEvent
-		found     bool
-		lastModel string
-	)
+	lastModel := ""
+	perModel := map[string]LimitEvent{}
+	var order []string // 保持各模型首次出现顺序，输出顺序稳定
+
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for idx := 0; sc.Scan(); idx++ {
+	for sc.Scan() {
 		line := sc.Text()
 		// 模型滚动归属：429 行自己往往不带 model（实测 45 条里 16 条没有），
 		// 被限的是"当时正在用的模型"——往前找最近一次出现的 model 字段。
@@ -295,6 +319,10 @@ func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
 		if m := modelLineRe.FindStringSubmatch(line); m != nil {
 			lastModel = m[1]
 		}
+		var (
+			ev  LimitEvent
+			hit bool
+		)
 		if m := rateRe.FindStringSubmatch(line); m != nil {
 			ev = LimitEvent{
 				Side:    string(id),
@@ -303,10 +331,8 @@ func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
 				AtMs:    info.ModTime().UnixMilli(),
 				Model:   lastModel,
 			}
-			found = true
-			continue
-		}
-		if exhaustedRe.MatchString(line) {
+			hit = true
+		} else if exhaustedRe.MatchString(line) {
 			ev = LimitEvent{
 				Side:    string(id),
 				Kind:    "exhausted",
@@ -314,15 +340,25 @@ func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
 				AtMs:    info.ModTime().UnixMilli(),
 				Model:   lastModel,
 			}
-			found = true
+			hit = true
 		}
+		if !hit {
+			continue
+		}
+		ev.ResetMs = parseResetMs(ev.ResetAt)
+		if _, ok := perModel[lastModel]; !ok {
+			order = append(order, lastModel)
+		}
+		perModel[lastModel] = ev // 同模型反复被限只留本文件里最后一次
 	}
 
-	if !found {
-		return LimitEvent{}, false
+	out := make([]LimitEvent, 0, len(order))
+	for _, m := range order {
+		ev := perModel[m]
+		ev.SessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		out = append(out, ev)
 	}
-	ev.SessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
-	return ev, true
+	return out
 }
 
 // ---------- 各对话的额度消耗 ----------
