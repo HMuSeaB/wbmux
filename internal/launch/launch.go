@@ -18,6 +18,14 @@ import (
 // ConfigPathEnv 是客户端读取产品配置路径所用的环境变量。
 const ConfigPathEnv = "ACC_PRODUCT_CONFIG_PATH"
 
+// InternetEnvEnv 是客户端的"网络环境"开关（官方 ProductEnvServiceImpl.switch
+// 就是写它）。5.6 起客户端启动时会从登录会话文件推导环境并发布
+// ACC_PRODUCT_CONFIG_V3（日志 source=product-env-switch），推导值会压过
+// ACC_PRODUCT_CONFIG_PATH 的文件覆盖——2026-09-26 实测：只设 PATH，
+// 宿主切国际后客户端仍连国内后端。但会话推导有
+// !process.env[...] 守卫：我们预先设置，客户端就沿用我们的值。
+const InternetEnvEnv = "CODEBUDDY_COPILOT_INTERNET_ENVIRONMENT"
+
 // conflictingEnvs 与 ConfigPathEnv 互斥。
 //
 // 客户端源码里有一行显式声明：
@@ -31,6 +39,7 @@ var conflictingEnvs = []string{
 	"ACC_PRODUCT_CONFIG_V3",
 	"ACC_PRODUCT_CONFIG_V2",
 	"ACC_PRODUCT_CONFIG",
+	InternetEnvEnv,
 }
 
 // UserDataDirFlag 是传给 Electron 的数据目录参数。
@@ -98,6 +107,9 @@ func Build(opts Options) (Plan, error) {
 	}
 
 	env, stripped := FilteredEnv(opts.ParentEnv, opts.ConfigPath)
+	// 环境必须与目标后端一致，否则客户端按登录会话推导回原环境
+	// （静默回落：界面一切正常，就是连的原后端）。
+	env = append(env, InternetEnvEnv+"="+internetEnvByTarget(target.ID))
 
 	return Plan{
 		Variant:    target.ID,
@@ -154,6 +166,15 @@ func stripEnv(parent []string, configPath string) ([]string, []string) {
 	}
 	sort.Strings(stripped)
 	return out, stripped
+}
+
+// internetEnvByTarget 把目标后端映射成客户端的网络环境枚举值。
+// 枚举来自客户端源码 ProductEnviroment：external=国际版、internal=国内版。
+func internetEnvByTarget(id variant.ID) string {
+	if id == variant.Intl {
+		return "external"
+	}
+	return "internal"
 }
 
 // CommandLine 返回便于展示与复制的命令行文本。

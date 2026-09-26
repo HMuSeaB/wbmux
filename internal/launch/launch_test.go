@@ -16,6 +16,7 @@ func TestFilteredEnvStripsConflictingVariables(t *testing.T) {
 		"ACC_PRODUCT_CONFIG_V2=stale",
 		"ACC_PRODUCT_CONFIG=stale",
 		"ACC_PRODUCT_CONFIG_PATH=C:\\old\\path.json",
+		InternetEnvEnv + "=stale",
 		"HOME=C:\\Users\\tester",
 	}
 
@@ -273,5 +274,77 @@ func TestQuote(t *testing.T) {
 		if got := quote(in); got != want {
 			t.Errorf("quote(%q) = %q, 期望 %q", in, got, want)
 		}
+	}
+}
+
+// TestBuildInjectsInternetEnvironment 钉住网络环境注入。
+//
+// 5.6 的客户端按登录会话推导网络环境并发布 ACC_PRODUCT_CONFIG_V3，
+// 推导值会压过 ACC_PRODUCT_CONFIG_PATH 的文件覆盖（实测静默回落）。
+// 修复 = 预设官方开关变量，且有 !process.env 守卫保证预设值优先。
+func TestBuildInjectsInternetEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	for _, c := range []struct {
+		id   variant.ID
+		want string
+	}{
+		{variant.Intl, "external"},
+		{variant.CN, "internal"},
+	} {
+		target, _ := variant.Get(c.id)
+		inst := variant.Install{
+			Found:      true,
+			Executable: filepath.Join(dir, "host.exe"),
+			DataDir:    filepath.Join(dir, "data"),
+		}
+		cfgPath := filepath.Join(dir, "cfg-"+string(c.id)+".json")
+		if err := os.WriteFile(cfgPath, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := Build(Options{
+			Install:    inst,
+			Target:     target,
+			ConfigPath: cfgPath,
+			DataDir:    filepath.Join(dir, "dd"),
+		})
+		if err != nil {
+			t.Fatalf("%s: Build: %v", c.id, err)
+		}
+		want := InternetEnvEnv + "=" + c.want
+		found := false
+		for _, e := range plan.Env {
+			if strings.HasPrefix(e, InternetEnvEnv+"=") && e != want {
+				t.Errorf("%s: 环境变量错位 %q", c.id, e)
+			}
+			if e == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: 环境里没有 %q，实际 %v", c.id, want, plan.Env)
+		}
+	}
+}
+
+// TestCleanEnvStripsInternetEnvironment 钉住原生模式的纯净性：
+// 用户环境里残留的开关值会把原生启动悄悄切到别的后端，必须剥离。
+func TestCleanEnvStripsInternetEnvironment(t *testing.T) {
+	env, stripped := CleanEnv([]string{
+		"PATH=x",
+		InternetEnvEnv + "=external",
+	})
+	for _, e := range env {
+		if strings.HasPrefix(e, InternetEnvEnv+"=") {
+			t.Errorf("原生模式不应保留网络环境开关：%q", e)
+		}
+	}
+	found := false
+	for _, k := range stripped {
+		if k == InternetEnvEnv {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("剥离清单里应记录被剥的变量：%v", stripped)
 	}
 }
