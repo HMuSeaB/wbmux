@@ -222,12 +222,8 @@
   <section id="usage-sec">
     <h2>额度与计费</h2>
     <p class="hint" style="margin-top:0">
-      两套后端各自限流、各自重置，界面上却长得一模一样。这里按
-      <strong>会话文件落在哪个数据目录</strong>判断归属——这是唯一可靠的判据，不靠猜。
-    </p>
-    <p class="hint" style="margin-top:6px">
-      <strong>频率超限</strong>等重置即可；<strong>额度用尽</strong>不会自己恢复，要充值或换模型。
-      两者都是 429，但对策完全不同，所以这里分开显示。
+      按会话文件所在的数据目录判断归属。<strong>频率超限</strong>等重置即可；
+      <strong>额度用尽</strong>要充值，不会自己恢复。
     </p>
     <div class="row" style="margin-top:12px">
       <button id="btn-usage-scan">查看额度与消耗</button>
@@ -874,97 +870,84 @@
 
     var limits = usageData.limits || [];
     var costs = usageData.costs || [];
-    note.textContent = "限流 " + limits.length + " 条，消耗 " + costs.length + " 条" +
-      (costs.length >= 300 ? "（消耗只取前 300 条）" : "");
+    note.textContent = "限流 " + limits.length + " · 消耗 " + costs.length +
+      (costs.length >= 300 ? "（只取前 300）" : "");
 
     if (!limits.length) {
       box.appendChild(el("div", { class: "note ok", text: "最近 7 天没有被限流。" }));
     }
 
-    // 每侧先给一句"当前状态"。用户真正要的是这个，不是一份清单——
-    // 清单的顺序会随客户端持续写文件而变化，最关键的那条未必排第一。
+    // 当前状态每侧一行——用户要的就是"现在哪侧被限、何时恢复"。
     var latest = usageData.latest || {};
     (state ? state.backends : []).forEach(function (b) {
       var e = latest[b.id];
-      box.appendChild(el("div", { class: "row", style: "margin-bottom:6px" }, [
+      box.appendChild(el("div", { class: "row", style: "margin-bottom:4px" }, [
         el("b", { text: sideLabel(b.id) }),
         !e
           ? pill("未见限流", "ok")
           : pill(e.kind === "exhausted" ? "额度用尽" : "频率超限",
                  e.kind === "exhausted" ? "bad" : "warn"),
         !e ? null : el("span", { class: "desc",
-          text: e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需充值或换模型" })
+          text: e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需充值" })
       ]));
     });
 
     if (limits.length) {
-      box.appendChild(el("div", { class: "hint", style: "margin:10px 0 6px", text: "限流历史" }));
+      box.appendChild(el("div", { class: "hint", style: "margin:8px 0 2px", text: "限流历史" }));
+      // 历史压成一行一条：色标区分类型就够了，卡片式大块头只会把重点淹掉。
       limits.forEach(function (e) {
-        var exhausted = e.kind === "exhausted";
-        box.appendChild(el("div", { class: "note " + (exhausted ? "bad" : "warn"), style: "margin-bottom:8px" }, [
-          el("div", { class: "row", style: "margin-bottom:4px" }, [
-            el("b", { text: sideLabel(e.side) }),
-            pill(exhausted ? "额度用尽" : "频率超限", exhausted ? "bad" : "warn")
-          ]),
-          e.resetAt
-            ? el("div", { text: "重置时间：" + e.resetAt })
-            : el("div", { text: exhausted ? "这个不会自己恢复：需要充值，或换一个还能用的模型。" : "（这次没给出重置时间）" }),
-          e.model ? el("div", { text: "当时用的模型：" + e.model }) : null,
-          el("div", { class: "desc", text: "会话 " + String(e.sessionId || "").slice(0, 8) })
+        box.appendChild(el("div", { class: "row", style: "margin:2px 0" }, [
+          pill(sideLabel(e.side), "ghost"),
+          pill(e.kind === "exhausted" ? "额度用尽" : "频率超限",
+               e.kind === "exhausted" ? "bad" : "warn"),
+          el("span", { class: "desc",
+            text: (e.resetAt ? "重置 " + e.resetAt : "不自动恢复") +
+                  " · 会话 " + String(e.sessionId || "").slice(0, 8) +
+                  (e.model ? " · " + e.model : "") })
         ]));
       });
     }
 
-    // 消耗统计：吃得多的排前面。没有限流不代表没消耗——
-    // 两个块各自渲染，谁也不挤掉谁。
-    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 6px", text: "消耗统计（每条会话）" }));
+    box.appendChild(el("div", { class: "hint", style: "margin:10px 0 2px", text: "消耗（吃得多的在前）" }));
     if (!costs.length) {
-      box.appendChild(el("div", { class: "note", style: "margin-bottom:8px",
-        text: "没读到消耗数据。两侧都没用过、没登录，或客户端改了表结构，都会这样。" }));
+      box.appendChild(el("div", { class: "note",
+        text: "没读到消耗数据（两侧没用过、没登录，或表结构变了）。" }));
     } else {
       costs.forEach(function (c) {
-        box.appendChild(el("div", { class: "note", style: "margin-bottom:8px" }, [
-          el("div", { class: "row", style: "margin-bottom:4px" }, [
-            el("b", { text: c.title || "会话 " + String(c.sessionId || "").slice(0, 8) }),
-            pill(sideLabel(c.side), "ghost"),
-            el("b", { text: (c.credits || 0).toFixed(2) + " 积分" })
-          ]),
-          c.models && c.models.length
-            ? el("div", { text: "模型：" + c.models.join("、") })
-            : null,
-          el("div", { class: "desc", text: costDesc(c) })
+        box.appendChild(el("div", { class: "row", style: "margin:2px 0" }, [
+          el("b", { text: shortTitle(c.title || String(c.sessionId || "").slice(0, 8)) }),
+          pill(sideShort(c.side), "ghost"),
+          el("span", { text: (c.credits || 0).toFixed(2) + " 积分" }),
+          el("span", { class: "desc", text: costDesc(c) })
         ]));
       });
     }
 
     (usageData.warnings || []).forEach(function (w) {
-      box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:8px", text: w }));
     });
-
-    // 这栏读的是客户端自己的会话文件与数据库，属于依赖内部实现。
-    // 明说出来，不装成稳定接口——否则哪天读不出来，用户会当成 wbmux 坏了。
-    // 积分为什么只有总量：credit_json 的分项键是不透明哈希，映射不到模型名。
-    box.appendChild(el("div", { class: "hint", style: "margin-top:10px",
-      text: "这些数据来自客户端内部的会话文件与数据库；客户端升级改了结构就可能读不出来。" +
-            "「积分」是客户端记的 credit，不是钱，只有会话总量；「模型」来自会话日志，" +
-            "只能说这条会话用过哪些，配不出每个模型各花多少。" }));
+    box.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+      text: "数据来自客户端内部文件，升级后可能失效；credit 不是钱。" }));
   }
 
-  // costDesc 拼消耗行下方的小字。updatedAt 实测是毫秒；万一哪天客户端
-  // 换成秒，按 1e12 分界转一下，别把 1970 年摆到用户面前。
+  // 一行一条会话：标题截断、模型只留前两个、日期缩到 M-D hh:mm。
+  function shortTitle(t) { return t.length > 18 ? t.slice(0, 18) + "…" : t; }
+
+  function sideShort(id) { return sideLabel(id).replace(/版$/, ""); }
+
   function costDesc(c) {
     var parts = [];
+    if (c.models && c.models.length) {
+      parts.push(c.models.slice(0, 2).join("、") +
+        (c.models.length > 2 ? " 等" + c.models.length + "个" : ""));
+    }
     if (c.updatedAt) {
-      var ms = c.updatedAt >= 1e12 ? c.updatedAt : c.updatedAt * 1000;
-      parts.push("更新于 " + new Date(ms).toLocaleString());
+      var d = new Date(c.updatedAt >= 1e12 ? c.updatedAt : c.updatedAt * 1000);
+      parts.push((d.getMonth() + 1) + "-" + d.getDate() + " " +
+        ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2));
     }
-    if (c.sessionId) parts.push("会话 " + String(c.sessionId).slice(0, 8));
-    if (c.size > 0) {
-      parts.push("记录用量 " + Number(c.used || 0).toLocaleString() + " / " + Number(c.size).toLocaleString());
-    }
-    return parts.join(" · ");
+    return parts.length ? "· " + parts.join(" · ") : "";
   }
-
   // ---------- 启动 ----------
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
