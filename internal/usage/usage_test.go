@@ -250,3 +250,101 @@ func TestSurveyLimitsIgnoresCleanSessions(t *testing.T) {
 		t.Errorf("没有限流时不该报出记录：%+v", s.Limits)
 	}
 }
+
+// ---------- 消耗统计 ----------
+
+// TestRowToCostSumsCredits 用真实库里的形状钉住解析。
+//
+// 实测（2026-09-26，真实 workbuddy.db）：credit_json 的键是不透明哈希，
+// 值带 5.8900000000000015 这样的浮点尾巴。总量必须归整到两位小数，
+// 否则界面和 JSON 里全是脏数。
+func TestRowToCostSumsCredits(t *testing.T) {
+	row := map[string]any{
+		"session_id":  "00f182b4-568f-4cdd-8157-56effb5ccad8",
+		"title":       "调试 wbmux 后台命令启动失败",
+		"updated_at":  float64(1790398295856),
+		"used":        float64(372571),
+		"size":        float64(1000000),
+		"credit_json": `{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":5.89,"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb":0.11}`,
+	}
+	c := rowToCost("cn", row)
+	if c.Credits != 6 {
+		t.Errorf("总量应为 6（尾巴已归整），得到 %v", c.Credits)
+	}
+	if c.Parts != 2 {
+		t.Errorf("分项应为 2，得到 %d", c.Parts)
+	}
+	if c.Title != "调试 wbmux 后台命令启动失败" {
+		t.Errorf("标题没取到：%q", c.Title)
+	}
+	if c.UpdatedAt != 1790398295856 {
+		t.Errorf("毫秒时间戳没取到：%d", c.UpdatedAt)
+	}
+	if c.Used != 372571 || c.Size != 1000000 {
+		t.Errorf("used/size 没取到：%d/%d", c.Used, c.Size)
+	}
+	if c.Side != "cn" {
+		t.Errorf("归属判错：%q", c.Side)
+	}
+}
+
+// TestRowToCostToleratesGarbage 钉住"取不到就留零值，绝不 panic"。
+//
+// 这张表是客户端内部实现，credit_json 实测可以为 NULL（intl 侧就有），
+// 哪天列名一改、内容一变，解析会全方位失败——失败要退化成零值，
+// 不能让整栏消失或者进程崩掉。
+func TestRowToCostToleratesGarbage(t *testing.T) {
+	cases := []struct {
+		name string
+		row  map[string]any
+	}{
+		{"credit_json 为 nil（SQL NULL）", map[string]any{"session_id": "s1"}},
+		{"credit_json 是空串", map[string]any{"credit_json": ""}},
+		{"credit_json 是 None", map[string]any{"credit_json": "None"}},
+		{"credit_json 不是合法 JSON", map[string]any{"credit_json": "不是json"}},
+		{"credit_json 是数组不是对象", map[string]any{"credit_json": `[1,2]`}},
+		{"整行几乎为空", map[string]any{}},
+	}
+	for _, c := range cases {
+		got := rowToCost("cn", c.row)
+		if got.Credits != 0 || got.Parts != 0 {
+			t.Errorf("%s：应得零值，得到 credits=%v parts=%d", c.name, got.Credits, got.Parts)
+		}
+		if got.Side != "cn" {
+			t.Errorf("%s：归属丢了", c.name)
+		}
+	}
+}
+
+// TestRowToCostAcceptsIntAndFloatNumbers 钉住数值列的双重来源。
+//
+// SQLite 结果经 JSON 桥过来，整数可能被解成 float64，也可能保持 int64；
+// 两边都必须接住，否则同一列一会儿有值一会儿是 0，用户看到的数字忽有忽无。
+func TestRowToCostAcceptsIntAndFloatNumbers(t *testing.T) {
+	base := map[string]any{
+		"credit_json": `{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":1.5}`,
+	}
+	asFloat := map[string]any{}
+	for k, v := range base {
+		asFloat[k] = v
+	}
+	asFloat["updated_at"] = float64(1790398295856)
+	asFloat["used"] = float64(100)
+	asFloat["size"] = float64(1000)
+
+	asInt := map[string]any{}
+	for k, v := range base {
+		asInt[k] = v
+	}
+	asInt["updated_at"] = int64(1790398295856)
+	asInt["used"] = int64(100)
+	asInt["size"] = int64(1000)
+
+	for name, row := range map[string]map[string]any{"float64": asFloat, "int64": asInt} {
+		c := rowToCost("cn", row)
+		if c.UpdatedAt != 1790398295856 || c.Used != 100 || c.Size != 1000 {
+			t.Errorf("%s：数值列没接住 → updated=%d used=%d size=%d",
+				name, c.UpdatedAt, c.Used, c.Size)
+		}
+	}
+}

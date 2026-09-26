@@ -18,6 +18,7 @@ package usage
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/migrate"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -130,8 +132,26 @@ type Survey struct {
 	// 而列表的顺序会随客户端持续写文件而变化——最关键的那条未必排在第一个。
 	Latest map[string]LimitEvent `json:"latest"`
 	// Limits 按时间倒序，最近的排最前。
-	Limits   []LimitEvent `json:"limits"`
-	Warnings []string     `json:"warnings"`
+	Limits []LimitEvent `json:"limits"`
+	// Costs 是每条会话的额度消耗，按吃掉的量倒序。
+	Costs []SessionCost `json:"costs"`
+	// Warnings 是读取过程中的问题。读不到额度表时仍然会返回限流部分，
+	// 所以这里只是补充说明，不是致命错误。
+	Warnings []string `json:"warnings"`
+}
+
+// Build 汇总限流与消耗两块。
+//
+// 不叫 Survey：包里已经有一个 Survey 类型，同一包内类型与函数不能同名。
+func Build(probe *variant.Probe) Survey {
+	limits := SurveyLimits(probe)
+	costs, warns := SurveyCosts(probe)
+	return Survey{
+		Latest:   limits.Latest,
+		Limits:   limits.Limits,
+		Costs:    costs,
+		Warnings: append(limits.Warnings, warns...),
+	}
 }
 
 // recentWindow 是只看多久以内动过的会话文件。
@@ -309,6 +329,126 @@ func modelOf(line string) string {
 		}
 	}
 	return ""
+}
+
+// ---------- 各对话的额度消耗 ----------
+
+// SessionCost 是一条会话的额度消耗。
+type SessionCost struct {
+	Side      string `json:"side"`
+	SessionID string `json:"sessionId"`
+	// Title 取不到就为空：宁可空着，也不要拿 session_id 冒充标题。
+	Title string `json:"title"`
+	// Credits 是这条会话吃掉的 credit 总量，四舍五入到两位小数。
+	//
+	// 单位是客户端自己记的 credit，不是钱：本机没有任何价格数据
+	// （数据目录下的 models.json 只有几条自定义供应商配置，**不含价格字段**，
+	// 里面还存着 apiKey，也不该拿来展示）。所以只能横向比较"谁吃得多"，
+	// 换不成金额——宁可只给能确定的部分，也不拿猜出来的单价去算钱。
+	Credits float64 `json:"credits"`
+	// Parts 是 credit_json 里的分项个数。
+	//
+	// 实测（2026-09-26）credit_json 长这样：
+	//   {"01a0d7a9f1f87b239d5ff27668a42917": 5.89, ...}
+	// 键是 32 位十六进制的**不透明哈希**，不是模型名——本机没有任何
+	// 哈希到模型名的映射，硬把它标成"每个模型的消耗"就是编造。
+	// 所以只下发分项个数，明细数组不下发：界面上用不上，还白占带宽。
+	// 哪天搞清了键的含义，再在这里恢复明细。
+	Parts int `json:"parts"`
+	// Used / Size 是客户端记录的这条会话的用量与上限。单位未证实
+	// （字节还是 token），只原样展示，不解释。
+	Used int64 `json:"used"`
+	Size int64 `json:"size"`
+	// UpdatedAt 是毫秒时间戳（实测 13 位），取不到就为 0。
+	UpdatedAt int64 `json:"updatedAt"`
+}
+
+// costQuery 读出额度表，并顺带取会话标题。
+//
+// LEFT JOIN 而不是 INNER：额度表里可能记着索引里已经没有的会话，
+// 那种也要显示出来——否则就少了一块真实的消耗，用户会对不上账。
+const costQuery = `select u.session_id as session_id, u.used as used, ` +
+	`u.size as size, u.updated_at as updated_at, u.credit_json as credit_json, ` +
+	`s.title as title from session_usage u ` +
+	`left join sessions s on s.id = u.session_id ` +
+	`order by u.updated_at desc limit 300`
+
+// SurveyCosts 读出两侧每条会话的额度消耗。
+//
+// 数据库一律以 immutable 方式打开（不碰 -wal/-shm），客户端在跑也照样能读。
+// 读不到就记一条警告，而不是让整栏消失——限流那部分仍然有用。
+func SurveyCosts(probe *variant.Probe) ([]SessionCost, []string) {
+	var out []SessionCost
+	var warns []string
+
+	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		rows, err := migrate.Query(probe, id, costQuery)
+		if err != nil {
+			warns = append(warns, warn(id, "读额度表失败："+err.Error()))
+			continue
+		}
+		for _, r := range rows {
+			out = append(out, rowToCost(string(id), r))
+		}
+	}
+
+	// 吃得多的排最前
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Credits != out[j].Credits {
+			return out[i].Credits > out[j].Credits
+		}
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
+	return out, warns
+}
+
+// rowToCost 把一行查询结果转成 SessionCost。
+//
+// 全部字段都做"取不到就留零值"的处理：这张表是客户端内部实现，
+// 哪天改了列名就取不到，那时宁可显示一堆零，也不要 panic 或者整栏消失。
+func rowToCost(side string, row map[string]any) SessionCost {
+	c := SessionCost{Side: side}
+
+	if v, ok := row["session_id"].(string); ok {
+		c.SessionID = v
+	}
+	if v, ok := row["title"].(string); ok {
+		c.Title = v
+	}
+	c.UpdatedAt = asInt64(row["updated_at"])
+	c.Used = asInt64(row["used"])
+	c.Size = asInt64(row["size"])
+
+	// credit_json 在库里可以为 NULL（实测 intl 侧就有），类型断言失败即按空处理。
+	raw, _ := row["credit_json"].(string)
+	if raw != "" && raw != "None" {
+		var m map[string]float64
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			c.Parts = len(m)
+			for _, v := range m {
+				c.Credits += v
+			}
+			// 客户端写入的值带着 5.8900000000000015 这样的浮点尾巴，
+			// 累加后会拖出 229.089999…。界面只展示两位小数，
+			// 这里就先归整，别让 JSON 里也躺着一串脏数。
+			c.Credits = math.Round(c.Credits*100) / 100
+		}
+	}
+	return c
+}
+
+// asInt64 接住 SQLite 查询结果里可能出现的两种数：JSON 桥把整数
+// 解成 float64，也可能原样是 int64。都试一遍，取不到就 0。
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	}
+	return 0
 }
 
 func dirExists(p string) bool {

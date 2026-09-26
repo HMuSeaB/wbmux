@@ -565,8 +565,7 @@ func (s *Server) handleMigrateSurvey(w http.ResponseWriter, r *http.Request) {
 // 消耗统计：限流是**纯文件扫描**，不碰数据库，因此客户端正在跑也照样能看——
 // 而消耗要走数据库桥接，被运行时会被挡住。先给用户一个什么时候都可靠的部分。
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	res := usage.SurveyLimits(s.probe())
-	writeJSON(w, res)
+	writeJSON(w, usage.Build(s.probe()))
 }
 
 // migrateApplyRequest 是 /api/migrate/apply 的请求体。
