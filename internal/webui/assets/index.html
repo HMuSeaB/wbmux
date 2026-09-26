@@ -148,6 +148,8 @@
     padding: 1px 9px; font-size: 12px; margin: 2px 6px 2px 0; color: var(--dim);
     font-family: var(--mono);
   }
+  a.chip { text-decoration: none; }
+  a.chip:hover { color: var(--accent); border-color: var(--accent); }
 
   /* ---- 改动清单 ---- */
   table.changes { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -1022,6 +1024,50 @@
       });
       box.appendChild(chips);
     }
+
+    // --- 倍率表：来自安装包内置的产品配置，服务端可能已更新 ---
+    var rates = usageData.rates || {};
+    var hasRates = (rates.cn && rates.cn.length) || (rates.intl && rates.intl.length);
+    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
+      text: "消耗倍率 · 来自安装包内置配置（服务端可能已更新，以客户端为准）" }));
+    if (!hasRates) {
+      box.appendChild(el("div", { class: "note", text: "没读到倍率数据。" }));
+    } else {
+      ["cn", "intl"].forEach(function (side) {
+        var list = rates[side] || [];
+        if (!list.length) return;
+        box.appendChild(el("div", { class: "desc", style: "margin:6px 0 2px", text: sideLabel(side) }));
+        var max = 0;
+        list.forEach(function (r) { if (r.rate > max) max = r.rate; });
+        list.slice(0, 10).forEach(function (r) {
+          var w = max > 0 ? Math.max(1.5, r.rate / max * 100) : 0;
+          box.appendChild(el("div", { class: "bar-row" }, [
+            el("span", { class: "bar-name", title: r.id + " · " + r.rateRaw, text: r.name || r.id }),
+            el("span", { class: "bar-track" }, [
+              el("span", { class: "bar-fill " + side, style: "width:" + w + "%" })
+            ]),
+            el("span", { class: "bar-num", text: r.rate.toFixed(2) + "x" })
+          ]));
+        });
+        if (list.length > 10) {
+          box.appendChild(el("div", { class: "hint", text: "其余 " + (list.length - 10) + " 个模型未列出。" }));
+        }
+      });
+    }
+
+    // --- 官方入口：充值、套餐、优惠码都在账号页，本地读不到 ---
+    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
+      text: "官方入口（充值 / 套餐 / 优惠码兑换）" }));
+    var links = el("div", {});
+    // URL 依据：两侧 product.json 的 links 字段；国际版用量页来自 429 报错原文
+    [["国内版账单", "https://www.codebuddy.cn/profile/plan"],
+     ["国际版账单", "https://www.codebuddy.ai/profile/plan"],
+     ["国际版用量明细", "https://www.codebuddy.ai/profile/usage"]].forEach(function (p) {
+      links.appendChild(el("a", { class: "chip", href: p[1], target: "_blank", rel: "noreferrer", text: p[0] }));
+    });
+    box.appendChild(links);
+    box.appendChild(el("div", { class: "hint",
+      text: "优惠码属于账号数据，在官方页面兑换，本地读不到。" }));
 
     // --- 限流历史：一行一条，色标区分类型 ---
     if (limits.length) {

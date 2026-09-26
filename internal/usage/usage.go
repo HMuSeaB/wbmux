@@ -145,6 +145,8 @@ type Survey struct {
 	Limits []LimitEvent `json:"limits"`
 	// Costs 是每条会话的额度消耗，按吃掉的量倒序。
 	Costs []SessionCost `json:"costs"`
+	// Rates 是两侧各模型的消耗倍率，来源见 SurveyRates 的说明。
+	Rates map[string][]ModelRate `json:"rates"`
 	// Warnings 是读取过程中的问题。读不到额度表时仍然会返回限流部分，
 	// 所以这里只是补充说明，不是致命错误。
 	Warnings []string `json:"warnings"`
@@ -157,6 +159,7 @@ func Build(probe *variant.Probe) Survey {
 	s := SurveyLimits(probe)
 	costs, warns := SurveyCosts(probe)
 	s.Costs = costs
+	s.Rates = SurveyRates(probe)
 	s.Warnings = append(s.Warnings, warns...)
 	return s
 }
