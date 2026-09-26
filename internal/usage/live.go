@@ -167,6 +167,34 @@ func readLiveCredentials(path string) (liveCredentials, error) {
 	return c, fmt.Errorf("accessToken 既不是明文也不是已知信封结构")
 }
 
+// ProxyCredentials 是本地 API 代理层需要的最小凭据集（token+uid）。
+type ProxyCredentials struct {
+	Token string
+	UID   string
+}
+
+// IntlProxyCredentials 读国际侧凭据（代理层用）。信封/缺失都报错——
+// 代理只服务明文凭据的国际侧，国内信封无解。
+func IntlProxyCredentials(probe *variant.Probe) (ProxyCredentials, error) {
+	cred, err := readLiveCredentials(liveAuthFile(probe, variant.Intl))
+	if err != nil {
+		return ProxyCredentials{}, err
+	}
+	if cred.Envelope {
+		return ProxyCredentials{}, fmt.Errorf("凭据是加密信封（WorkBuddy 5.6+），本地无法使用")
+	}
+	if cred.Token == "" {
+		return ProxyCredentials{}, fmt.Errorf("accessToken 为空")
+	}
+	return ProxyCredentials{Token: cred.Token, UID: cred.UID}, nil
+}
+
+// IntlEndpoint 返回国际后端地址（与产品配置 endpoint 一致）。
+func IntlEndpoint() string { return liveEndpoint[variant.Intl] }
+
+// IntlCommonHeaders 官方接口通用附加头（X-Product / User-Agent）。
+func IntlCommonHeaders() map[string]string { return liveCommonHeaders(variant.Intl) }
+
 // liveCacheTTL 内的重复请求直接用缓存：面板每点一次就打一轮官方接口，
 // 没必要；60 秒内的重复点击共用一份数据。
 const liveCacheTTL = 60 * time.Second

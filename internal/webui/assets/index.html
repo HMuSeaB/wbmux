@@ -1233,6 +1233,20 @@
     box.appendChild(el("div", { class: "hint",
       text: "优惠码属于账号数据，在官方页面兑换，本地读不到。" }));
 
+    // --- 本地 OpenAI 兼容接口：不开客户端，任何工具都能调国际模型 ---
+    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
+      text: "本地 OpenAI 兼容接口（不用开客户端，任意工具可调国际模型）" }));
+    box.appendChild(el("div", { class: "cmdline", style: "white-space:pre-wrap",
+      text: "Base URL  " + location.origin + "/v1
+" +
+            "API Key   " + TOKEN + "
+" +
+            "模型清单  GET  /v1/models
+" +
+            "聊天      POST /v1/chat/completions（OpenAI 格式，自动补 system）" }));
+    box.appendChild(el("div", { class: "hint",
+      text: "仅国际侧；免费模型：deepseek-v4.1-flash / hy4-preview / hy3（限时）。国内凭据是信封，代理无解。" }));
+
     // --- 限流历史：一行一条，色标区分类型 ---
     if (limits.length) {
       box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px", text: "限流历史" }));

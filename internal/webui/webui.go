@@ -112,6 +112,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
+	s.registerOpenAI(mux)
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
