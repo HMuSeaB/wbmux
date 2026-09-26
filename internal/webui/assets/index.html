@@ -230,7 +230,7 @@
       两者都是 429，但对策完全不同，所以这里分开显示。
     </p>
     <div class="row" style="margin-top:12px">
-      <button id="btn-usage-scan">查看限流状态</button>
+      <button id="btn-usage-scan">查看额度与消耗</button>
       <span class="hint" id="usage-note" style="margin:0"></span>
     </div>
     <div id="usage-body" style="margin-top:12px"></div>
@@ -856,7 +856,7 @@
   function loadUsage() {
     var box = document.getElementById("usage-body");
     clear(box);
-    box.appendChild(el("div", { class: "hint", text: "正在扫描两侧的会话…" }));
+    box.appendChild(el("div", { class: "hint", text: "正在读取限流记录与消耗数据（消耗要走一次数据库桥接，稍慢）…" }));
     return api("/api/usage").then(function (u) {
       usageData = u;
       renderUsage();
@@ -873,12 +873,13 @@
     if (!usageData) return;
 
     var limits = usageData.limits || [];
+    var costs = usageData.costs || [];
+    note.textContent = "限流 " + limits.length + " 条，消耗 " + costs.length + " 条" +
+      (costs.length >= 300 ? "（消耗只取前 300 条）" : "");
+
     if (!limits.length) {
-      note.textContent = "最近 7 天，两侧都没有发现限流记录";
-      box.appendChild(el("div", { class: "note ok", text: "没有被限流。" }));
-      return;
+      box.appendChild(el("div", { class: "note ok", text: "最近 7 天没有被限流。" }));
     }
-    note.textContent = "共 " + limits.length + " 条";
 
     // 每侧先给一句"当前状态"。用户真正要的是这个，不是一份清单——
     // 清单的顺序会随客户端持续写文件而变化，最关键的那条未必排第一。
@@ -896,22 +897,42 @@
       ]));
     });
 
-    box.appendChild(el("div", { class: "hint", style: "margin:10px 0 6px", text: "历史记录" }));
+    if (limits.length) {
+      box.appendChild(el("div", { class: "hint", style: "margin:10px 0 6px", text: "限流历史" }));
+      limits.forEach(function (e) {
+        var exhausted = e.kind === "exhausted";
+        box.appendChild(el("div", { class: "note " + (exhausted ? "bad" : "warn"), style: "margin-bottom:8px" }, [
+          el("div", { class: "row", style: "margin-bottom:4px" }, [
+            el("b", { text: sideLabel(e.side) }),
+            pill(exhausted ? "额度用尽" : "频率超限", exhausted ? "bad" : "warn")
+          ]),
+          e.resetAt
+            ? el("div", { text: "重置时间：" + e.resetAt })
+            : el("div", { text: exhausted ? "这个不会自己恢复：需要充值，或换一个还能用的模型。" : "（这次没给出重置时间）" }),
+          e.model ? el("div", { text: "当时用的模型：" + e.model }) : null,
+          el("div", { class: "desc", text: "会话 " + String(e.sessionId || "").slice(0, 8) })
+        ]));
+      });
+    }
 
-    limits.forEach(function (e) {
-      var exhausted = e.kind === "exhausted";
-      box.appendChild(el("div", { class: "note " + (exhausted ? "bad" : "warn"), style: "margin-bottom:8px" }, [
-        el("div", { class: "row", style: "margin-bottom:4px" }, [
-          el("b", { text: sideLabel(e.side) }),
-          pill(exhausted ? "额度用尽" : "频率超限", exhausted ? "bad" : "warn")
-        ]),
-        e.resetAt
-          ? el("div", { text: "重置时间：" + e.resetAt })
-          : el("div", { text: exhausted ? "这个不会自己恢复：需要充值，或换一个还能用的模型。" : "（这次没给出重置时间）" }),
-        e.model ? el("div", { text: "当时用的模型：" + e.model }) : null,
-        el("div", { class: "desc", text: "会话 " + String(e.sessionId || "").slice(0, 8) })
-      ]));
-    });
+    // 消耗统计：吃得多的排前面。没有限流不代表没消耗——
+    // 两个块各自渲染，谁也不挤掉谁。
+    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 6px", text: "消耗统计（每条会话）" }));
+    if (!costs.length) {
+      box.appendChild(el("div", { class: "note", style: "margin-bottom:8px",
+        text: "没读到消耗数据。两侧都没用过、没登录，或客户端改了表结构，都会这样。" }));
+    } else {
+      costs.forEach(function (c) {
+        box.appendChild(el("div", { class: "note", style: "margin-bottom:8px" }, [
+          el("div", { class: "row", style: "margin-bottom:4px" }, [
+            el("b", { text: c.title || "会话 " + String(c.sessionId || "").slice(0, 8) }),
+            pill(sideLabel(c.side), "ghost"),
+            el("b", { text: (c.credits || 0).toFixed(2) + " 积分" })
+          ]),
+          el("div", { class: "desc", text: costDesc(c) })
+        ]));
+      });
+    }
 
     (usageData.warnings || []).forEach(function (w) {
       box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
@@ -919,8 +940,25 @@
 
     // 这栏读的是客户端自己的会话文件与数据库，属于依赖内部实现。
     // 明说出来，不装成稳定接口——否则哪天读不出来，用户会当成 wbmux 坏了。
+    // 积分为什么只有总量：credit_json 的分项键是不透明哈希，映射不到模型名。
     box.appendChild(el("div", { class: "hint", style: "margin-top:10px",
-      text: "这些数据来自客户端内部的会话文件与数据库；客户端升级改了结构就可能读不出来。" }));
+      text: "这些数据来自客户端内部的会话文件与数据库；客户端升级改了结构就可能读不出来。" +
+            "「积分」是客户端记的 credit，不是钱；它按会话记总量，分不出模型。" }));
+  }
+
+  // costDesc 拼消耗行下方的小字。updatedAt 实测是毫秒；万一哪天客户端
+  // 换成秒，按 1e12 分界转一下，别把 1970 年摆到用户面前。
+  function costDesc(c) {
+    var parts = [];
+    if (c.updatedAt) {
+      var ms = c.updatedAt >= 1e12 ? c.updatedAt : c.updatedAt * 1000;
+      parts.push("更新于 " + new Date(ms).toLocaleString());
+    }
+    if (c.sessionId) parts.push("会话 " + String(c.sessionId).slice(0, 8));
+    if (c.size > 0) {
+      parts.push("记录用量 " + Number(c.used || 0).toLocaleString() + " / " + Number(c.size).toLocaleString());
+    }
+    return parts.join(" · ");
   }
 
   // ---------- 启动 ----------

@@ -540,3 +540,34 @@ func TestApplyContentCopiesFilesAndSkipsExisting(t *testing.T) {
 		t.Errorf("应整项跳过 1 个（SOUL.md），得到 %d", rep.SkippedItems)
 	}
 }
+
+// TestQueryRejectsNonSelect 钉住三层防护里最靠前的这层。
+//
+// Query 收的是调用方给的任意 SQL。脚本侧与连接侧（readonly）都有兜底，
+// 但把关不能只靠下游：到得了下游的输入，在这里就该被拒掉。
+// 防护漏一层不一定会出事，但少一层就少一道"哪天下游改坏了"的保险。
+func TestQueryRejectsNonSelect(t *testing.T) {
+	probe := hermeticProbe(t)
+	for _, bad := range []string{
+		"drop table sessions",
+		"  update sessions set title = 'x'",
+		"PRAGMA table_info(sessions)",
+		"insert into sessions values (1)",
+		// 注释开头"看起来无害"的写法也要拦住
+		"-- 查一下\ndrop table sessions",
+	} {
+		if _, err := Query(probe, variant.CN, bad); err == nil {
+			t.Errorf("%q 应被拒绝", bad)
+		} else if !strings.Contains(err.Error(), "SELECT") {
+			t.Errorf("%q 的报错应说明只允许 SELECT，得到 %q", bad, err)
+		}
+	}
+
+	// 放行的语句要能穿过把关层，走到后面的运行时探测——
+	// 这台假机器上没有客户端安装，报错应该与 SELECT 无关。
+	if _, err := Query(probe, variant.CN, "select 1"); err == nil {
+		t.Fatal("假机器上没有客户端，应当报错")
+	} else if strings.Contains(err.Error(), "SELECT") {
+		t.Errorf("合法 SELECT 不该被拦在把关层，得到 %q", err)
+	}
+}
