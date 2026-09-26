@@ -929,6 +929,9 @@
             pill(sideLabel(c.side), "ghost"),
             el("b", { text: (c.credits || 0).toFixed(2) + " 积分" })
           ]),
+          c.models && c.models.length
+            ? el("div", { text: "模型：" + c.models.join("、") })
+            : null,
           el("div", { class: "desc", text: costDesc(c) })
         ]));
       });
@@ -943,7 +946,8 @@
     // 积分为什么只有总量：credit_json 的分项键是不透明哈希，映射不到模型名。
     box.appendChild(el("div", { class: "hint", style: "margin-top:10px",
       text: "这些数据来自客户端内部的会话文件与数据库；客户端升级改了结构就可能读不出来。" +
-            "「积分」是客户端记的 credit，不是钱；它按会话记总量，分不出模型。" }));
+            "「积分」是客户端记的 credit，不是钱，只有会话总量；「模型」来自会话日志，" +
+            "只能说这条会话用过哪些，配不出每个模型各花多少。" }));
   }
 
   // costDesc 拼消耗行下方的小字。updatedAt 实测是毫秒；万一哪天客户端

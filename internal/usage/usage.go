@@ -355,6 +355,11 @@ type SessionCost struct {
 	// 所以只下发分项个数，明细数组不下发：界面上用不上，还白占带宽。
 	// 哪天搞清了键的含义，再在这里恢复明细。
 	Parts int `json:"parts"`
+	// Models 是这条会话用过的模型 id（去重，按首次出现排序），来自
+	// 会话日志的 "model" 字段。积分分项的哈希键按请求记、拆不到模型
+	// （实测一条会话 59 个分项只有 5 个模型），所以模型只能精确到
+	// "用过哪些"，配不上各自的量。日志缺失（如托管会话）就为空。
+	Models []string `json:"models"`
 	// Used / Size 是客户端记录的这条会话的用量与上限。单位未证实
 	// （字节还是 token），只原样展示，不解释。
 	Used int64 `json:"used"`
@@ -373,7 +378,7 @@ const costQuery = `select u.session_id as session_id, u.used as used, ` +
 	`left join sessions s on s.id = u.session_id ` +
 	`order by u.updated_at desc limit 300`
 
-// SurveyCosts 读出两侧每条会话的额度消耗。
+// SurveyCosts 读出两侧每条会话的额度消耗，并从会话日志补上用过的模型。
 //
 // 数据库一律以 immutable 方式打开（不碰 -wal/-shm），客户端在跑也照样能读。
 // 读不到就记一条警告，而不是让整栏消失——限流那部分仍然有用。
@@ -390,6 +395,7 @@ func SurveyCosts(probe *variant.Probe) ([]SessionCost, []string) {
 		for _, r := range rows {
 			out = append(out, rowToCost(string(id), r))
 		}
+		attachModels(probe, id, out)
 	}
 
 	// 吃得多的排最前
@@ -449,6 +455,106 @@ func asInt64(v any) int64 {
 		return int64(n)
 	}
 	return 0
+}
+
+// attachModels 给消耗清单补上"这条会话用过哪些模型"。
+//
+// 数据源是 projects/<工作区>/<会话id>.jsonl 里的 "model" 字段——这是
+// 本机唯一能回答"这条会话用了什么模型"的数据源，credit_json 的分项
+// 哈希按请求记，拆不到模型。先按文件名筛出消耗清单里真正需要的会话
+// 再逐个扫：projects 下可能堆着几百个历史文件，不能每个都读。
+// 找不到日志的会话（如托管会话）就留空，界面不显示这一行。
+func attachModels(probe *variant.Probe, id variant.ID, costs []SessionCost) {
+	want := map[string]bool{}
+	for _, c := range costs {
+		if c.SessionID != "" {
+			want[c.SessionID] = true
+		}
+	}
+	if len(want) == 0 {
+		return
+	}
+	root := filepath.Join(probe.DataDir(id), "projects")
+	found := map[string][]string{}
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil // 单个子目录读不动就跳过，不拖累整体
+		}
+		base := strings.TrimSuffix(info.Name(), ".jsonl")
+		if base == info.Name() || !want[base] {
+			return nil
+		}
+		ms, err := modelsInFile(p)
+		if err != nil {
+			return nil
+		}
+		found[base] = ms
+		return nil
+	})
+	for i := range costs {
+		// 只填本侧的：调用方传进来的是两侧累计的切片，
+		// 另一侧的条目在这里查不到，直接赋值会把已填好的抹成空。
+		if costs[i].Side == string(id) {
+			costs[i].Models = found[costs[i].SessionID]
+		}
+	}
+}
+
+// modelsInFile 扫一个会话文件里出现过的所有模型 id，按首次出现排序。
+//
+// 模型名在日志里有两处（实测 2026-09-26）：顶层 "model" 与
+// providerData/model——要递归找，只看顶层一条都抓不到（我就这么
+// 白查过一轮）。用 bufio.Reader 而不是 Scanner：单行可能超过
+// Scanner 的上限，断在中间会丢掉后面整段会话的模型。
+func modelsInFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	seen := map[string]bool{}
+	var out []string
+	add := func(m string) {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	r := bufio.NewReader(f)
+	for {
+		line, rerr := r.ReadString('\n')
+		if line != "" {
+			var rec any
+			if json.Unmarshal([]byte(line), &rec) == nil {
+				findModels(rec, add)
+			}
+		}
+		if rerr != nil {
+			break // EOF 正常收场；读错误也只能到此为止，别让整栏消失
+		}
+	}
+	return out, nil
+}
+
+// findModels 递归找 model / modelId / model_name 三个键的字符串值。
+// 一行里模型换过的话会一次捕到多个，按遍历顺序加入——单行多模型
+// 极少见，顺序毛刺可以接受。
+func findModels(v any, add func(string)) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if s, ok := val.(string); ok &&
+				(k == "model" || k == "modelId" || k == "model_name") {
+				add(s)
+			}
+			findModels(val, add)
+		}
+	case []any:
+		for _, val := range t {
+			findModels(val, add)
+		}
+	}
 }
 
 func dirExists(p string) bool {

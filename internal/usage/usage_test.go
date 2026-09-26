@@ -348,3 +348,54 @@ func TestRowToCostAcceptsIntAndFloatNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestAttachModels 钉住"模型信息从会话日志来"。
+//
+// credit_json 的分项键按请求记哈希，拆不到模型；会话日志的 "model"
+// 字段是本机唯一的数据源。三个点都要钉住：去重按首次出现、
+// 跨工作区目录也能找到、没有日志的会话留空而不是报错。
+func TestAttachModels(t *testing.T) {
+	probe := hermeticProbe(t)
+	writeSession(t, probe, variant.CN, "c-a", "11111111-aaaa.jsonl",
+		`{"type":"message","role":"assistant","model":"deepseek-v4.1-flash","content":"你好"}`+"\n"+
+			`{"type":"message","role":"assistant","model":"glm-5.2","content":"继续"}`+"\n"+
+			`{"type":"message","role":"assistant","model":"deepseek-v4.1-flash","content":"好"}`+"\n")
+	writeSession(t, probe, variant.CN, "c-b", "22222222-bbbb.jsonl",
+		`{"model":"hy4-preview-f"}`+"\n")
+	// 真实日志里模型多在 providerData/model（嵌套），只看顶层一条都抓不到
+	writeSession(t, probe, variant.CN, "c-c", "44444444-dddd.jsonl",
+		`{"id":"x","providerData":{"model":"gpt-6-astra"},"content":"hi"}`+"\n"+
+			`{"id":"y","providerData":{"model":"deepseek-v4.1-flash"},"content":"hi"}`+"\n")
+
+	costs := []SessionCost{
+		{Side: "cn", SessionID: "11111111-aaaa"},
+		{Side: "cn", SessionID: "22222222-bbbb"},
+		{Side: "cn", SessionID: "44444444-dddd"},
+		{Side: "cn", SessionID: "33333333-cccc"}, // 没有日志文件
+		{Side: "intl", SessionID: "11111111-aaaa"},
+	}
+	attachModels(probe, variant.CN, costs)
+
+	if got := strings.Join(costs[0].Models, ","); got != "deepseek-v4.1-flash,glm-5.2" {
+		t.Errorf("模型应按首次出现去重，得到 %q", got)
+	}
+	if len(costs[1].Models) != 1 || costs[1].Models[0] != "hy4-preview-f" {
+		t.Errorf("跨工作区会话的模型没找到：%v", costs[1].Models)
+	}
+	if got := strings.Join(costs[2].Models, ","); got != "gpt-6-astra,deepseek-v4.1-flash" {
+		t.Errorf("嵌套在 providerData 里的模型没抓到：%q", got)
+	}
+	if len(costs[3].Models) != 0 {
+		t.Errorf("没有日志的会话应留空：%v", costs[3].Models)
+	}
+	// 关键防回归：attachModels 只填本侧。intl 轮进来时 cn 的已填好，
+	// 不能因为 intl 日志里查不到就把它抹成空。
+	if len(costs[0].Models) != 2 {
+		t.Errorf("cn 条目的模型被另一轮扫描抹掉了：%v", costs[0].Models)
+	}
+	costs[3].Side = "intl"
+	attachModels(probe, variant.Intl, costs)
+	if len(costs[0].Models) != 2 {
+		t.Errorf("intl 轮扫描后 cn 条目的模型被抹掉了：%v", costs[0].Models)
+	}
+}
