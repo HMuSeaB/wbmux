@@ -443,3 +443,38 @@ func TestURLContainsToken(t *testing.T) {
 		t.Errorf("URL 未带令牌: %q", u)
 	}
 }
+
+// TestLaunchBothReportsEachSideIndependent 钉住双开的两个语义：
+// 一侧失败不影响另一侧（两侧各自汇报），假安装环境下两侧都装不上，
+// 响应仍是 200 + 逐侧错误，绝不悄悄只启动一半还报总成功。
+func TestLaunchBothReportsEachSideIndependent(t *testing.T) {
+	e := newTestEnv(t, Options{})
+	resp := e.do(t, "POST", "/api/launch-both", "{}", true)
+	if resp.code != 200 {
+		t.Fatalf("应 200，得到 %d：%s", resp.code, resp.body)
+	}
+	var out struct {
+		Results []struct {
+			Side string `json:"side"`
+			OK   bool   `json:"ok"`
+			Err  string `json:"err"`
+		} `json:"results"`
+	}
+	resp.decode(t, &out)
+	if len(out.Results) != 2 {
+		t.Fatalf("应逐侧汇报两条结果，得到 %d 条", len(out.Results))
+	}
+	sides := map[string]bool{}
+	for _, r := range out.Results {
+		sides[r.Side] = true
+		if r.OK {
+			t.Errorf("%s 侧在假安装环境下不该启动成功", r.Side)
+		}
+		if r.Err == "" {
+			t.Errorf("%s 侧失败时必须给出原因", r.Side)
+		}
+	}
+	if !sides["cn"] || !sides["intl"] {
+		t.Errorf("两侧都要覆盖：%v", sides)
+	}
+}

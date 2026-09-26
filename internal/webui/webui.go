@@ -110,6 +110,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/doctor", s.guard(s.handleDoctor))
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
+	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
@@ -467,6 +468,52 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	view := toPreview(res)
 	view.Launched = true
 	writeJSON(w, view)
+}
+
+// launchBothResult 是一侧的双开结果。
+type launchBothResult struct {
+	Side string `json:"side"`
+	Name string `json:"name"`
+	OK   bool   `json:"ok"`
+	Err  string `json:"err,omitempty"`
+}
+
+// handleLaunchBoth 双开：两侧各用各的安装**原样启动**。
+//
+// 双开与"切换"是两个物种：切换是同一份 exe 换后端，一次只能一个；
+// 双开是两套安装并行——互斥锁/数据目录/认证文件本就按产品分开
+// （2026-09-26 实测，含互斥锁名 workbuddy vs workbuddy-ai）。
+// 每侧独立启动：一侧失败（比如没装）不影响另一侧，结果逐侧回传，
+// 界面如实汇报，不合并成一个笼统的成功/失败。
+func (s *Server) handleLaunchBoth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var results []launchBothResult
+	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		res := launchBothResult{Side: string(id)}
+		pv, err := s.buildPreview(previewRequest{Target: id, Native: true})
+		if err == nil {
+			res.Name = pv.TargetName
+		}
+		prep, err := runner.Prepare(runner.Options{
+			Target:    id,
+			Native:    true,
+			ParentEnv: s.opts.ParentEnv,
+			Probe:     s.probe(),
+		})
+		if err == nil {
+			err = prep.Launch()
+		}
+		if err != nil {
+			res.Err = err.Error()
+		} else {
+			res.OK = true
+		}
+		results = append(results, res)
+	}
+	writeJSON(w, map[string]any{"results": results})
 }
 
 func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {

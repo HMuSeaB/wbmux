@@ -260,6 +260,10 @@
           <span class="desc">不做任何改写，直接用目标档位自己的安装启动。用于对照排错：覆盖模式异常时，用它判断问题出在覆盖机制还是客户端本身。</span>
         </span>
       </label>
+      <div class="row" style="margin-top:10px">
+        <button id="btn-both">🚀 双开两侧</button>
+        <span class="hint" style="margin:0">两侧各用各的安装同时启动（不是切换）——国内客户端管小程序远程控制，国际客户端用国际模型，互不干扰。</span>
+      </div>
     </div>
   </section>
 
@@ -609,6 +613,31 @@
       body: JSON.stringify({ target: target, native: nativeMode })
     }).then(renderPreview).catch(function (e) {
       renderPreviewError(e.message);
+    });
+  }
+
+  function launchBoth() {
+    if (busy) return;
+    busy = true;
+    var btn = document.getElementById("btn-both");
+    if (btn) { btn.disabled = true; btn.textContent = "正在双开…"; }
+    api("/api/launch-both", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (res) {
+      var ok = [], bad = [];
+      (res.results || []).forEach(function (r) {
+        (r.ok ? ok : bad).push(sideLabel(r.side) + (r.ok ? "" : "（" + r.err + "）"));
+      });
+      if (!bad.length) toast("两侧都已启动：" + ok.join("、"), "ok");
+      else if (!ok.length) toast("双开失败：" + bad.join("、"), "bad");
+      else toast("部分成功：" + ok.join("、") + "；失败：" + bad.join("、"), "warn");
+    }).catch(function (e) {
+      toast("双开失败：" + e.message, "bad");
+    }).then(function () {
+      busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = "🚀 双开两侧"; }
     });
   }
 
@@ -1168,6 +1197,7 @@
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
   document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
+  document.getElementById("btn-both").addEventListener("click", launchBoth);
   document.getElementById("btn-quit").addEventListener("click", quit);
   document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);
   document.getElementById("btn-mig-swap").addEventListener("click", function () {
