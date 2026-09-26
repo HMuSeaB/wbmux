@@ -147,6 +147,8 @@ type Survey struct {
 	Costs []SessionCost `json:"costs"`
 	// Rates 是两侧各模型的消耗倍率，来源见 SurveyRates 的说明。
 	Rates map[string][]ModelRate `json:"rates"`
+	// Live 是两侧实时账号数据（官方接口只读拉取），来源见 live.go。
+	Live map[string]*LiveAccount `json:"live"`
 	// Warnings 是读取过程中的问题。读不到额度表时仍然会返回限流部分，
 	// 所以这里只是补充说明，不是致命错误。
 	Warnings []string `json:"warnings"`
@@ -160,6 +162,7 @@ func Build(probe *variant.Probe) Survey {
 	costs, warns := SurveyCosts(probe)
 	s.Costs = costs
 	s.Rates = SurveyRates(probe)
+	s.Live = LiveAccounts(probe)
 	s.Warnings = append(s.Warnings, warns...)
 	return s
 }

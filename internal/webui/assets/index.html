@@ -1025,35 +1025,69 @@
       box.appendChild(chips);
     }
 
-    // --- 倍率表：来自安装包内置的产品配置，服务端可能已更新 ---
+    // --- 实时模型清单与倍率：优先官方接口，读不到退回安装包快照 ---
+    var live = usageData.live || {};
     var rates = usageData.rates || {};
-    var hasRates = (rates.cn && rates.cn.length) || (rates.intl && rates.intl.length);
     box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-      text: "消耗倍率 · 来自安装包内置配置（服务端可能已更新，以客户端为准）" }));
-    if (!hasRates) {
-      box.appendChild(el("div", { class: "note", text: "没读到倍率数据。" }));
-    } else {
-      ["cn", "intl"].forEach(function (side) {
-        var list = rates[side] || [];
-        if (!list.length) return;
-        box.appendChild(el("div", { class: "desc", style: "margin:6px 0 2px", text: sideLabel(side) }));
-        var max = 0;
-        list.forEach(function (r) { if (r.rate > max) max = r.rate; });
-        list.slice(0, 10).forEach(function (r) {
-          var w = max > 0 ? Math.max(1.5, r.rate / max * 100) : 0;
-          box.appendChild(el("div", { class: "bar-row" }, [
-            el("span", { class: "bar-name", title: r.id + " · " + r.rateRaw, text: r.name || r.id }),
-            el("span", { class: "bar-track" }, [
-              el("span", { class: "bar-fill " + side, style: "width:" + w + "%" })
-            ]),
-            el("span", { class: "bar-num", text: r.rate.toFixed(2) + "x" })
-          ]));
+      text: "模型倍率 · 实时官方接口优先，读不到退回安装包快照（以客户端为准）" }));
+    ["cn", "intl"].forEach(function (side) {
+      var lv = live[side];
+      box.appendChild(el("div", { class: "desc", style: "margin:6px 0 2px",
+        text: sideLabel(side) + (lv && lv.ok ? " · 实时" : " · 快照") }));
+      if (lv && lv.err) {
+        box.appendChild(el("div", { class: "hint", style: "margin:2px 0", text: "ⓘ " + lv.err }));
+      }
+      var list;
+      if (lv && lv.ok && lv.models && lv.models.length) {
+        list = lv.models.map(function (m) {
+          return { name: prettyModel(m.id), rate: m.rate, raw: m.rateRaw, id: m.id, free: m.freeNow };
         });
-        if (list.length > 10) {
-          box.appendChild(el("div", { class: "hint", text: "其余 " + (list.length - 10) + " 个模型未列出。" }));
-        }
+      } else {
+        list = (rates[side] || []).map(function (r) {
+          return { name: r.name || r.id, rate: r.rate, raw: r.rateRaw, id: r.id, free: false };
+        });
+      }
+      if (!list.length) {
+        box.appendChild(el("div", { class: "hint", text: "没读到倍率数据。" }));
+        return;
+      }
+      var max = 0;
+      list.forEach(function (r) { if (r.rate > max) max = r.rate; });
+      list.slice(0, 10).forEach(function (r) {
+        var w = max > 0 ? Math.max(1.5, r.rate / max * 100) : 0;
+        box.appendChild(el("div", { class: "bar-row" }, [
+          el("span", { class: "bar-name", title: r.id + " · " + r.raw, text: (r.free ? "🆓 " : "") + r.name }),
+          el("span", { class: "bar-track" }, [
+            el("span", { class: "bar-fill " + side, style: "width:" + w + "%" })
+          ]),
+          el("span", { class: "bar-num", text: r.rate.toFixed(2) + "x" })
+        ]));
       });
-    }
+      var more = list.length - 10;
+      if (more > 0) box.appendChild(el("div", { class: "hint", text: "其余 " + more + " 个模型未列出。" }));
+    });
+
+    // --- 限时免费活动 + 积分包余量：仅实时侧有 ---
+    ["cn", "intl"].forEach(function (side) {
+      var lv = live[side];
+      if (!lv || !lv.ok) return;
+      (lv.promos || []).slice(0, 5).forEach(function (p) {
+        box.appendChild(el("div", { class: "note warn", style: "margin:4px 0",
+          text: "🎁 " + (p.label || "优惠活动") + "：" + (p.textZh || "") +
+                " · 适用 " + ((p.modelIds || []).map(function (m) { return prettyModel(m); }).join("、") || "全模型") +
+                (p.validUntil ? " · 至 " + p.validUntil.slice(0, 10) : "") }));
+      });
+      (lv.packages || []).slice(0, 6).forEach(function (p) {
+        var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
+        box.appendChild(el("div", { class: "bar-row" }, [
+          el("span", { class: "bar-name", title: p.code, text: "积分包 …" + p.code.slice(-6) }),
+          el("span", { class: "bar-track" }, [
+            el("span", { class: "bar-fill " + side, style: "width:" + Math.max(1.5, pct) + "%" })
+          ]),
+          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
+        ]));
+      });
+    });
 
     // --- 官方入口：充值、套餐、优惠码都在账号页，本地读不到 ---
     box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
