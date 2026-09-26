@@ -229,6 +229,20 @@
 
   <div id="banner"></div>
 
+  <section id="usage-sec">
+    <h2>额度与计费</h2>
+    <p class="hint" style="margin-top:0">
+      按会话文件所在的数据目录判断归属。<strong>频率超限</strong>等重置即可；
+      <strong>额度用尽</strong>要充值，不会自己恢复。
+    </p>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-usage-scan">查看额度与消耗</button>
+      <span class="hint" id="usage-note" style="margin:0"></span>
+    </div>
+    <div id="usage-body" style="margin-top:12px"></div>
+  </section>
+
+
   <section>
     <h2>本机安装</h2>
     <div class="grid2" id="installs"></div>
@@ -271,19 +285,6 @@
       <span class="hint" id="mig-direction" style="margin:0"></span>
     </div>
     <div id="mig-body" style="margin-top:12px"></div>
-  </section>
-
-  <section id="usage-sec">
-    <h2>额度与计费</h2>
-    <p class="hint" style="margin-top:0">
-      按会话文件所在的数据目录判断归属。<strong>频率超限</strong>等重置即可；
-      <strong>额度用尽</strong>要充值，不会自己恢复。
-    </p>
-    <div class="row" style="margin-top:12px">
-      <button id="btn-usage-scan">查看额度与消耗</button>
-      <span class="hint" id="usage-note" style="margin:0"></span>
-    </div>
-    <div id="usage-body" style="margin-top:12px"></div>
   </section>
 
   <section>
@@ -1206,6 +1207,13 @@
     // ?migrate=1 同理：想同步历史时直接点书签就能到扫描结果。
     // 顺带滚到该区块——深链接的意义就是"直接到那儿"，
     // 落回页首还得自己往下找就白做了。
+    // ?usage=1 同理：额度面板是常看项，存成书签直达。
+    if (q.get("usage") === "1") {
+      loadUsage().then(function () {
+        var sec = document.getElementById("usage-sec");
+        if (sec) sec.scrollIntoView();
+      });
+    }
     if (q.get("migrate") === "1" && migFrom && migTo) {
       // 必须等扫描回来再滚：那时区块高度才定型。
       // 立刻滚的话滚的是"只有一行加载提示"的高度，内容一撑开位置就偏了。
