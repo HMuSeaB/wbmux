@@ -170,6 +170,10 @@ const maxSessionsPerSide = 12
 var (
 	rateRe      = regexp.MustCompile(`使用量已超出频率限制[^\n]*?将在\s*([0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9:]{8}\s*UTC[^\s，,。]*)\s*重置`)
 	exhaustedRe = regexp.MustCompile(`429\s+Credits\s+exhausted`)
+	// modelLineRe 从原始行里抠模型字段（兼容 model / modelId / model_name），
+	// 只服务于 scanFileForLimit 的滚动归属——每行都要过一眼，
+	// JSON 解码太贵，模型值是简单 id，正则足够。
+	modelLineRe = regexp.MustCompile(`"(?:model|modelId|model_name)"\s*:\s*"([^"]+)"`)
 )
 
 // SurveyLimits 扫描两侧，返回最近被限流的记录。
@@ -275,24 +279,31 @@ func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
 	// 先用缓冲逐行找，避免把几 MB 的文件整个读进内存。
 	// 记录只出现在某几行里，顺序扫描足够。
 	var (
-		ev      LimitEvent
-		found   bool
-		lastIdx int
+		ev        LimitEvent
+		found     bool
+		lastModel string
 	)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	for idx := 0; sc.Scan(); idx++ {
 		line := sc.Text()
+		// 模型滚动归属：429 行自己往往不带 model（实测 45 条里 16 条没有），
+		// 被限的是"当时正在用的模型"——往前找最近一次出现的 model 字段。
+		// 在原始行上正则而不是 JSON 解码：每行都要看，解码太贵；
+		// 模型值是简单 id，正则够用，也顺带兼容三种键名。
+		if m := modelLineRe.FindStringSubmatch(line); m != nil {
+			lastModel = m[1]
+		}
 		if m := rateRe.FindStringSubmatch(line); m != nil {
 			ev = LimitEvent{
 				Side:    string(id),
 				Kind:    "rate",
 				ResetAt: strings.TrimSpace(m[1]),
 				AtMs:    info.ModTime().UnixMilli(),
-				Model:   modelOf(line),
+				Model:   lastModel,
 			}
-			found, lastIdx = true, idx
+			found = true
 			continue
 		}
 		if exhaustedRe.MatchString(line) {
@@ -301,34 +312,17 @@ func scanFileForLimit(path string, id variant.ID) (LimitEvent, bool) {
 				Kind:    "exhausted",
 				ResetAt: "",
 				AtMs:    info.ModTime().UnixMilli(),
-				Model:   modelOf(line),
+				Model:   lastModel,
 			}
-			found, lastIdx = true, idx
+			found = true
 		}
 	}
-	_ = lastIdx
 
 	if !found {
 		return LimitEvent{}, false
 	}
 	ev.SessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	return ev, true
-}
-
-// modelOf 尝试从这一行里取模型名。
-//
-// 取不到就返回空——宁可空着，也不要拿一个猜错的值误导用户。
-func modelOf(line string) string {
-	var rec map[string]any
-	if err := json.Unmarshal([]byte(line), &rec); err != nil {
-		return ""
-	}
-	for _, key := range []string{"model", "modelId", "model_name"} {
-		if v, ok := rec[key].(string); ok && v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // ---------- 各对话的额度消耗 ----------

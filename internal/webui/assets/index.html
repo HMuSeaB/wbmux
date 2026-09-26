@@ -917,6 +917,9 @@
         el("div", { class: "desc", text: sideLabel(b.id) }),
         el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
           text: !e ? "正常" : e.kind === "exhausted" ? "额度用尽" : "频率超限" }),
+        !e ? null : e.model
+          ? el("div", { class: "desc", text: "被限模型：" + e.model })
+          : null,
         el("div", { class: "desc",
           text: !e ? "最近 7 天没有限流记录。"
                    : e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需要充值。" }),

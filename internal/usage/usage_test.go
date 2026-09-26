@@ -399,3 +399,38 @@ func TestAttachModels(t *testing.T) {
 		t.Errorf("intl 轮扫描后 cn 条目的模型被抹掉了：%v", costs[0].Models)
 	}
 }
+
+// TestSurveyLimitsAttributesModelFromContext 钉住模型的滚动归属。
+//
+// 真实日志里 429 行自己往往不带 model（实测 45 条里 16 条没有），
+// 被限的是"当时正在用的模型"——在 429 前面几行的请求里。
+// 用真实事件钉住：2026-09-27 那次 Hy4 preview 超限，429 行无 model，
+// 往前最近一次出现的就是 hy4-preview-f（与客户端横幅一致）。
+func TestSurveyLimitsAttributesModelFromContext(t *testing.T) {
+	probe := hermeticProbe(t)
+	writeSession(t, probe, variant.CN, "c-a", "aaaa.jsonl",
+		`{"id":"r1","providerData":{"model":"hy4-preview-f"}}`+"\n"+
+			`{"id":"r2","providerData":{"model":"hy4-preview-f"}}`+"\n"+
+			`{"content":[{"type":"output_text","text":"429 您的使用量已超出频率限制，将在 2026-09-27 11:19:18 UTC+8 重置，您也可以切换其他模型继续使用。"}]}`+"\n")
+	// 前面完全没有 model 字段：宁可留空，不拿别的会话的模型充数
+	writeSession(t, probe, variant.CN, "c-b", "bbbb.jsonl",
+		`{"content":[{"type":"output_text","text":"429 您的使用量已超出频率限制，将在 2026-09-28 10:00:00 UTC+8 重置"}]}`+"\n")
+
+	s := SurveyLimits(probe)
+	if len(s.Limits) != 2 {
+		t.Fatalf("应找到 2 条，得到 %d 条", len(s.Limits))
+	}
+	if !strings.Contains(s.Limits[0].ResetAt, "2026-09-28") {
+		t.Fatalf("9-28 的事件应排最前，实际 %q", s.Limits[0].ResetAt)
+	}
+	if s.Limits[0].Model != "" {
+		t.Errorf("前面没有 model 字段就该留空，得到 %q", s.Limits[0].Model)
+	}
+	if s.Limits[1].Model != "hy4-preview-f" {
+		t.Errorf("模型应从 429 前面的请求行归属，得到 %q", s.Limits[1].Model)
+	}
+	// Latest 是最新一条（9-28，无模型），带模型的是历史里的 9-27 那条
+	if got, ok := s.Latest["cn"]; !ok || !strings.Contains(got.ResetAt, "2026-09-28") {
+		t.Errorf("Latest 应取最新事件：%+v", got)
+	}
+}
