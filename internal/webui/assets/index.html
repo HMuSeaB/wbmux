@@ -845,10 +845,11 @@
 
   var usageData = null;
 
-  // 档位 id → 显示名。优先用 /api/state 里客户端自己的叫法，拿不到再退回固定说法。
+  // 档位 id → 显示名。注意 /api/state 里那个字段叫 displayName，不叫 name。
+  // 优先用它（客户端自己的叫法），拿不到再退回固定说法。
   function sideLabel(id) {
     var b = backendById(id);
-    if (b && b.name) return b.name;
+    if (b && b.displayName) return b.displayName;
     return id === "intl" ? "国际版" : "国内版";
   }
 
@@ -878,6 +879,24 @@
       return;
     }
     note.textContent = "共 " + limits.length + " 条";
+
+    // 每侧先给一句"当前状态"。用户真正要的是这个，不是一份清单——
+    // 清单的顺序会随客户端持续写文件而变化，最关键的那条未必排第一。
+    var latest = usageData.latest || {};
+    (state ? state.backends : []).forEach(function (b) {
+      var e = latest[b.id];
+      box.appendChild(el("div", { class: "row", style: "margin-bottom:6px" }, [
+        el("b", { text: sideLabel(b.id) }),
+        !e
+          ? pill("未见限流", "ok")
+          : pill(e.kind === "exhausted" ? "额度用尽" : "频率超限",
+                 e.kind === "exhausted" ? "bad" : "warn"),
+        !e ? null : el("span", { class: "desc",
+          text: e.resetAt ? "重置：" + e.resetAt : "不会自己恢复，需充值或换模型" })
+      ]));
+    });
+
+    box.appendChild(el("div", { class: "hint", style: "margin:10px 0 6px", text: "历史记录" }));
 
     limits.forEach(function (e) {
       var exhausted = e.kind === "exhausted";

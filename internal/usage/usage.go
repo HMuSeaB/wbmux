@@ -40,14 +40,95 @@ type LimitEvent struct {
 	ResetAt string `json:"resetAt"`
 	// SessionID 便于用户定位是哪段对话撞上的。
 	SessionID string `json:"sessionId"`
-	// AtMs 是该记录所在文件的最后修改时刻，用来判断"多近"。
+	// AtMs 是这条记录的排序依据，语义见 sortMs 的说明。
 	AtMs int64 `json:"atMs"`
 	// Model 是撞上限流时用的模型，取不到则为空。
 	Model string `json:"model"`
 }
 
+// sortMs 决定一条记录排多前。
+//
+// 优先用**事件本身的时间**（频率超限的重置时刻），解析不出来才退回文件
+// 修改时间。这个次序很关键：早先一律用文件 mtime，结果"当前状态"可能显示
+// 一个 9-18 的重置时间，而下方历史里却躺着更晚的 9-20——用户一眼就能看出
+// 自相矛盾。文件 mtime 只反映"最后写过"，不反映"那条限流是什么时候的事"。
+//
+// 重置时间可能落在未来（还没到点），那正好说明这条限制**现在仍然生效**，
+// 排序时它会自然排到最前——这正是我们想要的。
+func (e LimitEvent) sortMs() int64 {
+	if ms := parseResetMs(e.ResetAt); ms > 0 {
+		return ms
+	}
+	return e.AtMs
+}
+
+// resetRe 拆出重置时间里的日期、时刻与 UTC 偏移。
+//
+// 客户端给的原形有两种：
+//
+//	2026-09-26 13:40:52 UTC+8
+//	2026-09-26 13:40:52 UTC
+//
+// 时区写作 "UTC+8" 而不是 Go 能直接认的 "+0800"，所以自己拆。
+// 注意"UTC"三个字母要在偏移之外：偏移是可选的，但 UTC 这两个写法都有，
+// 早先把它们捆在同一组里，导致**不带偏移的那种直接匹配不上**。
+var resetRe = regexp.MustCompile(
+	`^\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*(?:UTC\s*(?:([+-])(\d{1,2})(?::?(\d{2}))?)?)?\s*$`)
+
+// parseResetMs 把重置时间原文解析成 Unix 毫秒；解析不了返回 0。
+//
+// 返回 0 而不是报错：读不出来就退回文件 mtime，总比整条记录消失好。
+func parseResetMs(s string) int64 {
+	m := resetRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0
+	}
+
+	// 只吃数字，不带符号——符号单独取。
+	// 早先这里把 "+8" 整串丢给一个逐字符累加的函数，'+' - '0' 得到负数，
+	// 于是 "+8" 算成了 -42 小时，排序全错。
+	atoi := func(v string) int {
+		n := 0
+		for _, c := range v {
+			if c < '0' || c > '9' {
+				continue
+			}
+			n = n*10 + int(c-'0')
+		}
+		return n
+	}
+
+	year, month, day := atoi(m[1]), atoi(m[2]), atoi(m[3])
+	hour, min, sec := atoi(m[4]), atoi(m[5]), atoi(m[6])
+	if year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
+		hour > 23 || min > 59 || sec > 59 {
+		return 0
+	}
+
+	offMin := 0
+	if m[7] != "" { // 有符号才说明带了偏移
+		offMin = atoi(m[8]) * 60
+		if m[9] != "" {
+			offMin += atoi(m[9])
+		}
+		if m[7] == "-" {
+			offMin = -offMin
+		}
+	}
+
+	// 墙钟时间减去偏移得到 UTC：UTC+8 的 13:40 就是 UTC 05:40。
+	t := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.UTC)
+	return t.Add(-time.Duration(offMin) * time.Minute).UnixMilli()
+}
+
 // Survey 是两侧限流状态的汇总。
 type Survey struct {
+	// Latest 是每侧最新的一条，键为档位 id（"cn" / "intl"）。
+	//
+	// 有它是因为用户真正要问的是"**现在**是不是被限着、哪一侧、什么时候恢复"，
+	// 而不是一份历史清单。只有 Limits 的话，他得自己在列表里翻找，
+	// 而列表的顺序会随客户端持续写文件而变化——最关键的那条未必排在第一个。
+	Latest map[string]LimitEvent `json:"latest"`
 	// Limits 按时间倒序，最近的排最前。
 	Limits   []LimitEvent `json:"limits"`
 	Warnings []string     `json:"warnings"`
@@ -99,10 +180,18 @@ func SurveyLimits(probe *variant.Probe) Survey {
 		}
 	}
 
-	// 最近的排最前
+	// 按事件本身的时间倒序，而不是文件 mtime。见 sortMs 的说明。
 	sort.SliceStable(out.Limits, func(i, j int) bool {
-		return out.Limits[i].AtMs > out.Limits[j].AtMs
+		return out.Limits[i].sortMs() > out.Limits[j].sortMs()
 	})
+
+	// 每侧挑一条最新的：Limits 已按时间倒序，所以遇到的第一个就是。
+	out.Latest = map[string]LimitEvent{}
+	for _, e := range out.Limits {
+		if _, ok := out.Latest[e.Side]; !ok {
+			out.Latest[e.Side] = e
+		}
+	}
 	return out
 }
 

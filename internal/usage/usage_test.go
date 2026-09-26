@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -112,6 +113,130 @@ func TestSurveyLimitsAttributesEachSide(t *testing.T) {
 	}
 	if !sides["cn"] || !sides["intl"] {
 		t.Errorf("两侧都该各归一条，实际 %v", sides)
+	}
+}
+
+// TestSurveyLimitsPicksLatestPerSide 钉住"每侧最新一条"。
+//
+// 用户要的是"**现在**被限了吗、哪一侧"，不是一份历史清单。而清单的顺序
+// 会随客户端持续写文件而变化——最关键的那条未必排在最前。有了 Latest，
+// 界面可以先给一句当前状态，不必让用户自己在列表里翻。
+func TestSurveyLimitsPicksLatestPerSide(t *testing.T) {
+	probe := hermeticProbe(t)
+	// 同一侧放两个文件：一个是旧的频率超限，一个是额度用尽。
+	// 用 mtime 拉开先后，确保"最新"是按时间而不是碰巧的文件顺序。
+	old := filepath.Join(probe.DataDir(variant.CN), "projects", "c-a")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pOld := filepath.Join(old, "old.jsonl")
+	if err := os.WriteFile(pOld, []byte(
+		`{"content":"429 您的使用量已超出频率限制，将在 2026-09-18 21:27:01 UTC+8 重置"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pNew := filepath.Join(old, "new.jsonl")
+	if err := os.WriteFile(pNew, []byte(
+		`{"content":"429 Credits exhausted"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 让 new 明显更晚
+	later := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(pOld, later.Add(-48*time.Hour), later.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(pNew, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	s := SurveyLimits(probe)
+	got, ok := s.Latest["cn"]
+	if !ok {
+		t.Fatalf("cn 侧没有给出最新状态；Limits=%d 条", len(s.Limits))
+	}
+	if got.Kind != "exhausted" {
+		t.Errorf("cn 最新应是额度用尽，得到 %q", got.Kind)
+	}
+	if _, ok := s.Latest["intl"]; ok {
+		t.Errorf("intl 侧没有任何会话，不该出现在 Latest 里")
+	}
+}
+
+// TestParseResetMs 单独验时间解析。
+//
+// 解析错了不会报错，只会安静地把顺序排错——而顺序错了，"当前状态"就会
+// 显示一个已经过去的限制，用户照着它等，白等。
+func TestParseResetMs(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string // 期望的 UTC 时刻
+	}{
+		{"2026-09-26 13:40:52 UTC+8", "2026-09-26 05:40:52"},
+		{"2026-09-26 13:40:52 UTC", "2026-09-26 13:40:52"},
+		{"2026-09-18 21:27:01 UTC+8", "2026-09-18 13:27:01"},
+		{"2026-09-20 10:16:13 UTC+8", "2026-09-20 02:16:13"},
+	}
+	for _, c := range cases {
+		ms := parseResetMs(c.in)
+		if ms == 0 {
+			t.Errorf("解析失败：%q", c.in)
+			continue
+		}
+		got := time.UnixMilli(ms).UTC().Format("2006-01-02 15:04:05")
+		if got != c.want {
+			t.Errorf("解析 %q\n  得到 %s\n  期望 %s", c.in, got, c.want)
+		}
+	}
+
+	// 解析不了的要返回 0，好让上层退回文件 mtime，而不是塞个错值进去
+	for _, bad := range []string{"", "很快恢复", "2026-13-45 99:99:99 UTC+8"} {
+		if got := parseResetMs(bad); got != 0 {
+			t.Errorf("%q 应解析失败返回 0，却得到 %d", bad, got)
+		}
+	}
+}
+
+// TestSurveyLimitsOrdersByEventTime 钉住排序依据。
+//
+// 曾经一律按文件修改时间排，结果"当前状态"显示 9-18，而历史里躺着更晚的
+// 9-20——自相矛盾。排序必须看事件本身的时间。
+func TestSurveyLimitsOrdersByEventTime(t *testing.T) {
+	probe := hermeticProbe(t)
+	dir := filepath.Join(probe.DataDir(variant.CN), "projects", "c-a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	older := filepath.Join(dir, "older.jsonl")
+	newer := filepath.Join(dir, "newer.jsonl")
+	mustWrite(t, older, `{"content":"429 您的使用量已超出频率限制，将在 2026-09-18 21:27:01 UTC+8 重置"}`+"\n")
+	mustWrite(t, newer, `{"content":"429 您的使用量已超出频率限制，将在 2026-09-20 10:16:13 UTC+8 重置"}`+"\n")
+
+	// 故意让"时间更早"的那个文件 mtime 更新——若还按 mtime 排序就会颠倒
+	back := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(older, back, back); err != nil {
+		t.Fatal(err)
+	}
+	earlier := back.Add(-48 * time.Hour)
+	if err := os.Chtimes(newer, earlier, earlier); err != nil {
+		t.Fatal(err)
+	}
+
+	s := SurveyLimits(probe)
+	if len(s.Limits) != 2 {
+		t.Fatalf("应找到 2 条，得到 %d 条", len(s.Limits))
+	}
+	if !strings.Contains(s.Limits[0].ResetAt, "2026-09-20") {
+		t.Errorf("排序应按事件时间，最新的 9-20 要排第一；实际第一条是 %q", s.Limits[0].ResetAt)
+	}
+	got, ok := s.Latest["cn"]
+	if !ok || !strings.Contains(got.ResetAt, "2026-09-20") {
+		t.Errorf("cn 当前状态应是 9-20 那条，得到 %q", got.ResetAt)
+	}
+}
+
+func mustWrite(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("写 %s 失败: %v", path, err)
 	}
 }
 
