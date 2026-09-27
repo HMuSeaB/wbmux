@@ -14,6 +14,7 @@ wbmux 自身是零第三方依赖的 Go 程序，这里的脚本不会参与构�
 | `macos/` | `macos_uuid.py` | 检查 Mach-O 有没有 LC_UUID |
 | `image/` | `png_crop.py` | 纯 Python 裁剪 PNG（不装 Pillow） |
 | `sqlite/` | `immutable_read.py` | 只读查客户端数据库，不碰 `-wal`/`-shm` |
+| `go-tmp/` | `clean_gotmp.py` | 清理 `go build` 被中断后泄漏的临时目录 |
 
 ## 为什么每一类都值得留下
 
@@ -33,6 +34,13 @@ wbmux 自身是零第三方依赖的 Go 程序，这里的脚本不会参与构�
 - **`immutable_read.py`** —— 客户端运行时数据库旁有 `-wal`/`-shm`，普通
   打开会去读写它们。`?immutable=1` 让 SQLite 完全跳过 WAL 文件，两侧都能读。
   这是做额度仪表盘的关键前提。
+
+- **`clean_gotmp.py`** —— `go build` 被中断（超时、Ctrl-C、进程被杀）时，
+  它放编译中间产物的 `%TEMP%\go-buildNNNNNNNNN` 不会自己清掉。这些残渣被
+  Windows 的存储感知扫进**回收站**，堆到几千项之后清理回收站直接卡死。
+  根治办法是把 `GOTMPDIR` 指到固定位置（脚本 docstring 里有），这个脚本
+  负责按特征清掉已泄漏的那些——只认 `_pkg_.a` / `importcfg` 这类标志，
+  不碰 `%LOCALAPPDATA%\go-build`（那是构建缓存，删了只会变慢）。
 
 ## 约定
 
