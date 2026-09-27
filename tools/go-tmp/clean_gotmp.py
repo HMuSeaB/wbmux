@@ -123,9 +123,15 @@ def main():
                     help='真的删除（默认只列出）')
     ap.add_argument('--age', default=3600, type=int,
                     help='只清理超过这么多秒没动过的目录（默认 3600，避开正在跑的构建）')
+    ap.add_argument('--dir', default='',
+                    help='指定要扫的目录，跳过自动探测。'
+                         '用于清理改了 GOTMPDIR 之前留在旧位置（通常是 %TEMP%）的残渣。')
     args = ap.parse_args()
 
-    tmp, source = resolve_tmp_dir()
+    if args.dir:
+        tmp, source = args.dir, '命令行指定'
+    else:
+        tmp, source = resolve_tmp_dir()
     if not tmp:
         print('找不到临时目录：GOTMPDIR / TEMP / TMP 都是空的', file=sys.stderr)
         return 1
