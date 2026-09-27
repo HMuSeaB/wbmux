@@ -123,6 +123,7 @@ func cmdGUI(args []string) error {
 		Addr:        normAddr,
 		ParentEnv:   os.Environ(),
 		IdleTimeout: idleTimeout,
+		Logf:        guiLog,
 	})
 	if err != nil {
 		return err
@@ -133,6 +134,20 @@ func cmdGUI(args []string) error {
 	}
 	defer srv.Shutdown()
 	guiLog("服务已启动 addr=%s", srv.Addr())
+
+	// 自动同步国际免费模型到国内客户端的自定义清单。
+	// 端口与令牌每次启动都变，不同步的话上次注入的模型会悄悄失效。
+	// 失败只记日志（国内客户端没装/清单损坏都不该挡住界面）。
+	go func() {
+		n, err := srv.SyncCustomModels()
+		if err != nil {
+			guiLog("自动同步国际模型失败: %v", err)
+			return
+		}
+		if n > 0 {
+			guiLog("已同步 %d 个国际免费模型到国内客户端自定义清单（重启国内客户端生效）", n)
+		}
+	}()
 
 	self := instance.Info{
 		Addr:      srv.Addr(),

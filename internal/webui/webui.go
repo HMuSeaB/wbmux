@@ -55,6 +55,12 @@ type Options struct {
 	// 尤其是双击启动（无控制台窗口）的场景，进程一旦残留就只能靠任务管理器
 	// 收拾。页面每 60 秒发一次心跳，因此"标签页还开着"不会被误判为空闲。
 	IdleTimeout time.Duration
+	// Logf 是可选的日志出口（GUI 传自己的日志器）。
+	//
+	// 存在的理由：代理转发失败时，用户能看到的只有客户端里一句
+	// 「502 | Trace Id」，原因全在服务端。没有这个出口，排查只能靠
+	// 重新插桩——2026-09-27 那次"注入的模型一用就 502"正是如此。
+	Logf func(format string, args ...any)
 }
 
 // Server 是内嵌界面的本地服务端。
@@ -70,6 +76,37 @@ type Server struct {
 
 	done     chan struct{}
 	doneOnce sync.Once
+
+	// 以下三个是测试接缝：零值走真实实现（官方地址、读认证文件、丢弃日志）。
+	// 不导出是因为它们只服务于测试，不是调用方该关心的旋钮。
+	logFn          func(format string, args ...any)
+	upstreamBaseFn func() string
+	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
+}
+
+// logf 写一行诊断日志（没接日志出口就丢弃）。
+func (s *Server) logf(format string, args ...any) {
+	if s.logFn == nil {
+		return
+	}
+	s.logFn(format, args...)
+}
+
+// upstreamBase 返回国际后端地址。测试要能指到本地假上游，
+// 否则唯一能验证转发逻辑的办法就是真打一次官方接口。
+func (s *Server) upstreamBase() string {
+	if s.upstreamBaseFn != nil {
+		return s.upstreamBaseFn()
+	}
+	return usage.IntlEndpoint()
+}
+
+// intlCred 读国际侧凭据。同样是测试接缝：假安装环境里没有认证文件。
+func (s *Server) intlCred(p *variant.Probe) (usage.ProxyCredentials, error) {
+	if s.intlCredFn != nil {
+		return s.intlCredFn(p)
+	}
+	return usage.IntlProxyCredentials(p)
 }
 
 // New 构造服务端，但尚未开始监听。
@@ -87,6 +124,7 @@ func New(opts Options) (*Server, error) {
 		token:      token,
 		lastActive: time.Now(),
 		done:       make(chan struct{}),
+		logFn:      opts.Logf,
 	}, nil
 }
 
