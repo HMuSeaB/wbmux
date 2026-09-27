@@ -115,9 +115,12 @@
   .nav-item.active .ico { color: var(--brand); }
 
   .sidebar-foot {
-    margin-top: auto; display: flex; flex-direction: column; gap: 10px;
+    margin-top: auto; display: flex; flex-direction: column; gap: 8px;
     padding: 0 2px;
   }
+  /* 侧边栏底部的两个按钮：撑满宽度、图标与文字居中。
+     它们跟上面的导航项一样是"整条可点"，居左会让文字看着没对齐。 */
+  .sidebar-foot button { justify-content: center; }
   .sidebar-foot .foot-note {
     color: var(--ink-3); font-size: 11px; line-height: 1.55;
     word-break: break-all;
@@ -448,6 +451,12 @@
     </nav>
     <div class="sidebar-foot">
       <span class="foot-note" id="settings-note"></span>
+      <!-- 启动按钮放在这里而不是页面里：切换页时要先选后端、看完预览才知道能启动，
+           而"启动"是这一步的收尾动作。放在侧边栏底部与「关闭界面」同一列，
+           是为了这两件事一眼可见——它们都作用在"整个界面"这一层，不属于某一页。 -->
+      <button class="primary" id="btn-launch-side" hidden>
+        <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>启动客户端
+      </button>
       <button class="ghost danger" id="btn-quit"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-x"/></svg>关闭界面</button>
     </div>
   </aside>
@@ -842,6 +851,21 @@
     });
     btn.id = "btn-launch";
     box.appendChild(btn);
+
+    // 侧边栏那个启动按钮与这里同步：它一直在视野里，页面里的这个可能被滚走。
+    // 两处都调同一个 launch()，状态由 syncLaunchBtn() 统一更新。
+    syncLaunchBtn(pv.launched);
+  }
+
+  // syncLaunchBtn 把"能不能启动"这一个状态同步到侧边栏按钮上。
+  // 预览还没出来前藏起来——那时还没有目标后端，点了也没用。
+  function syncLaunchBtn(state, label) {
+    var b = document.getElementById("btn-launch-side");
+    if (!b) return;
+    if (state === "hide") { b.hidden = true; return; }
+    b.hidden = false;
+    b.disabled = (state === true);
+    b.innerHTML = ICO("play", "ico-sm") + (label || (state === true ? "已启动" : "启动客户端"));
   }
 
   function renderPreviewError(msg) {
@@ -850,6 +874,9 @@
     sec.hidden = false;
     clear(box);
     box.appendChild(el("div", { class: "note bad", text: msg }));
+    // 预览没出来就说明还没有可启动的东西（生成中 / 出错），
+    // 侧边栏那个按钮跟着收起来，避免点了没反应。
+    syncLaunchBtn("hide");
   }
 
   // ---------- 渲染：体检 ----------
@@ -1048,6 +1075,7 @@
     busy = true;
     var btn = document.getElementById("btn-launch");
     if (btn) { btn.disabled = true; btn.textContent = "正在启动…"; }
+    syncLaunchBtn(true, "正在启动…");
 
     api("/api/launch", {
       method: "POST",
@@ -1059,6 +1087,7 @@
     }).catch(function (e) {
       toast("启动失败：" + e.message, "bad");
       if (btn) { btn.disabled = false; btn.textContent = "启动客户端"; }
+      syncLaunchBtn(false);
     }).then(function () { busy = false; });
   }
 
@@ -1625,6 +1654,8 @@
   document.getElementById("btn-inject").addEventListener("click", runInject);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
   document.getElementById("btn-quit").addEventListener("click", quit);
+  // 侧边栏的启动按钮跟页面里那个是同一个动作，只是位置常驻。
+  document.getElementById("btn-launch-side").addEventListener("click", launch);
   document.getElementById("btn-mig-scan").addEventListener("click", loadMigrate);
   document.getElementById("btn-mig-swap").addEventListener("click", function () {
     var t = migFrom;
