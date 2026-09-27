@@ -93,6 +93,12 @@
     color: var(--ink-3); font-size: 11.5px; margin: 8px 0 0;
     padding: 0 8px; line-height: 1.6;
   }
+  /* 版本号：等宽、极淡。它只是"出问题时能报出来"的信息，
+     不该跟品牌名抢注意力。 */
+  .ver {
+    font-family: var(--mono); font-size: 10.5px;
+    color: var(--ink-3); letter-spacing: 0;
+  }
 
   .nav { display: flex; flex-direction: column; gap: 1px; margin-top: 22px; }
   .nav-item {
@@ -119,6 +125,12 @@
 
   .main { flex: 1; min-width: 0; padding: 26px 26px 56px; }
   .main [data-page] > section { max-width: 940px; }
+
+  /* 服务端已经退出时替换整个 body 的那一屏。
+     它不属于 .app 布局（那时 .sidebar 什么都没有了），所以单独给个居中壳。 */
+  .gone-wrap {
+    max-width: 620px; margin: 0 auto; padding: 72px 20px;
+  }
 
   /* ---------- 区块（唯一一层实体）---------- */
   section {
@@ -1079,7 +1091,7 @@
     api("/api/quit", { method: "POST" })
       .then(function () {
         document.body.innerHTML =
-          '<div class="wrap"><div class="note ok">界面已关闭，可以关掉这个标签页了。</div></div>';
+          '<div class="gone-wrap"><div class="note ok">界面已关闭，可以关掉这个标签页了。</div></div>';
       })
       .catch(function (e) { toast(e.message, "bad"); });
   }
@@ -1687,8 +1699,10 @@
   setInterval(function () {
     api("/api/ping").catch(function () {
       if (document.getElementById("gone-note")) return;
+      // 这一屏会替换掉整个 body，所以不能依赖任何页面内的容器——
+      // 自己带一个居中的壳（.gone-wrap），并且只用在新样式里有的类。
       document.body.innerHTML =
-        '<div class="wrap"><div class="note warn" id="gone-note">' +
+        '<div class="gone-wrap"><div class="note warn" id="gone-note">' +
         '<b>界面已经关闭了。</b>' +
         '<div>wbmux 不会自己退出，所以这一屏多半是：进程被手动结束了、' +
         '或者电脑刚才休眠/重启过。重新双击 wbmux.exe，或运行 ' +
