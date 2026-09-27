@@ -6,297 +6,460 @@
 <meta name="referrer" content="no-referrer">
 <title>wbmux — 切换 WorkBuddy 后端</title>
 <style>
-  /* 配色沿用命令行的语义：青=标题、绿=通过、黄=警告、红=失败。
-     不用外部字体与图标，界面必须能在完全离线的机器上渲染。 */
+  /* ============================================================
+     视觉系统：中性石墨灰
+     ------------------------------------------------------------
+     取舍说明（为什么这么写）：
+     1) 不用外部字体/图标/CDN。界面必须能在完全离线的机器上渲染，
+        所以图标一律内联 SVG（见 body 里的 <svg><symbol>），
+        字体只用系统栈。
+     2) 层级只做两层：page 底 → panel。旧版是 section 有边框、
+        card 再有边框、tile 还套一层，三层描边互相打架，
+        视觉上像一堆盒子堆在盒子里。现在只有 panel 一层实体，
+        更内层靠背景明度差与留白区分，不靠描边。
+     3) 配色刻意低饱和。工具界面的主角是数据，不是界面本身；
+        彩色只留给"有含义"的地方（通过/告警/失败、涨跌、当前选中）。
+     4) 中性色带一点冷偏（HSL 220 左右），纯灰会显得发脏。
+     ============================================================ */
   :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --panel-2: #1c2129;
-    --border: #30363d;
-    --text: #e6edf3;
-    --dim: #8b949e;
-    --faint: #6e7681;
-    --accent: #39c5cf;
-    --blue: #58a6ff;
-    --green: #3fb950;
-    --red: #f85149;
-    --yellow: #d29922;
+    /* 中性石墨灰：从最深到最浅，共 6 级。
+       每级差约 3~4 点明度，肉眼可分但不刺眼。 */
+    --g0: #0b0c0e;   /* 页面底 */
+    --g1: #131417;   /* 面板 */
+    --g2: #191b1f;   /* 面板内嵌块 */
+    --g3: #212328;   /* 悬停 / 输入条 */
+    --g4: #2c2f35;   /* 描边 */
+    --g5: #3a3e46;   /* 强描边 / 分隔 */
+
+    --ink:   #e8eaed;  /* 主文字 */
+    --ink-2: #a8adb7;  /* 次要 */
+    --ink-3: #71767f;  /* 说明 / 元信息 */
+
+    /* 语义色：低饱和，不发光 */
+    --ok:   #4a9d6a;
+    --warn: #b8863b;
+    --bad:  #c25550;
+    --info: #5b8dd6;
+    --brand:#63b3c4;   /* 品牌青，只用在标识与极少的高亮 */
+
     --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+
+    --r-sm: 6px;
+    --r-md: 9px;
+    --r-lg: 12px;
   }
+
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    background: var(--bg);
-    color: var(--text);
-    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--g0);
+    color: var(--ink);
+    font: 13.5px/1.6 var(--sans);
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
 
-  header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-  header.top h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
-  header.top h1 span { color: var(--accent); }
-  .ver { font-family: var(--mono); font-size: 12px; color: var(--faint); }
-  .lede { color: var(--dim); margin: 0 0 22px; font-size: 13px; }
+  /* 图标：统一 16px 线性图标，用 currentColor 跟随文字色。
+     描边 1.6 在 14px 字号旁边不显粗也不消失。 */
+  .ico {
+    width: 16px; height: 16px; flex: none;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+    vertical-align: -3px;
+  }
+  .ico-sm { width: 14px; height: 14px; stroke-width: 1.7; vertical-align: -2.5px; }
 
+  /* ---------- 布局骨架 ---------- */
+  .app { display: flex; align-items: stretch; min-height: 100vh; }
+
+  .sidebar {
+    width: 216px; flex: none; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 22px 14px 18px;
+    border-right: 1px solid var(--g4);
+    background: var(--g1);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; padding: 0 8px; }
+  .brand-name {
+    font-size: 17px; font-weight: 650; color: var(--ink);
+    letter-spacing: -.2px;
+  }
+  /* 品牌标记：一枚小方块，比纯文字标识更像产品 */
+  .brand-mark {
+    width: 8px; height: 8px; border-radius: 2px; flex: none;
+    background: var(--brand); display: inline-block;
+  }
+  .brand-sub {
+    color: var(--ink-3); font-size: 11.5px; margin: 8px 0 0;
+    padding: 0 8px; line-height: 1.6;
+  }
+
+  .nav { display: flex; flex-direction: column; gap: 1px; margin-top: 22px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: var(--r-sm);
+    font-size: 13px; color: var(--ink-2);
+    cursor: pointer; user-select: none;
+    transition: background .1s, color .1s;
+  }
+  .nav-item .ico { color: var(--ink-3); transition: color .1s; }
+  .nav-item:hover { color: var(--ink); background: var(--g2); }
+  .nav-item:hover .ico { color: var(--ink-2); }
+  .nav-item.active { color: var(--ink); background: var(--g3); font-weight: 550; }
+  .nav-item.active .ico { color: var(--brand); }
+
+  .sidebar-foot {
+    margin-top: auto; display: flex; flex-direction: column; gap: 10px;
+    padding: 0 2px;
+  }
+  .sidebar-foot .foot-note {
+    color: var(--ink-3); font-size: 11px; line-height: 1.55;
+    word-break: break-all;
+  }
+
+  .main { flex: 1; min-width: 0; padding: 26px 26px 56px; }
+  .main [data-page] > section { max-width: 940px; }
+
+  /* ---------- 区块（唯一一层实体）---------- */
   section {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--g1);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-lg);
     padding: 18px 20px;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
   section > h2 {
-    font-size: 13px; text-transform: none; letter-spacing: .3px;
-    margin: 0 0 14px; color: var(--dim); font-weight: 600;
+    font-size: 13px; letter-spacing: .2px;
+    margin: 0 0 4px; color: var(--ink); font-weight: 620;
+    display: flex; align-items: center; gap: 8px;
   }
-  .hint { color: var(--faint); font-size: 12px; margin: 10px 0 0; }
+  section > h2 .ico { color: var(--ink-3); }
+  /* 副标题：紧跟在 h2 之后的一句说明 */
+  .sub {
+    color: var(--ink-3); font-size: 12.5px;
+    margin: 0 0 14px; line-height: 1.6;
+  }
+  .hint { color: var(--ink-3); font-size: 12.5px; line-height: 1.6; }
 
-  /* ---- 通用小组件 ---- */
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  /* ---------- 通用小组件 ---------- */
+  .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
 
+  /* 卡：不再描边，靠背景抬一层。这样 section > card 是"平面上的深浅"，
+     而不是"盒子里的盒子"。 */
   .card {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 16px;
+    background: var(--g2);
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    padding: 13px 15px;
   }
-  .card.selectable { cursor: pointer; transition: border-color .12s, background .12s; }
-  .card.selectable:hover { border-color: #4b5563; }
-  .card.selected { border-color: var(--accent); background: #12242a; }
-  .card.disabled { opacity: .5; cursor: not-allowed; }
-  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-  .card-title { font-weight: 600; font-size: 15px; }
-  .card-sub { color: var(--faint); font-size: 12px; font-family: var(--mono); }
+  .card.selectable { cursor: pointer; transition: background .12s, border-color .12s; }
+  .card.selectable:hover { background: var(--g3); }
+  .card.selected {
+    border-color: var(--brand);
+    background: color-mix(in srgb, var(--brand) 9%, var(--g2));
+  }
+  .card.disabled { opacity: .45; cursor: not-allowed; }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 7px;
+  }
+  .card-title { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+  .card-sub { color: var(--ink-3); font-size: 11.5px; font-family: var(--mono); }
 
+  /* 状态标：低饱和描边式，不用实心填充——实心五个叠在一起很吵 */
   .pill {
-    display: inline-block; padding: 1px 8px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; border: 1px solid transparent;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px; border-radius: 5px;
+    font-size: 11px; font-weight: 600; letter-spacing: .2px;
+    border: 1px solid; background: transparent;
     vertical-align: middle;
   }
-  .pill.ok   { color: var(--green);  border-color: #1f4d29; background: #0d1f13; }
-  .pill.warn { color: var(--yellow); border-color: #4d3c12; background: #211a08; }
-  .pill.bad  { color: var(--red);    border-color: #5c1f1c; background: #210d0d; }
-  .pill.info { color: var(--blue);   border-color: #1c3a5e; background: #0d1b2a; }
-  .pill.ghost { color: var(--faint); border-color: var(--border); background: transparent; }
+  .pill.ok   { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.info { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); }
+  .pill.ghost { color: var(--ink-3); border-color: var(--g5); }
 
-  dl.kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12.5px; }
-  dl.kv dt { color: var(--faint); white-space: nowrap; }
-  dl.kv dd { margin: 0; font-family: var(--mono); word-break: break-all; color: var(--dim); }
+  dl.kv {
+    margin: 0; display: grid; grid-template-columns: max-content 1fr;
+    gap: 4px 12px; font-size: 12px;
+  }
+  dl.kv dt { color: var(--ink-3); white-space: nowrap; }
+  dl.kv dd { margin: 0; font-family: var(--mono); word-break: break-all; color: var(--ink-2); }
 
-  .path { font-family: var(--mono); font-size: 12px; color: var(--dim); word-break: break-all; }
+  .path { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); word-break: break-all; }
 
+  /* ---------- 按钮 ---------- */
   button {
-    font: inherit; font-size: 13px; font-weight: 600;
-    padding: 7px 15px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--border); background: #21262d; color: var(--text);
-    transition: background .12s, border-color .12s;
+    font: inherit; font-size: 12.5px; font-weight: 550;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: var(--r-sm); cursor: pointer;
+    border: 1px solid var(--g5); background: var(--g3); color: var(--ink);
+    transition: background .12s, border-color .12s, color .12s;
   }
-  button:hover:not(:disabled) { background: #2d333b; border-color: #4b5563; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-  button.primary:hover:not(:disabled) { background: #2a7ff5; border-color: #2a7ff5; }
-  button.danger { color: var(--red); }
-  button.ghost { background: transparent; }
+  button .ico { color: var(--ink-3); transition: color .12s; }
+  button:hover:not(:disabled) { background: var(--g4); border-color: var(--g5); }
+  button:hover:not(:disabled) .ico { color: var(--ink-2); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary {
+    background: var(--ink); border-color: var(--ink); color: var(--g0);
+  }
+  button.primary .ico { color: var(--g0); }
+  button.primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+  button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  button.ghost { background: transparent; border-color: var(--g4); }
+  button.ghost:hover:not(:disabled) { background: var(--g2); border-color: var(--g5); }
 
-  label.check { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-size: 13px; }
-  label.check input { margin-top: 3px; accent-color: var(--accent); }
-  label.check .desc { color: var(--faint); font-size: 12px; display: block; }
+  /* 裸 .check（体检项、搬运条目）自己排版；label.check 只管可点区域的
+     基础行为，字号统一由 .check 决定，避免两处各写一个值互相覆盖。 */
+  label.check { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+  label.check input { margin-top: 3px; accent-color: var(--brand); }
+  label.check .desc { color: var(--ink-3); font-size: 12px; display: block; line-height: 1.55; }
 
-  /* ---- 提示条 ---- */
+  /* ---------- 提示条 ---------- */
   .note {
-    border-radius: 8px; padding: 12px 14px; font-size: 13px;
-    border: 1px solid var(--border); background: var(--panel-2); margin-bottom: 14px;
+    border-radius: var(--r-md); padding: 11px 14px; font-size: 12.5px;
+    border: 1px solid var(--g4); background: var(--g2);
+    margin-bottom: 12px; color: var(--ink-2); line-height: 1.65;
   }
-  .note.warn { border-color: #4d3c12; background: #1d1808; color: #e8d9a8; }
-  .note.bad  { border-color: #5c1f1c; background: #1f0f0e; color: #f0c2bf; }
-  .note.ok   { border-color: #1f4d29; background: #0d1c11; color: #b9e6c3; }
-  .note b { color: #fff; }
-  .note code { font-family: var(--mono); font-size: 12px; background: #00000040; padding: 1px 5px; border-radius: 4px; }
-  .note ul { margin: 6px 0 0; padding-left: 20px; }
+  .note.warn {
+    border-color: color-mix(in srgb, var(--warn) 38%, var(--g4));
+    background: color-mix(in srgb, var(--warn) 8%, var(--g2));
+    color: #ddc9a4;
+  }
+  .note.bad  {
+    border-color: color-mix(in srgb, var(--bad) 42%, var(--g4));
+    background: color-mix(in srgb, var(--bad) 9%, var(--g2));
+    color: #e6bcb9;
+  }
+  .note.ok   {
+    border-color: color-mix(in srgb, var(--ok) 35%, var(--g4));
+    background: color-mix(in srgb, var(--ok) 8%, var(--g2));
+    color: #b3d9c1;
+  }
+  .note b { color: var(--ink); font-weight: 600; }
+  .note code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: #00000045; padding: 1px 5px; border-radius: 4px;
+    color: var(--ink-2);
+  }
+  .note ul { margin: 6px 0 0; padding-left: 18px; }
+  .note ul li { margin: 2px 0; }
 
-  /* ---- 仪表盘（额度与计费） ---- */
-  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-  @media (max-width: 720px) { .tiles { grid-template-columns: 1fr; } }
+  /* ---------- 折叠说明 ---------- */
+  /* 旧的摘要行写成"先读我…（点开）"，一句话 30 字，很业余。
+     现在摘要只留短标签，正文里再展开。 */
+  details.fold { margin: 0 0 14px; }
+  details.fold > summary {
+    cursor: pointer; color: var(--ink-3); font-size: 12.5px;
+    padding: 5px 0; user-select: none; list-style: none;
+    display: flex; align-items: center; gap: 7px;
+    transition: color .12s;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before {
+    content: ""; width: 5px; height: 5px; flex: none;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg); transition: transform .15s; margin-left: 1px;
+  }
+  details.fold[open] > summary::before { transform: rotate(45deg); }
+  details.fold > summary:hover { color: var(--ink-2); }
+  details.fold > .desc { color: var(--ink-2); font-size: 12.5px; line-height: 1.75; }
+  details.fold > .desc > div { margin: 5px 0; }
+  details.fold > .desc b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- 仪表盘 ---------- */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  @media (max-width: 760px) { .tiles { grid-template-columns: 1fr; } }
   .tile {
-    border: 1px solid var(--border); background: var(--panel-2);
-    border-radius: 8px; padding: 10px 14px;
+    border: 1px solid transparent; background: var(--g2);
+    border-radius: var(--r-md); padding: 11px 14px;
   }
-  .tile .big { font-size: 17px; font-weight: 600; margin: 2px 0; }
-  .tile .big.warn { color: var(--yellow); }
-  .tile .big.bad  { color: var(--red); }
-  .tile .big.ok   { color: var(--green); }
+  .tile .big { font-size: 16px; font-weight: 620; margin: 3px 0 0; color: var(--ink); }
+  .tile .big.warn { color: var(--warn); }
+  .tile .big.bad  { color: var(--bad); }
+  .tile .big.ok   { color: var(--ok); }
 
-  .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
   .bar-name {
-    width: 200px; flex: none; font-size: 12.5px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; color: var(--dim);
+    width: 190px; flex: none; font-size: 12px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; color: var(--ink-2);
   }
   .bar-track {
-    flex: 1; height: 14px; background: var(--panel-2);
-    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+    flex: 1; height: 6px; background: var(--g3);
+    border-radius: 3px; overflow: hidden;
   }
-  .bar-fill { display: block; height: 100%; min-width: 2px; }
-  .bar-fill.cn   { background: var(--blue); opacity: .75; }
-  .bar-fill.intl { background: var(--green); opacity: .75; }
-  .bar-num { width: 64px; flex: none; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--text); }
+  /* 条形不再做描边——6px 高度描边会吃掉一半，看着像刻度尺 */
+  .bar-fill { display: block; height: 100%; min-width: 2px; border-radius: 3px; }
+  .bar-fill.cn   { background: var(--info); }
+  .bar-fill.intl { background: var(--ok); }
+  .bar-num {
+    width: 62px; flex: none; text-align: right;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+  }
 
   .chip {
-    display: inline-block; border: 1px solid var(--border); border-radius: 10px;
-    padding: 1px 9px; font-size: 12px; margin: 2px 6px 2px 0; color: var(--dim);
-    font-family: var(--mono);
+    display: inline-block; border: 1px solid var(--g4); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; margin: 3px 5px 3px 0;
+    color: var(--ink-2); font-family: var(--mono);
+    transition: border-color .12s, color .12s;
   }
   a.chip { text-decoration: none; }
-  a.chip:hover { color: var(--accent); border-color: var(--accent); }
+  a.chip:hover { color: var(--brand); border-color: var(--brand); }
 
-  /* 模型折叠块：默认收起，摘要行自带关键信息（数量+免费模型） */
-  details.fold { margin: 2px 0 10px; }
-  details.fold > summary {
-    cursor: pointer; color: var(--dim); font-size: 12.5px;
-    padding: 4px 0; user-select: none; list-style: none;
-  }
-  details.fold > summary::before { content: "▸ "; color: var(--faint); }
-  details.fold[open] > summary::before { content: "▾ "; }
-  details.fold > summary:hover { color: var(--text); }
-
-  /* 模型卡片：照客户端选择器悬停卡的样式（名称+徽章+倍率/描述/上下文） */
-  .mcards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0; }
-  @media (max-width: 720px) { .mcards { grid-template-columns: 1fr; } }
+  /* ---------- 模型卡片 ---------- */
+  .mcards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 5px 0; }
+  @media (max-width: 760px) { .mcards { grid-template-columns: 1fr; } }
   .mcard {
-    border: 1px solid var(--border); background: var(--panel-2);
-    border-radius: 8px; padding: 8px 12px;
+    border: 1px solid transparent; background: var(--g2);
+    border-radius: var(--r-sm); padding: 9px 12px;
   }
   .mcard .mrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-  .mcard .mname { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mcard .mrate { font-family: var(--mono); font-size: 12.5px; color: var(--dim); flex: none; }
-  .mcard .mrate.free { color: var(--green); }
+  .mcard .mname {
+    font-weight: 570; font-size: 12.5px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; color: var(--ink);
+  }
+  .mcard .mrate { font-family: var(--mono); font-size: 12px; color: var(--ink-3); flex: none; }
+  .mcard .mrate.free { color: var(--ok); }
   .mcard .fbadge {
-    color: var(--red); font-size: 11px; border: 1px solid #5c1f1c;
+    color: var(--bad); font-size: 10.5px; border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
     border-radius: 4px; padding: 0 5px; margin-left: 6px; flex: none;
   }
   .mcard .mdesc {
-    color: var(--faint); font-size: 12px; margin-top: 3px;
+    color: var(--ink-3); font-size: 11.5px; margin-top: 3px; line-height: 1.55;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .mcard .mmeta { color: var(--faint); font-size: 11.5px; margin-top: 3px; font-family: var(--mono); }
+  .mcard .mmeta { color: var(--ink-3); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
 
-  /* ---- 改动清单 ---- */
-  table.changes { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  /* ---------- 改动清单表格 ---------- */
+  table.changes { width: 100%; border-collapse: collapse; font-size: 12px; }
   table.changes th {
-    padding: 0 10px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap;
+    padding: 0 10px 7px 0; border-bottom: 1px solid var(--g4);
+    white-space: nowrap; text-align: left; color: var(--ink-3);
+    font-weight: 550; font-size: 11.5px;
   }
-  table.changes td { padding: 7px 10px 7px 0; border-bottom: 1px solid #21262d; vertical-align: top; }
-  table.changes td.field { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
-  table.changes td.from { font-family: var(--mono); color: var(--faint); word-break: break-all; }
-  table.changes td.to { font-family: var(--mono); color: var(--green); word-break: break-all; }
+  table.changes td {
+    padding: 7px 10px 7px 0; border-bottom: 1px solid var(--g3);
+    vertical-align: top; color: var(--ink-2);
+  }
+  table.changes td.field { font-family: var(--mono); color: var(--brand); white-space: nowrap; }
+  table.changes td.from { font-family: var(--mono); color: var(--ink-3); word-break: break-all; }
+  table.changes td.to { font-family: var(--mono); color: var(--ok); word-break: break-all; }
   table.changes tr:last-child td { border-bottom: none; }
 
   .cmdline {
-    font-family: var(--mono); font-size: 12px; color: var(--dim);
-    background: #010409; border: 1px solid var(--border); border-radius: 7px;
-    padding: 10px 12px; margin-top: 12px; white-space: pre-wrap; word-break: break-all;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+    background: var(--g0); border: 1px solid var(--g4); border-radius: var(--r-sm);
+    padding: 10px 12px; margin-top: 12px;
+    white-space: pre-wrap; word-break: break-all; line-height: 1.6;
   }
 
-  /* ---- 体检 ---- */
-  .check { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  /* ---------- 体检 ---------- */
+  .check { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--g3); font-size: 12.5px; }
   .check:last-child { border-bottom: none; }
-  .check .lvl { flex: 0 0 52px; }
+  /* 搬运清单的每一项：勾选框 + 标题 + 元信息。
+     左内边距对齐 checkbox，让整列看着是一条竖线，不是一个歪的列表。 */
+  label.check.mig-item { padding: 7px 4px; align-items: flex-start; }
+  label.check.mig-item:hover { background: var(--g2); border-radius: var(--r-sm); }
+  .check .lvl { flex: 0 0 54px; }
   .check .body { flex: 1; min-width: 0; }
-  .check .nm { font-weight: 600; }
-  .check .dt { color: var(--dim); font-size: 12.5px; word-break: break-word; }
-  .check .ht { color: var(--yellow); font-size: 12px; margin-top: 3px; }
+  .check .nm { font-weight: 600; color: var(--ink); }
+  .check .dt { color: var(--ink-2); font-size: 12px; word-break: break-word; line-height: 1.6; }
+  .check .ht { color: var(--warn); font-size: 11.5px; margin-top: 3px; line-height: 1.6; }
 
-  footer { margin-top: 22px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .foot-note { color: var(--faint); font-size: 12px; }
+  footer {
+    margin-top: 20px; display: flex; justify-content: space-between;
+    align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .foot-note { color: var(--ink-3); font-size: 11.5px; }
 
   .spinner {
-    display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 6px;
-    border: 2px solid #ffffff30; border-top-color: var(--accent); border-radius: 50%;
-    animation: spin .7s linear infinite;
+    display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 7px;
+    border: 1.6px solid var(--g5); border-top-color: var(--brand);
+    border-radius: 50%; animation: spin .7s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
   .toast {
     position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
-    background: #21262d; border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 16px; font-size: 13px; box-shadow: 0 6px 22px #0008;
-    max-width: 90vw; z-index: 20;
+    background: var(--g3); border: 1px solid var(--g5); border-radius: var(--r-md);
+    padding: 10px 16px; font-size: 12.5px; color: var(--ink);
+    box-shadow: 0 8px 28px #000a; max-width: 90vw; z-index: 20;
   }
-  .toast.bad { border-color: #5c1f1c; color: #f0c2bf; }
-  .toast.ok  { border-color: #1f4d29; color: #b9e6c3; }
+  .toast.bad { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: #e6bcb9; }
+  .toast.ok  { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: #b3d9c1; }
+
   [hidden] { display: none !important; }
 
-  /* ---- 二级页面布局：侧边栏 + 页面 ---- */
-  .app { display: flex; align-items: stretch; min-height: 100vh; }
-  .sidebar {
-    width: 200px; flex: none; position: sticky; top: 0; height: 100vh;
-    display: flex; flex-direction: column; gap: 12px; box-sizing: border-box;
-    padding: 20px 12px 16px;
-    border-right: 1px solid var(--border); background: var(--panel);
-  }
-  .brand-name { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: .5px; }
-  .brand-sub { color: var(--faint); font-size: 11.5px; margin: 0; line-height: 1.5; }
-  .nav { display: flex; flex-direction: column; gap: 2px; }
-  .nav-item {
-    padding: 9px 12px; border-radius: 8px; font-size: 13.5px;
-    color: var(--dim); cursor: pointer; user-select: none;
-  }
-  .nav-item:hover { color: var(--text); background: var(--panel-2); }
-  .nav-item.active { color: var(--text); background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
-  .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
-  .sidebar-foot .foot-note { color: var(--faint); font-size: 11px; word-break: break-all; }
-  .main { flex: 1; min-width: 0; padding: 24px 22px 48px; box-sizing: border-box; }
-  .main [data-page] > section { max-width: 900px; }
-  @media (max-width: 760px) {
+  @media (max-width: 780px) {
     .app { flex-direction: column; }
-    .sidebar { width: auto; height: auto; position: static;
-      flex-direction: row; align-items: center; flex-wrap: wrap; }
-    .nav { flex-direction: row; flex-wrap: wrap; }
+    .sidebar {
+      width: auto; height: auto; position: static;
+      flex-direction: row; align-items: center; flex-wrap: wrap;
+      gap: 10px; padding: 14px;
+    }
+    .brand-sub { display: none; }
+    .nav { flex-direction: row; flex-wrap: wrap; margin-top: 0; }
     .sidebar-foot { margin: 0 0 0 auto; flex-direction: row; align-items: center; }
+    .main { padding: 18px 14px 40px; }
   }
+  /* ---- 代理日志 ---- */
+  /* 等宽 + 斑马纹：这些行是给眼睛扫的，不是给读的。
+     配色跟随上面那套语义色，别在这里写死颜色。 */
+  .log-list { border: 1px solid var(--g4); border-radius: var(--r-md); overflow: hidden; }
+  .log-line { display: flex; gap: 10px; padding: 5px 10px; font-family: var(--mono);
+              font-size: 11.5px; border-top: 1px solid var(--g4); }
+  .log-line:first-child { border-top: 0; }
+  .log-line:nth-child(odd) { background: var(--g2); }
+  .log-time { color: var(--ink-3); flex: 0 0 auto; }
+  .log-text { word-break: break-all; color: var(--ink); }
+  .log-ok .log-text   { color: var(--ok); }
+  .log-bad .log-text  { color: var(--bad); }
+  .log-info .log-text { color: var(--ink-2); }
 </style>
 </head>
 <body>
-<div class="wrap">
-
-<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol></defs></svg>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
     <p class="brand-sub">用一份安装连两套后端。安装目录本身不动。</p>
     <nav class="nav">
-      <div class="nav-item active" data-page="status">📊 状态与额度</div>
-      <div class="nav-item" data-page="switch">🔀 切换与双开</div>
-      <div class="nav-item" data-page="migrate">📦 历史搬运</div>
-      <div class="nav-item" data-page="doctor">🩺 体检</div>
+      <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
+      <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
+      <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
+      <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
+      <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>体检</div>
     </nav>
     <div class="sidebar-foot">
       <span class="foot-note" id="settings-note"></span>
-      <button class="ghost danger" id="btn-quit">关闭界面</button>
+      <button class="ghost danger" id="btn-quit"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-x"/></svg>关闭界面</button>
     </div>
   </aside>
   <main class="main">
     <div data-page="status">
   <section id="usage-sec">
-    <h2>额度与计费</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-gauge"/></svg>额度与计费</h2>
     <details class="fold" style="margin-bottom:10px">
-      <summary>先读我：三种用法、怎么分清当前窗口、扣哪个额度（点开）</summary>
+      <summary>三种用法、怎么分清当前窗口、扣哪个额度</summary>
       <div class="desc" style="margin-top:6px">
-        <div>① <b>同时用两个（推荐）</b>：目标后端区块点「🚀 双开两侧」——国内客户端管小程序远程控制+国内额度；国际客户端用国际模型+国际额度。想不花钱：国际侧 DeepSeek-V4.1-Flash / Hy4 preview / Hy3 限时免费（0.00x）到 10 月上旬。</div>
-        <div>② <b>切换（宿主壳子连国际）</b>：<span style="color:var(--red)">5.6.2 宿主实测会静默回落国内</span>——界面显示已选国际，实际扣的还是国内额度。别用，等会话切换方案。</div>
+        <div>① <b>同时用两个（推荐）</b>：目标后端区块点「双开两侧」——国内客户端管小程序远程控制+国内额度；国际客户端用国际模型+国际额度。想不花钱：国际侧 DeepSeek-V4.1-Flash / Hy4 preview / Hy3 限时免费（0.00x）到 10 月上旬。</div>
+        <div>② <b>切换（宿主壳子连国际）</b>：<span style="color:var(--bad)">5.6.2 宿主实测会静默回落国内</span>——界面显示已选国际，实际扣的还是国内额度。别用，等会话切换方案。</div>
         <div>③ <b>分清当前窗口</b>：标题/任务栏 WorkBuddy=国内、WorkBuddy AI=国际；模型清单有 Primary/极致/GPT-6-Astra=国际，有"夜间折扣"=国内。</div>
-        <div>④ <b>一键测试</b>：🧪 按钮两侧各发一条最小消息并对比账单，直接告诉你走哪个模型、扣哪边多少积分（自动挑免费模型）。</div>
+        <div>④ <b>一键测试</b>：这个按钮两侧各发一条最小消息并对比账单，直接告诉你走哪个模型、扣哪边多少积分（自动挑免费模型）。</div>
       </div>
     </details>
-    <p class="hint" style="margin-top:0">
+    <p class="sub">
       按会话文件所在的数据目录判断归属。<strong>频率超限</strong>等重置即可；
       <strong>额度用尽</strong>要充值，不会自己恢复。
     </p>
     <div class="row" style="margin-top:12px">
       <button id="btn-usage-scan">查看额度与消耗</button>
-      <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证后端通路与计费归属；优先用限时免费模型，基本零成本">🧪 一键测试</button>
-      <button class="ghost" id="btn-inject" title="把国际限时免费模型注入国内客户端的自定义模型清单（经本机代理转发、扣国际额度）；注入后重启国内客户端生效">📤 注入国际模型到国内客户端</button>
+      <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证后端通路与计费归属；优先用限时免费模型，基本零成本"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>一键测试</button>
+      <button class="ghost" id="btn-inject" title="把国际限时免费模型注入国内客户端的自定义模型清单（经本机代理转发、扣国际额度）；注入后重启国内客户端生效"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-up"/></svg>注入国际模型到国内客户端</button>
       <span class="hint" id="usage-note" style="margin:0"></span>
     </div>
     <div id="probe-body" style="margin-top:8px"></div>
@@ -307,16 +470,41 @@
 
 
     </div>
+    <div data-page="log" hidden>
+  <section id="log-sec">
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-term"/></svg>代理日志</h2>
+    <p class="hint" style="margin-top:0">
+      注入模式下模型跑在国内客户端里，客户端那边出问题只会给你一句报错
+      （常常只剩一个状态码）；这里记的是<strong>本机代理真正做的事</strong>：
+      每次请求的模型名、工具数、流式与否、上游状态码与耗时。
+      同一份内容也写在 <code>%USERPROFILE%\.wbmux\gui.log</code>。
+    </p>
+    <p class="hint" style="margin-top:6px">
+      只有一条「收到请求」而没有对应的「转发完成」＝ 卡在上游，还没回来。
+      转发完成里会写明这次的上下文有多大（长会话能到十几 MB）。
+    </p>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-log-refresh">刷新</button>
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="log-live" checked>
+        <span>每 2 秒自动刷新</span>
+      </label>
+      <span class="hint" id="log-summary" style="margin:0"></span>
+    </div>
+    <div id="log-body" style="margin-top:12px"></div>
+  </section>
+
+    </div>
     <div data-page="switch" hidden>
   <div id="banner"></div>
   <section>
-    <h2>本机安装</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-server"/></svg>本机安装</h2>
     <div class="grid2" id="installs"></div>
     <p class="hint" id="host-note"></p>
   </section>
 
   <section>
-    <h2>目标后端</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>目标后端</h2>
     <div class="grid2" id="backends"></div>
     <p class="hint">选中哪个后端，就把宿主客户端指向哪个后端。切换不影响另一套安装本身。</p>
     <div style="margin-top:14px">
@@ -327,21 +515,21 @@
         </span>
       </label>
       <div class="row" style="margin-top:10px">
-        <button id="btn-both">🚀 双开两侧</button>
+        <button id="btn-both"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>双开两侧</button>
         <span class="hint" style="margin:0">两侧各用各的安装同时启动（不是切换）——国内客户端管小程序远程控制，国际客户端用国际模型，互不干扰。</span>
       </div>
     </div>
   </section>
 
   <section id="preview-sec" hidden>
-    <h2>将要做的改动</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-scan"/></svg>将要做的改动</h2>
     <div id="preview-body"></div>
   </section>
 
     </div>
     <div data-page="migrate" hidden>
   <section id="migrate-sec">
-    <h2>历史搬运</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</h2>
     <p class="hint" style="margin-top:0">
       把一侧的会话、附件、内容配置、技能与记忆搬到另一侧。两套后端的账号体系不互通、
       数据目录也不同，官方没有同步途径——这是把另一侧的东西带过来的唯一办法。
@@ -353,7 +541,7 @@
     </p>
     <div class="row" style="margin-top:12px">
       <button id="btn-mig-scan">扫描两侧数据</button>
-      <button class="ghost" id="btn-mig-swap" title="交换方向">⇄</button>
+      <button class="ghost" id="btn-mig-swap" title="交换方向"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-arrows"/></svg></button>
       <span class="hint" id="mig-direction" style="margin:0"></span>
     </div>
     <div id="mig-body" style="margin-top:12px"></div>
@@ -362,7 +550,7 @@
     </div>
     <div data-page="doctor" hidden>
   <section>
-    <h2>体检</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-pulse"/></svg>体检</h2>
     <div class="row">
       <button id="btn-doctor">检查当前配置</button>
       <span class="hint" style="margin:0">扫描安装包，确认客户端仍然支持配置覆盖机制。</span>
@@ -390,6 +578,13 @@
   var busy = false;
 
   // ---------- 工具 ----------
+
+  // ICO 生成一个内联图标元素。文本按钮在运行时改文案时必须用它，
+  // 不能用 textContent——那会把图标子节点一起清掉。
+  function ICO(name, extra) {
+    return '<svg class="ico' + (extra ? " " + extra : "") + '" aria-hidden="true">'
+      + '<use href="#i-' + name + '"/></svg>';
+  }
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -686,8 +881,66 @@
     });
   }
 
+  // ---------- 代理日志 ----------
+  // 每 2 秒轮询一次，而不是用 SSE/长连接：这个服务要能"没人用就自动退出"，
+  // 长连接会把它钉住。页面不可见时也不拉，省得白转。
+  var LOG_INTERVAL = 2000;
+
+  function logPageActive() {
+    var sec = document.querySelector('main [data-page="log"]');
+    return sec && !sec.hidden;
+  }
+
+  function renderProxyLog(res) {
+    var box = document.getElementById("log-body");
+    clear(box);
+    var list = res.entries || [];
+    var ok = 0, bad = 0;
+    list.forEach(function (e) {
+      if (e.level === "ok") ok++;
+      else if (e.level === "bad") bad++;
+    });
+    document.getElementById("log-summary").textContent = list.length
+      ? "最近 " + list.length + " 条 · 成功 " + ok + " · 失败 " + bad
+      : "";
+
+    if (!list.length) {
+      box.appendChild(el("div", { class: "hint",
+        text: "还没有请求。在国内客户端里选「（国际免费）」的模型发条消息，这里就会出现。" }));
+      return;
+    }
+    var wrap = el("div", { class: "log-list" });
+    list.forEach(function (e) {
+      // 一律走 textContent（见 el 的说明）：错误信息里可能带尖括号，
+      // 拼 innerHTML 就等于把上游返回的内容当代码执行。
+      wrap.appendChild(el("div", { class: "log-line log-" + (e.level || "info") }, [
+        el("span", { class: "log-time", text: e.at || "" }),
+        el("span", { class: "log-text", text: e.text || "" })
+      ]));
+    });
+    box.appendChild(wrap);
+  }
+
+  function loadProxyLog(showError) {
+    return api("/api/proxy-log").then(renderProxyLog).catch(function (e) {
+      if (!showError) return;   // 自动刷新失败不刷屏，手动刷新才报
+      var box = document.getElementById("log-body");
+      clear(box);
+      box.appendChild(el("div", { class: "note bad", text: "读取日志失败：" + e.message }));
+    });
+  }
+
+  document.getElementById("btn-log-refresh").addEventListener("click", function () {
+    loadProxyLog(true);
+  });
+  setInterval(function () {
+    if (!logPageActive()) return;
+    if (!document.getElementById("log-live").checked) return;
+    loadProxyLog(false);
+  }, LOG_INTERVAL);
+
   // ---------- 二级页面 ----------
-  // 侧边栏切换：状态 / 切换与双开 / 历史搬运 / 体检。
+  // 侧边栏切换：状态 / 代理日志 / 切换与双开 / 历史搬运 / 体检。
   // 整页 hidden 切换，比一页长滚动清晰——页面之间互不挤压。
   function showPage(page) {
     document.querySelectorAll("main [data-page]").forEach(function (el) {
@@ -696,6 +949,8 @@
     document.querySelectorAll(".nav-item").forEach(function (n) {
       n.classList.toggle("active", n.dataset.page === page);
     });
+    // 切进来先拉一次，别让用户对着空页面等下一个刷新周期。
+    if (page === "log") loadProxyLog(true);
   }
   document.querySelectorAll(".nav-item").forEach(function (n) {
     n.addEventListener("click", function () { showPage(n.dataset.page); });
@@ -711,14 +966,14 @@
         (res.results || []).forEach(function (r) {
           if (!r.ok) {
             box.appendChild(el("div", { class: "note bad", style: "margin:4px 0",
-              text: "❌ " + sideLabel(r.side) + "：" + r.err }));
+              text: "× " + sideLabel(r.side) + "：" + r.err }));
             return;
           }
           var bill = r.billingChanged
             ? "账单变化：" + r.delta
             : "账单无变化";
           box.appendChild(el("div", { class: "note ok", style: "margin:4px 0",
-            text: "✅ " + sideLabel(r.side) + "：" + (r.model || "?") +
+            text: "√ " + sideLabel(r.side) + "：" + (r.model || "?") +
                  " · 消耗 " + (r.credit || 0).toFixed(2) + " 积分 · " +
                  (r.promptTokens || 0) + "+" + (r.completionTokens || 0) + " tokens · " + bill }));
           r.reply ? box.appendChild(el("div", { class: "hint", style: "margin:0 0 6px",
@@ -747,7 +1002,7 @@
       toast("注入失败：" + e.message, "bad");
     }).then(function () {
       busy = false;
-      if (btn) { btn.disabled = false; btn.textContent = "📤 注入国际模型到国内客户端"; }
+      if (btn) { btn.disabled = false; btn.innerHTML = ICO("up", "ico-sm") + "注入国际模型到国内客户端"; }
     });
   }
 
@@ -772,7 +1027,7 @@
       toast("双开失败：" + e.message, "bad");
     }).then(function () {
       busy = false;
-      if (btn) { btn.disabled = false; btn.textContent = "🚀 双开两侧"; }
+      if (btn) { btn.disabled = false; btn.innerHTML = ICO("layers", "ico-sm") + "双开两侧"; }
     });
   }
 
@@ -919,7 +1174,8 @@
       if (c.state === "exists") bits.push("目标端已有，跳过");
       else if (c.state === "blocked") bits.push(c.note || "不可搬运");
 
-      box.appendChild(el("label", { class: "check", style: "padding:5px 0;border-bottom:1px solid #21262d" }, [
+      // 分隔线交给 .mig-item 的样式，不写死颜色——写死就跟着调色板一起过期。
+      box.appendChild(el("label", { class: "check mig-item" }, [
         cb,
         el("span", { style: "flex:1;min-width:0" }, [
           el("span", { text: c.title }),
@@ -1148,15 +1404,15 @@
       var rows = mine.slice(0, 6).map(function (x) {
         if (x.kind === "exhausted") {
           return el("div", { class: "desc",
-            text: "💸 " + prettyModel(x.model) + "：额度用尽，充值后恢复" });
+            text: "$ " + prettyModel(x.model) + "：额度用尽，充值后恢复" });
         }
         if (x.resetMs && x.resetMs < Date.now()) {
           return el("div", { class: "desc",
-            text: "✅ " + prettyModel(x.model) + "：限制已过，可以继续用（" + x.resetAt + " 重置）" });
+            text: "√ " + prettyModel(x.model) + "：限制已过，可以继续用（" + x.resetAt + " 重置）" });
         }
         var left = countdown(x.resetMs);
         return el("div", { class: "desc",
-          text: "⏳ " + prettyModel(x.model) + "：还有 " + left + "恢复" +
+          text: "· " + prettyModel(x.model) + "：还有 " + left + "恢复" +
                 (x.resetAt ? "（" + x.resetAt + "）" : "") });
       });
       var acc = live[b.id] || {};
@@ -1165,7 +1421,7 @@
         el("div", { class: "desc", text: sideLabel(b.id) +
           (who ? " · " + who + (acc.credKind === "envelope" ? "（信封加密）" : "") : "") }),
         el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
-          text: !e ? "✅ 正常" : e.kind === "exhausted" ? "💸 额度用尽" : "⏳ 频率超限" }),
+          text: !e ? "√ 正常" : e.kind === "exhausted" ? "$ 额度用尽" : "· 频率超限" }),
         !e ? el("div", { class: "desc", text: "最近 7 天没有限流记录。" }) : rows,
         el("div", { class: "desc", text: "读到的消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条）" })
       ]));
@@ -1285,7 +1541,7 @@
       if (!lv || !lv.ok) return;
       (lv.promos || []).slice(0, 5).forEach(function (p) {
         box.appendChild(el("div", { class: "note warn", style: "margin:4px 0",
-          text: "🎁 " + (p.label || "优惠活动") + "：" + (p.textZh || "") +
+          text: "· " + (p.label || "优惠活动") + "：" + (p.textZh || "") +
                 " · 适用 " + ((p.modelIds || []).map(function (m) { return prettyModel(m); }).join("、") || "全模型") +
                 (p.validUntil ? " · 至 " + p.validUntil.slice(0, 10) : "") }));
       });
