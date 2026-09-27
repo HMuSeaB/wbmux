@@ -81,6 +81,24 @@ func cmdGUI(args []string) error {
 	guiLog("=== 启动 === 参数=%q 参数个数=%d 独占控制台=%v",
 		os.Args[1:], len(os.Args)-1, console.IsExclusiveConsole())
 
+	// 沿用上次的地址与令牌，别每次启动都换一副。
+	//
+	// 令牌与端口都会写进注入到国内客户端的模型条目（URL + API Key），
+	// 而客户端只在启动时读一次——一变，注入的模型就失效，用户必须重启
+	// 客户端。沿用之后，"wbmux 重启"对客户端就透明了
+	// （见 config.GUIToken 的注释，含安全上的取舍）。
+	cfg, err := config.Load()
+	if err != nil {
+		// 设置读不动不该挡住界面：最坏结果不过是这次换了个地址。
+		guiLog("读取设置失败（继续）：%v", err)
+		cfg = config.Config{}
+	}
+	addrFromConfig := false
+	if *addr == "" && cfg.GUIAddr != "" {
+		*addr = cfg.GUIAddr
+		addrFromConfig = true
+	}
+
 	// 非回环地址直接拒绝，不做"警告后放行"：这个服务能启动本机进程，
 	// 暴露到局域网等于把机器交出去。
 	normAddr, err := webui.NormalizeAddr(*addr)
@@ -118,26 +136,53 @@ func cmdGUI(args []string) error {
 		return nil
 	}
 
-	srv, err := webui.New(webui.Options{
+	opts := webui.Options{
 		Version:     version.Version,
 		Addr:        normAddr,
+		Token:       cfg.GUIToken, // 空则随机生成，下面的保存步骤会把它记下来
 		ParentEnv:   os.Environ(),
 		IdleTimeout: idleTimeout,
 		Logf:        guiLog,
-	})
+	}
+	srv, err := webui.New(opts)
 	if err != nil {
 		return err
 	}
 	if err := srv.Start(); err != nil {
-		guiLog("失败：起服务失败：%v", err)
-		return err
+		if !addrFromConfig {
+			guiLog("失败：起服务失败：%v", err)
+			return err
+		}
+		// 上次那个端口被别的程序占了。退回随机端口继续可用，但要明说
+		// "这次客户端得重启一次"——不吭声就又是一次"昨天还好好的"。
+		guiLog("沿用 %s 失败（%v），改用随机端口", normAddr, err)
+		u.warn("上次用的端口被占用了，这次换了一个端口——国内客户端需要重启一次才会认新地址。")
+		opts.Addr = ""
+		if srv, err = webui.New(opts); err != nil {
+			return err
+		}
+		if err := srv.Start(); err != nil {
+			guiLog("失败：起服务失败：%v", err)
+			return err
+		}
 	}
 	defer srv.Shutdown()
 	guiLog("服务已启动 addr=%s", srv.Addr())
 
+	// 记下本次的地址与令牌，下次启动沿用它；
+	// 两者都稳定，注入到客户端的模型才能跨重启继续用。
+	if cfg.GUIAddr != srv.Addr() || cfg.GUIToken != srv.Token() {
+		cfg.GUIAddr = srv.Addr()
+		cfg.GUIToken = srv.Token()
+		if err := config.Save(cfg); err != nil {
+			guiLog("保存界面地址/令牌失败（下次启动会换地址）：%v", err)
+		}
+	}
+
 	// 自动同步国际免费模型到国内客户端的自定义清单。
-	// 端口与令牌每次启动都变，不同步的话上次注入的模型会悄悄失效。
-	// 失败只记日志（国内客户端没装/清单损坏都不该挡住界面）。
+	// 地址与令牌现在跨启动稳定了，但模型清单本身会变（活动、模型上下线），
+	// 每次启动对齐一遍最省心。失败只记日志（国内客户端没装/清单损坏
+	// 都不该挡住界面）。
 	go func() {
 		n, err := srv.SyncCustomModels()
 		if err != nil {
@@ -145,7 +190,7 @@ func cmdGUI(args []string) error {
 			return
 		}
 		if n > 0 {
-			guiLog("已同步 %d 个国际免费模型到国内客户端自定义清单（重启国内客户端生效）", n)
+			guiLog("已同步 %d 个国际免费模型到国内客户端自定义清单（地址与令牌沿用上次，客户端不必重启）", n)
 		}
 	}()
 

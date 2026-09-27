@@ -199,8 +199,8 @@ func (s *Server) openaiGuard(next http.HandlerFunc) http.HandlerFunc {
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
 			// 这条也要记：令牌过期（重启后端口与令牌都变）在客户端那边
 			// 同样只是一句报错，不记就完全看不出是"地址还是旧的"。
-			s.logf("代理拒绝了 %s %s：令牌无效（客户端可能还拿着上一次启动的地址）",
-				r.Method, r.URL.Path)
+			s.note(ProxyLogEntry{Level: "bad",
+				Text: fmt.Sprintf("拒绝 %s %s：令牌无效（客户端可能还拿着上一次启动的地址）", r.Method, r.URL.Path)})
 			writeOpenAIError(w, http.StatusForbidden, "令牌无效：请把界面地址里 t= 的值当 API Key 用")
 			return
 		}
@@ -255,21 +255,21 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodyBytes+1))
 	if err != nil {
-		s.logf("代理读请求体失败: %v", err)
+		s.note(ProxyLogEntry{Level: "bad", Text: "读取请求体失败：" + compactError(err.Error())})
 		writeOpenAIError(w, http.StatusBadRequest, "读请求体失败："+err.Error())
 		return
 	}
 	// 超限要明确说出来。截断后直接解析会报"JSON 不完整"，
 	// 那会把"请求太大"误导成"请求格式错"。
 	if int64(len(raw)) > maxChatBodyBytes {
-		s.logf("代理拒绝了超限请求：%d 字节 > 上限 %d 字节", len(raw), maxChatBodyBytes)
-		writeOpenAIError(w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("请求体超过 %d 字节上限，请缩短上下文", maxChatBodyBytes))
+		msg := fmt.Sprintf("请求体 %s 超过上限 %s，已拒绝", describeBytes(int64(len(raw))), describeBytes(maxChatBodyBytes))
+		s.note(ProxyLogEntry{Level: "bad", Text: msg})
+		writeOpenAIError(w, http.StatusRequestEntityTooLarge, msg+"，请缩短上下文")
 		return
 	}
 	up, err := buildUpstreamBody(raw)
 	if err != nil {
-		s.logf("代理拒绝了请求：%v", err)
+		s.note(ProxyLogEntry{Level: "bad", Text: "拒绝请求：" + compactError(err.Error())})
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -279,10 +279,17 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	// ——凭据读得出来就够。模型是否存在交给上游回答，它的报错比我们猜的准。
 	cred, err := s.intlCred(s.probe())
 	if err != nil {
-		s.logf("代理拒绝 model=%s：凭据不可用：%v", up.Model, err)
+		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
+			Text: "拒绝请求：国际侧凭据不可用：" + compactError(err.Error())})
 		writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+
+	// 先记"收到"，再转发：这样卡在上游的请求在界面上也看得见
+	// （只有一条"收到"没有对应的"完成"，一眼就知道卡在哪一步）。
+	s.note(ProxyLogEntry{Level: "info", Model: up.Model, Tools: up.Tools, Stream: up.ClientStream,
+		Text: fmt.Sprintf("收到请求 model=%s %s stream=%v 正文 %s",
+			up.Model, describeTools(up.Tools), up.ClientStream, describeBytes(int64(len(raw))))})
 
 	out, err := json.Marshal(up.Body)
 	if err != nil {
@@ -305,7 +312,8 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	resp, err := probeHTTPClient().Do(req2)
 	if err != nil {
-		s.logf("代理转发失败 model=%s tools=%d: %v", up.Model, up.Tools, err)
+		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
+			Text: fmt.Sprintf("转发失败 model=%s：%s", up.Model, compactError(err.Error()))})
 		writeOpenAIError(w, http.StatusBadGateway, "上游请求失败："+err.Error())
 		return
 	}
@@ -317,19 +325,25 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		// 透传上游的真实状态码，而不是一律 502：502 等于告诉客户端
 		// "网关挂了"，客户端会据此触发模型故障转移，把用户的问题
 		// 从"模型名不对"带偏成"后端不稳"。
-		s.logf("代理被上游拒绝 model=%s tools=%d 上游 HTTP %d: %s",
-			up.Model, up.Tools, resp.StatusCode, cutStr(msg, 500))
+		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
+			MS: time.Since(started).Milliseconds(),
+			Text: fmt.Sprintf("被上游拒绝 model=%s 上游 HTTP %d: %s",
+				up.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
 		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 		return
 	}
-	s.logf("代理转发成功 model=%s tools=%d stream=%v 用时 %s",
-		up.Model, up.Tools, up.ClientStream, time.Since(started).Round(time.Millisecond))
 
+	var sent int64
 	if up.ClientStream {
-		s.streamChatThrough(w, resp.Body)
-		return
+		sent = s.streamChatThrough(w, resp.Body)
+	} else {
+		sent = s.aggregateChat(w, resp.Body)
 	}
-	s.aggregateChat(w, resp.Body)
+	s.note(ProxyLogEntry{Level: "ok", Model: up.Model, Tools: up.Tools, Stream: up.ClientStream,
+		MS: time.Since(started).Milliseconds(),
+		Text: fmt.Sprintf("转发完成 model=%s %s stream=%v 回给客户端 %s 用时 %s",
+			up.Model, describeTools(up.Tools), up.ClientStream,
+			describeBytes(sent), time.Since(started).Round(time.Millisecond))})
 }
 
 // streamChatThrough 把上游 SSE 转发给调用方。
@@ -343,8 +357,9 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 // 直连上游 16 个空行，经代理 0 个）。
 //
 // 所以这里不再自己拼行，直接搬字节；只在每块之后 Flush 一次，
-// 保住"边收边给"的实时性。
-func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) {
+// 保住"边收边给"的实时性。返回值是搬了多少字节（日志里要，用来判断
+// 这次是"秒回"还是"吐了半天"）。
+func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) int64 {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	// 万一前面挂了反代/网关，别让它缓冲——缓冲会让流式退化成一次性返回。
@@ -355,19 +370,22 @@ func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) {
 		// 先甩出响应头：否则调用方要等到第一块正文才知道请求已被接受。
 		flusher.Flush()
 	}
+	var sent int64
 	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := upstream.Read(buf)
 		if n > 0 {
-			if _, err := w.Write(buf[:n]); err != nil {
-				return // 调用方断开，上游留给 defer 关
+			written, err := w.Write(buf[:n])
+			sent += int64(written)
+			if err != nil {
+				return sent // 调用方断开，上游留给 defer 关
 			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
 		if readErr != nil {
-			return // io.EOF 或上游中断，流到此结束
+			return sent // io.EOF 或上游中断，流到此结束
 		}
 	}
 }
@@ -384,7 +402,8 @@ type toolCallAcc struct {
 }
 
 // aggregateChat 聚合上游流式块，组装成一份非流式的 OpenAI 响应。
-func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) {
+// 返回回给客户端的字节数（日志用）。
+func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) int64 {
 	var served string
 	var finish string
 	var content strings.Builder
@@ -466,7 +485,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) {
 	}
 	if served == "" {
 		writeOpenAIError(w, http.StatusBadGateway, "上游没有返回任何内容")
-		return
+		return 0
 	}
 
 	msg := map[string]any{"role": "assistant", "content": content.String()}
@@ -491,7 +510,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	encoded, err := json.Marshal(map[string]any{
 		"id":      "wbmux-proxy",
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
@@ -508,6 +527,12 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) {
 			"credit":            credit,
 		},
 	})
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
+		return 0
+	}
+	written, _ := w.Write(encoded)
+	return int64(written)
 }
 
 // upstreamMessage 从上游的错误体里挑一句人能看的话。

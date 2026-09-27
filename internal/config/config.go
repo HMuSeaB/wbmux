@@ -22,6 +22,29 @@ type Config struct {
 	HostExe string `json:"hostExe,omitempty"`
 	// ExtraEndpoints 会被追加进生成配置的 officialEndpoints。
 	ExtraEndpoints []string `json:"extraEndpoints,omitempty"`
+
+	// GUIToken 是图形界面的访问令牌，持久化保存。
+	//
+	// # 为什么不做成"每次启动随机"
+	//
+	// 令牌会写进注入到国内客户端的自定义模型条目（作为 API Key）。而客户端
+	// 只在启动时读一次 models.json —— 令牌一变，注入的模型立刻变成 403，
+	// 用户必须重启客户端。端口同理（URL 里写着端口）。
+	// 两者都随机的话，"wbmux 一重启，客户端就得跟着重启"会变成每次都要做的
+	// 动作，而用户看到的只是"昨天还好好的，今天又不行了"（2026-09-27 一上午
+	// 撞了三次）。
+	//
+	// # 安全上的代价（有意识地接受）
+	//
+	// 原来的设计是"令牌每次随机、只在本机回环、外部猜不到"。持久化之后，
+	// 一条泄露过的旧令牌仍然有效——所以这个文件必须当凭据看待（见 Save 的
+	// 权限处理）。换来的是"重启不再打断使用"。若哪天想收紧，把这一项删掉
+	// 即可回到一次性令牌，代价就是客户端要跟着重启。
+	GUIToken string `json:"guiToken,omitempty"`
+	// GUIAddr 是上次界面实际监听到的地址，下次启动优先沿用它，
+	// 好让注入进客户端的 URL 保持有效。端口被占时退回随机端口
+	// （那一次仍然需要重启客户端，界面会明说）。
+	GUIAddr string `json:"guiAddr,omitempty"`
 }
 
 // rootOverride 允许把设置目录临时指向别处，供测试使用。
@@ -113,12 +136,16 @@ func Save(c Config) error {
 
 	p := filepath.Join(dir, "config.json")
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+	// 0600：这个文件里有界面令牌（见 GUIToken 的注释），按凭据对待。
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return fmt.Errorf("写入设置失败: %w", err)
 	}
 	if err := os.Rename(tmp, p); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("保存设置失败: %w", err)
 	}
+	// WriteFile 的权限位只对新建文件生效，老文件得显式收一次。
+	// Windows 上 chmod 只映射只读位，失败也无所谓。
+	_ = os.Chmod(p, 0o600)
 	return nil
 }

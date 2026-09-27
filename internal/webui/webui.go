@@ -74,22 +74,20 @@ type Server struct {
 	mu         sync.Mutex
 	lastActive time.Time
 
+	// proxyLog 是代理事件的环形缓冲（见 proxylog.go），proxyMu 保护它。
+	proxyLog []ProxyLogEntry
+	proxyMu  sync.Mutex
+
 	done     chan struct{}
 	doneOnce sync.Once
 
 	// 以下三个是测试接缝：零值走真实实现（官方地址、读认证文件、丢弃日志）。
-	// 不导出是因为它们只服务于测试，不是调用方该关心的旋钮。
+	// 不导出是因为它们只服务于测试与 CLI 接线，不是调用方该关心的旋钮。
+	//
+	// logFn 接上后代理事件由 note() 双写：一份进内存给界面看，一份落日志文件。
 	logFn          func(format string, args ...any)
 	upstreamBaseFn func() string
 	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
-}
-
-// logf 写一行诊断日志（没接日志出口就丢弃）。
-func (s *Server) logf(format string, args ...any) {
-	if s.logFn == nil {
-		return
-	}
-	s.logFn(format, args...)
 }
 
 // upstreamBase 返回国际后端地址。测试要能指到本地假上游，
@@ -153,6 +151,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
+	mux.HandleFunc("/api/proxy-log", s.guard(s.handleProxyLog))
 	s.registerOpenAI(mux)
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
@@ -213,8 +212,13 @@ func (s *Server) URL() string {
 	return fmt.Sprintf("http://%s/?t=%s", s.ln.Addr().String(), s.token)
 }
 
-// Addr 返回实际监听地址。
+// Addr 返回实际监听的地址。
 func (s *Server) Addr() string { return s.ln.Addr().String() }
+
+// Token 返回本次使用的访问令牌。调用方（CLI）需要把它存下来，
+// 好让下次启动沿用同一个——令牌变了，注入到国内客户端的模型就失效了
+// （见 config.GUIToken 的注释）。
+func (s *Server) Token() string { return s.token }
 
 // Done 在界面请求关闭（或空闲超时）后关闭，供调用方阻塞等待。
 //
@@ -542,7 +546,7 @@ func (s *Server) handleInjectCustomModels(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, map[string]any{
 		"added": added,
-		"note":  "已注入并备份原文件；重启国内客户端后在模型选择器底部可见（名称带「国际免费」）",
+		"note":  "已注入并备份原文件；重启国内客户端后可见（名称带「国际免费」）。地址与令牌跨重启沿用，之后再重启 wbmux 不用再重启客户端",
 	})
 }
 
