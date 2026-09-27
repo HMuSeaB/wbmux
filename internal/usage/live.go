@@ -44,6 +44,14 @@ type LiveModel struct {
 	Desc string `json:"desc"`
 	// Ctx 是上下文窗口长度（maxInputTokens，token 数）。
 	Ctx int `json:"ctx"`
+	// MaxOutput 是单次回复上限（maxOutputTokens）。注入国内客户端时要用：
+	// 缺了它客户端只能按默认值估，会出现"明明能放 1M 却提前压缩上下文"。
+	MaxOutput int `json:"maxOutput,omitempty"`
+	// Tools / Images 是官方的能力开关（supportsToolCall / supportsImages）。
+	// 注入国内客户端时必须如实带上：客户端按 supportsToolCall 决定要不要
+	// 在请求体里带 tools，写 false 就等于把模型的工具能力关掉。
+	Tools  bool `json:"tools"`
+	Images bool `json:"images"`
 	// FreeNow 表示该模型当前被"限时免费"活动覆盖（折扣因子为 0 且在有效期内）。
 	FreeNow bool `json:"freeNow"`
 	// FreeLabel 是活动徽章原文（"Free now" / "限时免费"），界面照抄不翻译。
@@ -336,14 +344,7 @@ func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]Li
 		}
 	}
 	var doc struct {
-		Models []struct {
-			ID             string `json:"id"`
-			Name           string `json:"name"`
-			Credits        string `json:"credits"`
-			DescriptionZh  string `json:"descriptionZh"`
-			DescriptionEn  string `json:"descriptionEn"`
-			MaxInputTokens int    `json:"maxInputTokens"`
-		} `json:"models"`
+		Models     []liveModelRaw `json:"models"`
 		Promotions []livePromoRaw `json:"modelPromotions"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -351,30 +352,27 @@ func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]Li
 	}
 	byID := map[string]LiveModel{}
 	var order []string
-	add := func(id, name, credits string) {
-		if id == "" {
+	add := func(m liveModelRaw) {
+		if m.ID == "" {
 			return
 		}
-		if _, ok := byID[id]; ok {
+		if _, ok := byID[m.ID]; ok {
 			return
 		}
-		lm := LiveModel{ID: id, Name: name, RateRaw: credits}
-		if mm := creditsRateRe.FindStringSubmatch(credits); mm != nil {
+		lm := LiveModel{ID: m.ID, Name: m.Name, RateRaw: m.Credits}
+		if mm := creditsRateRe.FindStringSubmatch(m.Credits); mm != nil {
 			lm.Rate = parseRateNumber(mm[1])
 		}
-		byID[id] = lm
-		order = append(order, id)
+		byID[m.ID] = lm
+		order = append(order, m.ID)
 	}
-	// 描述就地补齐：同一模型可能出现在多个配置层，先到先得，
-	// 但描述/上下文字段允许后层补上（主体层没有这些字段）。
-	fill := func(m struct {
-		ID             string `json:"id"`
-		Name           string `json:"name"`
-		Credits        string `json:"credits"`
-		DescriptionZh  string `json:"descriptionZh"`
-		DescriptionEn  string `json:"descriptionEn"`
-		MaxInputTokens int    `json:"maxInputTokens"`
-	}) {
+	// 同一模型可能出现在多个配置层，字段补齐规则：
+	//   - 文本类（描述）：先到先得，后层只补空
+	//   - 数值类（上下文/输出上限）：为 0 才补，避免后层的 0 覆盖真实值
+	//   - 能力开关：取或。缺字段被解析成 false，若按"覆盖"处理，
+	//     后一层没写这个键就会把前一层给的能力抹掉。这些键只会被
+	//     厂商用来授予能力，不会用来显式收回，取或才是安全语义。
+	fill := func(m liveModelRaw) {
 		if lm, ok := byID[m.ID]; ok {
 			if lm.Desc == "" {
 				lm.Desc = m.DescriptionZh
@@ -385,15 +383,18 @@ func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]Li
 			if lm.Ctx == 0 {
 				lm.Ctx = m.MaxInputTokens
 			}
+			if lm.MaxOutput == 0 {
+				lm.MaxOutput = m.MaxOutputTokens
+			}
+			lm.Tools = lm.Tools || m.SupportsToolCall
+			lm.Images = lm.Images || m.SupportsImages
 			byID[m.ID] = lm
 		}
 	}
 	for _, m := range doc.Models {
-		add(m.ID, m.Name, m.Credits)
+		add(m)
 		fill(m)
 	}
-	// v3/config 是完整配置，不再有 include 层；fetchIncludedModels 仅作
-	// 回退端点的旧结构保留。
 	out := make([]LiveModel, 0, len(order))
 	for _, id := range order {
 		out = append(out, byID[id])
@@ -403,33 +404,23 @@ func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]Li
 	return out, promosOf(doc.Promotions), nil
 }
 
-// fetchIncludedModels 拉 include 引用的配置层，只取 models。
-func fetchIncludedModels(url string, cred liveCredentials, id variant.ID) ([]struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Credits        string `json:"credits"`
-	DescriptionZh  string `json:"descriptionZh"`
-	DescriptionEn  string `json:"descriptionEn"`
-	MaxInputTokens int    `json:"maxInputTokens"`
-}, error) {
-	raw, err := liveJSON(url, "", "GET", cred.Token, cred.UID, nil, liveCommonHeaders(id))
-	if err != nil {
-		return nil, err
-	}
-	var doc struct {
-		Models []struct {
-			ID             string `json:"id"`
-			Name           string `json:"name"`
-			Credits        string `json:"credits"`
-			DescriptionZh  string `json:"descriptionZh"`
-			DescriptionEn  string `json:"descriptionEn"`
-			MaxInputTokens int    `json:"maxInputTokens"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, err
-	}
-	return doc.Models, nil
+// liveModelRaw 是配置里一条模型的原文结构。
+//
+// 抽成具名类型而不是就地写匿名结构：这份字段表原先在三处各写了一遍
+// （v3/config、include 层、补齐逻辑），加字段时漏掉一处就会静默丢数据。
+type liveModelRaw struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Credits         string `json:"credits"`
+	DescriptionZh   string `json:"descriptionZh"`
+	DescriptionEn   string `json:"descriptionEn"`
+	MaxInputTokens  int    `json:"maxInputTokens"`
+	MaxOutputTokens int    `json:"maxOutputTokens"`
+	// 能力开关。官方配置里确实带这两个键（实测 2026-09-27：
+	// deepseek-v4.1-flash 与两个限时免费混元模型都是 true），
+	// 是"这个后端模型支不支持工具/图片"的权威来源，别靠猜。
+	SupportsToolCall bool `json:"supportsToolCall"`
+	SupportsImages   bool `json:"supportsImages"`
 }
 
 // livePromoRaw 对应 modelPromotions 的原文结构（只取界面要用的字段）。

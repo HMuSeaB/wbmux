@@ -6,6 +6,13 @@
 // 照抄用户已验证可用的自定义模型（vendor=Custom，url 指向完整的
 // chat/completions 端点，Bearer 鉴权）。wbmux 代理收到请求后转
 // 国际后端、扣国际账号——国内客户端零改动、小程序远程控制不受影响。
+//
+// # id 前缀与模型名
+//
+// 条目的 id 带 IDPrefix，是为了同步时能识别并整体替换旧条目
+// （绝不动用户自己加的自定义模型）。代价是客户端会把**带前缀的 id**
+// 当请求体的 model 发出来，所以代理侧必须剥掉前缀才能转给上游
+// （见 webui.normalizeModelName，2026-09-27 那个"一用就 502"就是漏了这步）。
 package custommodels
 
 import (
@@ -59,18 +66,38 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel) (int, 
 		if !m.FreeNow {
 			continue
 		}
-		kept = append(kept, map[string]any{
-			"id":                IDPrefix + m.ID,
-			"name":              fmt.Sprintf("%s（国际免费）", displayName(m)),
-			"vendor":            "Custom",
-			"url":               chatURL,
-			"apiKey":            apiKey,
-			"supportsToolCall":  false,
-			"supportsImages":    false,
-			"supportsReasoning": false,
+		entry := map[string]any{
+			"id":     IDPrefix + m.ID,
+			"name":   fmt.Sprintf("%s（国际免费）", displayName(m)),
+			"vendor": "Custom",
+			"url":    chatURL,
+			"apiKey": apiKey,
+			// URL 已是完整的补全端点，别再让客户端去补 /chat/completions
 			"useCustomProtocol": true,
 			"onlyReasoning":     false,
-		})
+
+			// 能力与上限照抄官方配置（LiveModel 来自 /v3/config）。
+			//
+			// supportsToolCall 必须是真值：客户端见到 false 会把请求体里的
+			// tools/tool_choice 删掉（客户端 ProductFeature
+			// "SkipToolCallSupportCheck" 的注释写明了这条规则），
+			// 而国内壳子里的 Agent 全靠工具干活——写 false 的结果是
+			// 模型只能聊天，什么也做不了。实测官方配置里这几个免费模型
+			// 都是 supportsToolCall=true。
+			"supportsToolCall": m.Tools,
+			"supportsImages":   m.Images,
+			// 思考类开关官方配置里没有对应字段，不猜，一律 false。
+			"supportsReasoning": false,
+		}
+		// 上限缺省就别写：客户端对缺失字段有自己的兜底，
+		// 而写个 0 会被当成"上限为零"。
+		if m.Ctx > 0 {
+			entry["maxInputTokens"] = m.Ctx
+		}
+		if m.MaxOutput > 0 {
+			entry["maxOutputTokens"] = m.MaxOutput
+		}
+		kept = append(kept, entry)
 		added++
 	}
 

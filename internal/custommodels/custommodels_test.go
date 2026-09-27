@@ -14,6 +14,51 @@ func lm(id string, free bool) usage.LiveModel {
 	return usage.LiveModel{ID: id, Name: id, FreeNow: free}
 }
 
+// TestSyncCarriesOfficialCapabilities 钉住注入条目里的能力与上限来自
+// 官方配置：supportsToolCall 写错成 false，国内客户端就会把请求体里的
+// tools 删掉，Agent 直接废掉（2026-09-27 一并修掉的问题）。
+func TestSyncCarriesOfficialCapabilities(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	m := usage.LiveModel{
+		ID: "deepseek-v4.1-flash", Name: "Deepseek-V4.1-Flash", FreeNow: true,
+		Tools: true, Images: true, Ctx: 1000000, MaxOutput: 128000,
+	}
+	if _, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok", []usage.LiveModel{m}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	var list []map[string]any
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("写后应可解析: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("应有 1 条，得到 %d", len(list))
+	}
+	got := list[0]
+	if got["supportsToolCall"] != true || got["supportsImages"] != true {
+		t.Errorf("能力开关应照抄官方配置：%v", got)
+	}
+	if got["maxInputTokens"] != float64(1000000) || got["maxOutputTokens"] != float64(128000) {
+		t.Errorf("上限应照抄官方配置：%v", got)
+	}
+	if got["url"] != "http://127.0.0.1:1/v1/chat/completions" || got["useCustomProtocol"] != true {
+		t.Errorf("代理地址与协议标志不对：%v", got)
+	}
+}
+
+// TestSyncOmitsUnknownLimits 官方没给上限时不能写 0——
+// 客户端会把 0 当成"上限为零"，而不是"未知"。
+func TestSyncOmitsUnknownLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	if _, err := Sync(path, "http://x/v1/chat/completions", "tok", []usage.LiveModel{lm("hy3", true)}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "maxInputTokens") || strings.Contains(string(raw), "maxOutputTokens") {
+		t.Errorf("未知上限不应写进条目：%s", raw)
+	}
+}
+
 // TestSyncAddsFreeOnlyAndPreservesUserEntries 钉住三条规则：
 // 只注入限时免费、用户自己的条目原样保留、旧注入条目整体替换不残留。
 func TestSyncAddsFreeOnlyAndPreservesUserEntries(t *testing.T) {
