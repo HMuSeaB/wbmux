@@ -165,6 +165,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
 	mux.HandleFunc("/api/ping", s.guard(s.handlePing))
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
+	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
+	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
+	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))
 
 	s.http = &http.Server{
 		Handler:           mux,
