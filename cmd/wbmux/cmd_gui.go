@@ -103,8 +103,15 @@ func cmdGUI(args []string) error {
 	// 暴露到局域网等于把机器交出去。
 	normAddr, err := webui.NormalizeAddr(*addr)
 	if err != nil {
-		guiLog("失败：监听地址不合法：%v", err)
-		return err
+		if !addrFromConfig {
+			guiLog("失败：监听地址不合法：%v", err)
+			return err
+		}
+		// 设置文件被改坏了不该把界面挡在门外：退回随机端口继续，
+		// 大不了这次客户端要重启一次。
+		guiLog("设置里记的地址不合法（%q），改用随机端口：%v", *addr, err)
+		addrFromConfig = false
+		normAddr, _ = webui.NormalizeAddr("")
 	}
 
 	idleTimeout, err := parseIdle(*idle)
