@@ -359,3 +359,34 @@ func TestChatRejectsBadRequests(t *testing.T) {
 		}
 	}
 }
+
+// TestChatStreamIsByteExact 流式转发必须逐字节原样。
+//
+// SSE 的事件分隔是空行：少了空行，解析方会把整段流当成一个永远没结束的
+// 事件，表现成"跑了几秒什么都没收到"（2026-09-27 国内客户端里那个没头没尾
+// 的错误码就是这么来的）。所以这里断言的不是"含有关键字"，而是字节全等。
+func TestChatStreamIsByteExact(t *testing.T) {
+	sse := "data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n" +
+		": keep-alive 注释行也要原样过\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n" +
+		"data: [DONE]\n\n"
+	var got map[string]any
+	up := fakeUpstream(t, sse, &got, nil)
+	defer up.Close()
+
+	srv := newProxyForTest(t, up.URL, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"wbmux-intl-m","stream":true,"messages":[{"role":"user","content":"x"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d：%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); body != sse {
+		t.Errorf("流式转发不该改动任何字节。\n得到 %q\n期望 %q", body, sse)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type 应为 text/event-stream，得到 %q", ct)
+	}
+}

@@ -40,9 +40,18 @@ const customLocalPrefix = "custom-local:"
 // chatCompletionsPath 是国际后端的补全端点。
 const chatCompletionsPath = "/v2/chat/completions"
 
-// maxChatBodyBytes 是请求体上限。Agent 侧的系统提示 + 工具定义 +
-// 历史消息很容易超过 1 MB，4 MB 留足余量。
-const maxChatBodyBytes = 4 << 20
+// maxChatBodyBytes 是请求体上限。
+//
+// 32 MB 是按实测定出来的，不是拍脑袋：注入条目照抄官方配置，把上下文窗口
+// 写成真值 1,000,000 token，客户端因此会放心地把长会话整段发过来。
+// 实测（2026-09-27）95 万 token 的中文提示词请求体就有 11.4 MB，
+// 1M 约 12 MB，再叠上工具定义与历史里的 JSON/代码还要更大。
+// 原来的 4 MB 会在这种请求上先自己 400，用户却会以为是模型的窗口不够；
+// 16 MB 也只是刚好够。给到 32 MB 才留出余量。
+//
+// 代价是要一次性读进内存（还要解析成 map 再序列化出去，峰值是正文的几倍），
+// 桌面上一次请求多占几十 MB 可以接受。
+const maxChatBodyBytes = 32 << 20
 
 // normalizeModelName 把客户端送来的模型名还原成官方 id。
 //
@@ -188,6 +197,10 @@ func (s *Server) openaiGuard(next http.HandlerFunc) http.HandlerFunc {
 			got = r.URL.Query().Get("t")
 		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+			// 这条也要记：令牌过期（重启后端口与令牌都变）在客户端那边
+			// 同样只是一句报错，不记就完全看不出是"地址还是旧的"。
+			s.logf("代理拒绝了 %s %s：令牌无效（客户端可能还拿着上一次启动的地址）",
+				r.Method, r.URL.Path)
 			writeOpenAIError(w, http.StatusForbidden, "令牌无效：请把界面地址里 t= 的值当 API Key 用")
 			return
 		}
@@ -240,13 +253,23 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusMethodNotAllowed, "只接受 POST")
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodyBytes))
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodyBytes+1))
 	if err != nil {
+		s.logf("代理读请求体失败: %v", err)
 		writeOpenAIError(w, http.StatusBadRequest, "读请求体失败："+err.Error())
+		return
+	}
+	// 超限要明确说出来。截断后直接解析会报"JSON 不完整"，
+	// 那会把"请求太大"误导成"请求格式错"。
+	if int64(len(raw)) > maxChatBodyBytes {
+		s.logf("代理拒绝了超限请求：%d 字节 > 上限 %d 字节", len(raw), maxChatBodyBytes)
+		writeOpenAIError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("请求体超过 %d 字节上限，请缩短上下文", maxChatBodyBytes))
 		return
 	}
 	up, err := buildUpstreamBody(raw)
 	if err != nil {
+		s.logf("代理拒绝了请求：%v", err)
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -309,22 +332,42 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	s.aggregateChat(w, resp.Body)
 }
 
-// streamChatThrough 把上游 SSE 原样转发（上游本就是 OpenAI 兼容块，
-// 含 tool_calls 增量，转一道手就是为了不破坏它的形状）。
+// streamChatThrough 把上游 SSE 转发给调用方。
+//
+// # 必须逐字节原样，不能按行重建
+//
+// SSE 的事件分隔符是**空行**：解析方读到空行才认为一个事件完整、才去
+// 解析它的 data 段。原实现按行扫描并跳过空行（当时只想"别转发空行"），
+// 结果整段流在客户端眼里成了"一个永远没结束的事件"，表现正是
+// "跑了几秒、什么都没收到"+ 报一个没头没尾的错误码（2026-09-27 实测：
+// 直连上游 16 个空行，经代理 0 个）。
+//
+// 所以这里不再自己拼行，直接搬字节；只在每块之后 Flush 一次，
+// 保住"边收边给"的实时性。
 func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	// 万一前面挂了反代/网关，别让它缓冲——缓冲会让流式退化成一次性返回。
+	w.Header().Set("X-Accel-Buffering", "no")
+
 	flusher, canFlush := w.(http.Flusher)
-	sc := bufio.NewScanner(upstream)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" {
-			continue
+	if canFlush {
+		// 先甩出响应头：否则调用方要等到第一块正文才知道请求已被接受。
+		flusher.Flush()
+	}
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := upstream.Read(buf)
+		if n > 0 {
+			if _, err := w.Write(buf[:n]); err != nil {
+				return // 调用方断开，上游留给 defer 关
+			}
+			if canFlush {
+				flusher.Flush()
+			}
 		}
-		fmt.Fprintln(w, line)
-		if canFlush {
-			flusher.Flush()
+		if readErr != nil {
+			return // io.EOF 或上游中断，流到此结束
 		}
 	}
 }

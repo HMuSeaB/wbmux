@@ -129,6 +129,11 @@ func TestLiveUpstreamStream(t *testing.T) {
 	if !strings.Contains(text, `"tool_calls"`) {
 		t.Errorf("流式响应里没有工具调用增量：%s", cutStr(text, 500))
 	}
+	// 空行是 SSE 的事件分隔符。丢了它，客户端会把整段流当成一个永远没结束的
+	// 事件——这正是 2026-09-27 那次"跑了几秒什么都没收到"的原因。
+	if !strings.Contains(text, "\n\n") {
+		t.Errorf("SSE 事件分隔符（空行）丢了：%q", cutStr(text, 300))
+	}
 	if !strings.Contains(text, "data: {\"id\"") {
 		t.Errorf("SSE 数据行被改动了：%s", cutStr(text, 300))
 	}
