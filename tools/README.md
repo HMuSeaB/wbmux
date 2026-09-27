@@ -15,6 +15,7 @@ wbmux 自身是零第三方依赖的 Go 程序，这里的脚本不会参与构�
 | `image/` | `png_crop.py` | 纯 Python 裁剪 PNG（不装 Pillow） |
 | `sqlite/` | `immutable_read.py` | 只读查客户端数据库，不碰 `-wal`/`-shm` |
 | `go-tmp/` | `clean_gotmp.py` | 清理 `go build` 被中断后泄漏的临时目录 |
+| `recycle-noise/` | `recycle_noise.py` | 查出是"谁"在往回收站塞垃圾，并清掉噪声 |
 
 ## 为什么每一类都值得留下
 
@@ -41,6 +42,15 @@ wbmux 自身是零第三方依赖的 Go 程序，这里的脚本不会参与构�
   根治办法是把 `GOTMPDIR` 指到固定位置（脚本 docstring 里有），这个脚本
   负责按特征清掉已泄漏的那些——只认 `_pkg_.a` / `importcfg` 这类标志，
   不碰 `%LOCALAPPDATA%\go-build`（那是构建缓存，删了只会变慢）。
+
+- **`recycle_noise.py`** —— 回收站被灌满的真正原因不是体积而是**条目数**：
+  每个条目只有几字节到几十字节，但堆到几千个之后，资源管理器要逐个读
+  元数据加载列表，直接卡死。这个脚本读回收站的 `$I` 元数据（含"原路径"
+  字段），按原路径聚合，直接告诉你是**谁**在塞。
+  实测结论：PowerShell 每次启动都会建 `__PSScriptPolicyTest_*.ps1/.psm1`
+  （内容是 `# PowerShell test file to determine AppLocker lockdown mode`），
+  开发工具每次调用也会在 `%TEMP%` 下留一个短随机名目录。
+  默认只清这些已识别的噪声，用户自己删的文件不动。
 
 ## 约定
 

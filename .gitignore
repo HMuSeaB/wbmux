@@ -14,6 +14,10 @@
 /.tmp*/
 /tmp/
 
+# Python 字节码（tools/ 下的辅助脚本会生成）
+__pycache__/
+*.pyc
+
 # 编辑器
 .idea/
 .vscode/*
