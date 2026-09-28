@@ -206,3 +206,61 @@ func (a arrow) contains(x, y float64) bool {
 	}
 	return dy <= a.headHalf*(t/span)
 }
+
+// ICOFileBytes 把自画图标组装成一个**完整的 .ico 文件**，含多个尺寸。
+//
+// 用途：桌面快捷方式的 IconLocation 指向它（internal/shortcut）。托盘
+// 图标运行时画（见上），桌面快捷方式的图标总不能是"白纸"——exe 本体
+// 不嵌资源（同样的取舍，见文件头的说明），所以运行时把画好的图落成
+// .ico 文件给快捷方式指。
+//
+// .ico 容器格式：6 字节 ICONDIR（保留字 0 / 类型 1 / 图像数）+ 每图
+// 16 字节 ICONDIRENTRY（宽高各 1 字节，256 写 0）+ 依序排布的图像数据。
+// 图像数据正是 iconResourceBytes 的产出（BITMAPINFOHEADER + XOR + AND），
+// 一字不用改。
+func ICOFileBytes(sizes ...int) []byte {
+	type img struct {
+		w, h, size int
+		data       []byte
+	}
+	var imgs []img
+	var total int
+	for _, sz := range sizes {
+		data := iconResourceBytes(sz)
+		imgs = append(imgs, img{sz, sz, len(data), data})
+		total += len(data)
+	}
+
+	le16 := func(v uint16) []byte { return []byte{byte(v), byte(v >> 8)} }
+	le32 := func(v uint32) []byte {
+		return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)}
+	}
+
+	out := make([]byte, 0, 6+16*len(imgs)+total)
+	// ICONDIR：reserved / type=1（图标）/ 图像数。
+	// 注意 le16 返回的是切片：不能与单独的 byte 混在同一个 append 里，
+	// 得逐个 append 各自带 "..."（或像下面这样分开写）。
+	out = append(out, le16(0)...)
+	out = append(out, le16(1)...)
+	out = append(out, le16(uint16(len(imgs)))...)
+	offset := 6 + 16*len(imgs)
+	for _, im := range imgs {
+		w, h := byte(im.w), byte(im.h)
+		if im.w >= 256 {
+			w = 0
+		}
+		if im.h >= 256 {
+			h = 0
+		}
+		out = append(out, w, h, 0, 0)
+		out = append(out, le16(1)...)               // planes
+		out = append(out, le16(32)...)              // bitCount
+		out = append(out, le32(uint32(im.size))...) // bytesInRes
+		out = append(out, le32(uint32(offset))...)
+		offset += im.size
+	}
+	for _, im := range imgs {
+		out = append(out, im.data...)
+	}
+	return out
+}
