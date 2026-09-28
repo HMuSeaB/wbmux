@@ -169,6 +169,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/events", s.guard(s.handleEvents))
 	mux.HandleFunc("/api/update/check", s.guard(s.handleUpdateCheck))
 	mux.HandleFunc("/api/update/apply", s.guard(s.handleUpdateApply))
+	mux.HandleFunc("/api/shortcut", s.guard(s.handleShortcut))
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
 	mux.HandleFunc("/api/sessions", s.guard(s.handleSessionsAPI))
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))

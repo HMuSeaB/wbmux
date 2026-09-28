@@ -81,6 +81,8 @@ release:
     wbmux doctor      # 体检：机制是否仍然有效
     wbmux run intl    # 用国际后端启动
     wbmux migrate     # 把另一侧的会话/技能/记忆搬过来
+    wbmux sessions    # 会话中心：跨 IDE 历史会话按项目归组（只读）
+    wbmux shortcut    # 在桌面创建启动快捷方式
     ```
 
     > **图形界面**由内嵌网页提供，只在 `127.0.0.1` 上监听，用系统浏览器

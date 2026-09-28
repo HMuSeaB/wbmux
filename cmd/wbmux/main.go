@@ -51,6 +51,8 @@ func dispatch(args []string) error {
 		return cmdMigrate(rest)
 	case "sessions", "sess":
 		return cmdSessions(rest)
+	case "shortcut":
+		return cmdShortcut(rest)
 	case "config", "cfg":
 		return cmdConfig(rest)
 	case "help", "-h", "--help":

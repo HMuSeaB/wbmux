@@ -459,6 +459,10 @@
       <button class="ghost" id="btn-update" style="padding:2px 10px;font-size:12px">检查更新</button>
       <span id="upd-msg" class="ver"></span>
     </p>
+    <p class="brand-sub" style="display:flex;gap:6px;align-items:center">
+      <button class="ghost" id="btn-shortcut" style="padding:2px 10px;font-size:12px">桌面快捷方式</button>
+      <span id="sc-msg" class="ver"></span>
+    </p>
     <nav class="nav">
       <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
@@ -2139,6 +2143,22 @@
       el("div", { class: "note bad", text: "无法读取状态：" + e.message })
     );
   });
+
+  // ---------- 桌面快捷方式 ----------
+  // 覆盖语义：exe 挪了位置（升级换目录）后重新点一次，快捷方式自动跟上。
+  document.getElementById("btn-shortcut").onclick = function () {
+    var btn = document.getElementById("btn-shortcut");
+    var msg = document.getElementById("sc-msg");
+    btn.disabled = true;
+    msg.textContent = "创建中…";
+    api("/api/shortcut", { method: "POST" }).then(function (r) {
+      msg.textContent = "已创建";
+      toast("桌面快捷方式已就绪：" + r.path, "ok");
+    }).catch(function (e) {
+      msg.textContent = "失败";
+      toast(e.message, "bad");
+    }).finally(function () { btn.disabled = false; });
+  };
 
   // ---------- 自助升级 ----------
   // 检查：/api/update/check 对比当前版本与 GitHub 最新 release；

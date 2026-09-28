@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/HMuSeaB/wbmux/internal/shortcut"
 	"github.com/HMuSeaB/wbmux/internal/update"
 	"github.com/HMuSeaB/wbmux/internal/version"
 )
@@ -53,4 +54,19 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"message": msg})
+}
+
+// handleShortcut 在桌面创建/覆盖 wbmux.lnk（internal/shortcut）。
+// "装好后想要个双击入口"是装完/升级完的自然下一步，收进界面少一次翻目录。
+func (s *Server) handleShortcut(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	path, err := shortcut.Create()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"path": path})
 }

@@ -118,6 +118,7 @@ wbmux migrate                # 看看另一侧有什么历史可以搬过来
 wbmux migrate intl cn --yes  # 把国际版的会话搬进国内版
 wbmux sessions               # 会话中心：跨 IDE 历史会话按项目归组（只读）
 wbmux sessions --web         # 打开会话中心的图形页面
+wbmux shortcut               # 在桌面创建启动快捷方式
 ```
 
 ### 图形界面
