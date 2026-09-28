@@ -317,12 +317,18 @@ func showMenu(hwnd uintptr) {
 	// ——点别处不消失。这是该 API 的既有怪癖，官方文档也这么要求。
 	_, _, _ = procSetForegroundWnd.Call(hwnd)
 
-	_, _, _ = procTrackPopupMenu.Call(
+	// TPM_RETURNCMD 下选中项以**返回值**给出，系统不会再发 WM_COMMAND；
+	// 不接住它，选了就等于没选（2026-09-28 的反馈：菜单两个项点了都没反应）。
+	// 转投一条 WM_COMMAND，让 wndProc 既有的分发路径接手。
+	sel, _, _ := procTrackPopupMenu.Call(
 		menu,
 		tpmRightButton|tpmReturnCmd|tpmNonotify,
 		uintptr(pt.x), uintptr(pt.y),
 		0, hwnd, 0,
 	)
+	if sel != 0 {
+		procPostMessageW.Call(hwnd, wmCommand, sel, 0)
+	}
 	// 之后补一个 WM_NULL，同样是官方建议的收尾动作。
 	_, _, _ = procPostMessageW.Call(hwnd, 0, 0, 0)
 }
