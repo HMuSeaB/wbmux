@@ -2211,7 +2211,13 @@
         api("/api/update/apply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ assetURL: info.assetURL }),
+          // 把文件名与 checksums 的地址一起带上：服务端要拿官方的校验和
+          // 核对下载到的包（这是"下到的到底是不是官方那个包"的唯一可靠判据）。
+          body: JSON.stringify({
+            assetURL: info.assetURL,
+            assetName: info.assetName,
+            sumsURL: info.sumsURL
+          }),
         }).then(function (r) {
           byeOnce = true; // 升级谢幕页自己接管，别让 SSE 的 bye 再覆盖
           document.body.innerHTML =

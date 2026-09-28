@@ -21,6 +21,8 @@ package update
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,11 +54,13 @@ type ghAsset struct {
 
 // Info 是一次更新检查的结果。
 type Info struct {
-	Current  string `json:"current"`  // 当前运行的版本（构建期注入）
-	Latest   string `json:"latest"`   // 最新已发布版本的 tag（带 v 前缀）
-	URL      string `json:"url"`      // release 页面，手动下载兜底用
-	AssetURL string `json:"assetURL"` // Windows amd64 zip 的直链；非 Windows 平台为空
-	UpToDate bool   `json:"upToDate"`
+	Current   string `json:"current"`   // 当前运行的版本（构建期注入）
+	Latest    string `json:"latest"`    // 最新已发布版本的 tag（带 v 前缀）
+	URL       string `json:"url"`       // release 页面，手动下载兜底用
+	AssetURL  string `json:"assetURL"`  // Windows amd64 zip 的直链；非 Windows 平台为空
+	AssetName string `json:"assetName"` // 该资产的文件名（校验和按名字对）
+	SumsURL   string `json:"sumsURL"`   // checksums.txt 的直链
+	UpToDate  bool   `json:"upToDate"`
 }
 
 // Check 向 GitHub 查最新已发布版本，与当前版本比较。
@@ -99,9 +103,23 @@ func Check(current string) (Info, error) {
 	}
 	if runtime.GOOS == "windows" {
 		info.AssetURL = pickWindowsAsset(rel.Assets)
+		info.AssetName = filepath.Base(info.AssetURL)
+		if a := pickAssetByName(rel.Assets, "checksums.txt"); a != "" {
+			info.SumsURL = a
+		}
 	}
 	info.UpToDate = !isNewer(rel.TagName, current)
 	return info, nil
+}
+
+// pickAssetByName 按文件名精确挑资产（用不上就返回空）。
+func pickAssetByName(assets []ghAsset, name string) string {
+	for _, a := range assets {
+		if strings.EqualFold(a.Name, name) {
+			return a.BrowserDownloadURL
+		}
+	}
+	return ""
 }
 
 // isNewer 判断 latest tag 是否比当前版本新。
@@ -173,7 +191,7 @@ func pickWindowsAsset(assets []ghAsset) string {
 
 // Apply 下载并原位替换当前运行的 exe。
 // 返回给界面的话要说清"替换已就位、重启才生效"——正在运行的还是旧版。
-func Apply(assetURL string) (string, error) {
+func Apply(assetURL, assetName, sumsURL string) (string, error) {
 	if assetURL == "" {
 		return "", errors.New("没有可用的 Windows 安装包（该 release 可能没有 windows_amd64 构建产物）")
 	}
@@ -204,6 +222,27 @@ func Apply(assetURL string) (string, error) {
 	if err := download(assetURL, zipPath); err != nil {
 		return "", err
 	}
+
+	// 校验：与 release 的 checksums.txt 比对。
+	//
+	// 这是"下载到的到底是不是官方那个包"的唯一可靠判据（见 verifyChecksum 的
+	// 注释：按字符串猜二进制身份试过三组，全不可靠）。下载中断、链路被劫持、
+	// 上游传错文件，全都在这道拦下。
+	note := ""
+	if sumsURL != "" && assetName != "" {
+		sumsRaw, err := downloadText(sumsURL)
+		if err != nil {
+			return "", fmt.Errorf("下载校验和失败（%v）；不敢冒险替换，请稍后重试或手动下载", err)
+		}
+		n, err := verifyChecksum(zipPath, assetName, parseChecksums(sumsRaw))
+		if err != nil {
+			return "", err
+		}
+		note = n
+	} else {
+		note = "release 没有提供校验和，本次未校验"
+	}
+
 	if err := extractExe(zipPath, newExe); err != nil {
 		return "", err
 	}
@@ -221,7 +260,25 @@ func Apply(assetURL string) (string, error) {
 		}
 		return "", fmt.Errorf("写入新版失败（已回滚）：%w", err)
 	}
-	return "新版已就位。从托盘退出 wbmux，再启动一次即完成升级。", nil
+	return "新版已就位（" + note + "）。从托盘退出 wbmux，再启动一次即完成升级。", nil
+}
+
+// downloadText 拉一段纯文本（checksums.txt）。
+func downloadText(url string) (string, error) {
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %s", resp.Status)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 // CleanupOld 清掉上次升级留下的 .old。由 cmd_gui 在启动早期调用，
@@ -287,7 +344,19 @@ func extractExe(zipPath, outPath string) error {
 	return errors.New("安装包里没有 wbmux.exe")
 }
 
-// checkPE 校验文件是 Windows PE 可执行（MZ 头 + 体量下限）。
+// checkPE 做最后一道体检：MZ 头 + 体量下限。
+//
+// # 它**不**试图判断"这是不是测试二进制"（2026-09-28 的教训）
+//
+// 我先后试过三组字符串判据，全部不可靠：
+//
+//	-test.artifacts / -test.paniconexit0   正常构建里也有 → 会把好程序拒掉
+//	testing.InternalTest / -test.gocoverdir 覆盖率插桩也会带进来
+//	testing.MainStart / _testmain          两次 go build 的结果不一致（一次有、一次没有）
+//
+// 根因是"按字符串猜二进制身份"这件事本身不稳：符号表内容随链接顺序、
+// 插桩标志、工具链版本变化。真正的判据是**校验和**——见 Apply 里对
+// release 的 checksums.txt 的核对。这一层只负责挡"下坏了 / 解错了"的最低标准。
 func checkPE(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -309,6 +378,59 @@ func checkPE(path string) error {
 		return errors.New("解出的文件不完整（体量异常）")
 	}
 	return nil
+}
+
+// sha256File 算文件校验和。
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifyChecksum 拿 release 的 checksums.txt 核对刚下载的包。
+//
+// # 为什么这道校验必须有（2026-09-28 真实事故）
+//
+// 当天 `~/.wbmux/bin/wbmux.exe`（正是"升级要替换的目标位置"）被写成了一个
+// 测试二进制——它同样有 MZ 头、体量也够，光看"像不像 PE"完全拦不住。
+// 唯一可靠的判据是：**包里那个文件必须与官方发布的校验和一致**。
+//
+// checksums 里没有这个文件名时**放行**（自定义构建/老 release 可能没带），
+// 但会落到日志里让用户知道"这次没验上"。
+func verifyChecksum(zipPath, zipName string, sums map[string]string) (string, error) {
+	want, ok := sums[zipName]
+	if !ok {
+		return "release 没有提供该文件的校验和，本次未校验", nil
+	}
+	got, err := sha256File(zipPath)
+	if err != nil {
+		return "", fmt.Errorf("计算校验和失败：%w", err)
+	}
+	if !strings.EqualFold(got, want) {
+		return "", fmt.Errorf("安装包校验和不符（下载可能被截断或篡改）：期望 %s…，实际 %s…",
+			want[:12], got[:12])
+	}
+	return "校验和已核对", nil
+}
+
+// parseChecksums 解析 goreleaser 产出的 checksums.txt（"<sha256>  <文件名>" 每行一条）。
+func parseChecksums(raw string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) != 2 {
+			continue
+		}
+		out[strings.TrimPrefix(fields[1], "*")] = fields[0]
+	}
+	return out
 }
 
 // copyFile 覆盖写。

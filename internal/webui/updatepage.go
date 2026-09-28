@@ -42,13 +42,15 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		AssetURL string `json:"assetURL"`
+		AssetURL  string `json:"assetURL"`
+		AssetName string `json:"assetName"`
+		SumsURL   string `json:"sumsURL"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
-	msg, err := update.Apply(req.AssetURL)
+	msg, err := update.Apply(req.AssetURL, req.AssetName, req.SumsURL)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
