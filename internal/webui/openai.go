@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -52,6 +54,69 @@ const chatCompletionsPath = "/v2/chat/completions"
 // 代价是要一次性读进内存（还要解析成 map 再序列化出去，峰值是正文的几倍），
 // 桌面上一次请求多占几十 MB 可以接受。
 const maxChatBodyBytes = 32 << 20
+
+// upstreamRoute 是一次转发要去哪里、用什么凭据与模型名。
+//
+// 代理现在有两种上游：内置的国际 WorkBuddy 后端（凭据来自客户端认证文件），
+// 以及用户自己填的 OpenAI 兼容端点（BYOK，凭据来自设置文件）。路由靠
+// **注入条目 id 的前缀**区分，因为那是客户端唯一会原样带回来的信息。
+type upstreamRoute struct {
+	// Label 只用于日志与错误信息（"国际后端" / 提供方名字）。
+	Label string
+	// Endpoint 是完整的补全端点。
+	Endpoint string
+	// APIKey 为空表示走内置国际凭据（那是唯一需要额外头的一侧）。
+	APIKey string
+	// Provider 为 nil 表示走内置国际后端；否则是命中的那张 BYOK 卡片。
+	Provider *config.Provider
+	// Model 是发给上游的模型名（已剥掉我们自己的前缀）。
+	Model string
+}
+
+// resolveRoute 把客户端发来的 model 解析成一条路由。
+//
+// 顺序很重要：先剥客户端那层 custom-local: 前缀，再按**最长**的提供方前缀
+// 匹配（否则 p1 会把 p10 的条目吃掉），最后才落到内置国际后端。
+// 认不出来的名字一律按内置后端处理——外部工具直连时用的就是官方 id。
+func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute {
+	m := clientModel
+	for strings.HasPrefix(m, customLocalPrefix) {
+		m = strings.TrimPrefix(m, customLocalPrefix)
+	}
+	m = strings.TrimSpace(m)
+
+	// 提供方按前缀长度降序，避免 p1 抢先匹配 p10。
+	sorted := append([]config.Provider(nil), providers...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return len(sorted[i].EntryPrefix()) > len(sorted[j].EntryPrefix())
+	})
+	for i := range sorted {
+		p := sorted[i]
+		if p.ID == "" {
+			continue
+		}
+		if strings.HasPrefix(m, p.EntryPrefix()) {
+			model := strings.TrimPrefix(m, p.EntryPrefix())
+			if model == "" {
+				break // 只有前缀没有模型名：当认不出来处理
+			}
+			return upstreamRoute{
+				Label:    p.Name,
+				Endpoint: p.BaseURL,
+				APIKey:   p.APIKey,
+				Provider: &p,
+				Model:    model,
+			}
+		}
+	}
+
+	// 认不出来 → 内置国际后端（外部工具直连时用的就是官方 id，
+	// 也可能带着我们注入的 wbmux-intl- 前缀，交给 normalizeModelName 剥）。
+	return upstreamRoute{
+		Label: "国际后端",
+		Model: normalizeModelName(m),
+	}
+}
 
 // normalizeModelName 把客户端送来的模型名还原成官方 id。
 //
@@ -274,46 +339,69 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 这里**不**查实时账号（LiveAccounts）：那是两个网络往返外加一把全局锁，
-	// 会把首字延迟从毫秒级拖到秒级，而它对"这次能不能转发"没有任何额外保证
-	// ——凭据读得出来就够。模型是否存在交给上游回答，它的报错比我们猜的准。
-	cred, err := s.intlCred(s.probe())
-	if err != nil {
-		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
-			Text: "拒绝请求：国际侧凭据不可用：" + compactError(err.Error())})
-		writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
+	// 路由：客户端发来的 model 决定这次转给谁——内置国际后端，还是
+	// 用户自备的 OpenAI 兼容端点（BYOK 卡片）。两者共用后面整条转发路径，
+	// 差别只有端点、凭据头与模型名。
+	route := resolveRoute(up.Model, s.providers())
+	up.Body["model"] = route.Model
 
 	// 先记"收到"，再转发：这样卡在上游的请求在界面上也看得见
 	// （只有一条"收到"没有对应的"完成"，一眼就知道卡在哪一步）。
-	s.note(ProxyLogEntry{Level: "info", Model: up.Model, Tools: up.Tools, Stream: up.ClientStream,
-		Text: fmt.Sprintf("收到请求 model=%s %s stream=%v 正文 %s",
-			up.Model, describeTools(up.Tools), up.ClientStream, describeBytes(int64(len(raw))))})
+	s.note(ProxyLogEntry{Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
+		Text: fmt.Sprintf("收到请求 model=%s 经%s %s stream=%v 正文 %s",
+			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, describeBytes(int64(len(raw))))})
+
+	// 端点与凭据头：内置后端要读客户端认证文件（并带上 X-User-Id 等产品头），
+	// 自备提供方只用卡片里的 key。
+	headers := map[string]string{}
+	if route.Provider == nil {
+		// 这里**不**查实时账号（LiveAccounts）：那是两个网络往返外加一把全局锁，
+		// 会把首字延迟从毫秒级拖到秒级，而它对"这次能不能转发"没有任何额外保证
+		// ——凭据读得出来就够。模型是否存在交给上游回答，它的报错比我们猜的准。
+		cred, err := s.intlCred(s.probe())
+		if err != nil {
+			s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
+				Text: "拒绝请求：国际侧凭据不可用：" + compactError(err.Error())})
+			writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		route.Endpoint = s.upstreamBase() + chatCompletionsPath
+		headers["Authorization"] = "Bearer " + cred.Token
+		headers["X-User-Id"] = cred.UID
+		for k, v := range usage.IntlCommonHeaders() {
+			headers[k] = v
+		}
+	} else {
+		headers["Authorization"] = "Bearer " + route.APIKey
+	}
+	headers["Accept"] = "text/event-stream"
+	headers["Content-Type"] = "application/json"
 
 	out, err := json.Marshal(up.Body)
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	req2, err := http.NewRequest("POST", s.upstreamBase()+chatCompletionsPath, bytes.NewReader(out))
+	req2, err := http.NewRequest("POST", route.Endpoint, bytes.NewReader(out))
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	req2.Header.Set("Authorization", "Bearer "+cred.Token)
-	req2.Header.Set("X-User-Id", cred.UID)
-	req2.Header.Set("Accept", "text/event-stream")
-	req2.Header.Set("Content-Type", "application/json")
-	for k, v := range usage.IntlCommonHeaders() {
+	for k, v := range headers {
 		req2.Header.Set(k, v)
 	}
+	s.forwardChat(w, req2, route, up, time.Now())
+}
 
-	started := time.Now()
-	resp, err := probeHTTPClient().Do(req2)
+// forwardChat 发出去、按结果回给客户端，并在两种结局上各记一条日志。
+//
+// 抽出来是因为"内置后端"与"自备提供方"两条路的后半段完全一样：
+// 都是流式转发/聚合、都要透传上游状态码、都要在日志里写清楚是谁拒绝的。
+func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route upstreamRoute, up upstreamRequest, started time.Time) {
+	resp, err := probeHTTPClient().Do(req)
 	if err != nil {
-		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
-			Text: fmt.Sprintf("转发失败 model=%s：%s", up.Model, compactError(err.Error()))})
+		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
+			Text: fmt.Sprintf("转发失败 model=%s 经%s：%s", route.Model, route.Label, compactError(err.Error()))})
 		writeOpenAIError(w, http.StatusBadGateway, "上游请求失败："+err.Error())
 		return
 	}
@@ -325,10 +413,10 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		// 透传上游的真实状态码，而不是一律 502：502 等于告诉客户端
 		// "网关挂了"，客户端会据此触发模型故障转移，把用户的问题
 		// 从"模型名不对"带偏成"后端不稳"。
-		s.note(ProxyLogEntry{Level: "bad", Model: up.Model, Tools: up.Tools,
+		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
 			MS: time.Since(started).Milliseconds(),
-			Text: fmt.Sprintf("被上游拒绝 model=%s 上游 HTTP %d: %s",
-				up.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
+			Text: fmt.Sprintf("被%s拒绝 model=%s 上游 HTTP %d: %s",
+				route.Label, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
 		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 		return
 	}
@@ -339,11 +427,24 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sent = s.aggregateChat(w, resp.Body)
 	}
-	s.note(ProxyLogEntry{Level: "ok", Model: up.Model, Tools: up.Tools, Stream: up.ClientStream,
+	s.note(ProxyLogEntry{Level: "ok", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
 		MS: time.Since(started).Milliseconds(),
-		Text: fmt.Sprintf("转发完成 model=%s %s stream=%v 回给客户端 %s 用时 %s",
-			up.Model, describeTools(up.Tools), up.ClientStream,
+		Text: fmt.Sprintf("转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
+			route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
 			describeBytes(sent), time.Since(started).Round(time.Millisecond))})
+}
+
+// providers 读一次自备提供方配置。
+//
+// 每个请求都读一遍文件（约 1 KB）：卡片改完要立刻生效，而这点开销相比
+// 请求体动辄几 MB 的解析可以忽略。读不动就当作"没有提供方"——
+// 那只影响 BYOK 那几条模型，内置国际后端照常可用。
+func (s *Server) providers() []config.Provider {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	return cfg.Providers
 }
 
 // streamChatThrough 把上游 SSE 转发给调用方。

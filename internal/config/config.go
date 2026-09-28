@@ -6,8 +6,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DirName 是设置目录名。
@@ -45,6 +47,133 @@ type Config struct {
 	// 好让注入进客户端的 URL 保持有效。端口被占时退回随机端口
 	// （那一次仍然需要重启客户端，界面会明说）。
 	GUIAddr string `json:"guiAddr,omitempty"`
+
+	// Providers 是"自备 key"（BYOK）的提供方卡片列表。
+	//
+	// # 为什么需要它
+	//
+	// 注入到国内客户端的模型原先只有一种来源：借国际 WorkBuddy 账号的凭据
+	// 打国际后端。于是"卸载国际客户端""换个账号""想用自己的 key"全都受限。
+	// 有了它，代理可以按 id 前缀把请求转给任意 OpenAI 兼容端点，客户端侧
+	// 完全无感——注入条目还是指向本机代理，只是代理这次不再借用账号凭据。
+	Providers []Provider `json:"providers,omitempty"`
+}
+
+// ProviderIDPrefix 是注入条目 id 里"自备提供方"那一段的前缀。
+//
+// 形状：ProviderIDPrefix + <提供方 id> + "-" + <上游模型名>。
+// 代理靠它决定把请求转给谁（见 webui.resolveRoute）。
+const ProviderIDPrefix = "wbmux-byok-"
+
+// Provider 是一张自备提供方卡片。
+type Provider struct {
+	// ID 是短标识（p1、p2…），只用于生成注入条目 id 与路由，界面不强调它。
+	ID string `json:"id"`
+	// Name 是显示名，会出现在国内客户端的模型选择器里。
+	Name string `json:"name"`
+	// BaseURL 是完整的补全端点（形如 https://api.example.com/v1/chat/completions）。
+	// 要完整端点而不是 base：各家路径不统一，替人拼路径迟早拼错。
+	BaseURL string `json:"baseURL"`
+	// APIKey 是上游凭据。与界面令牌同级对待（设置文件已 0600）。
+	APIKey string `json:"apiKey"`
+	// Models 是要注入的模型 id 列表（上游认的那个名字，如 deepseek-chat）。
+	Models []string `json:"models,omitempty"`
+	// MaxInputTokens / MaxOutputTokens 会写进注入条目，缺省不写。
+	MaxInputTokens  int `json:"maxInputTokens,omitempty"`
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	// SupportsToolCall / SupportsImages 用指针区分"没设"与"设成 false"：
+	// 没设时按"支持工具、不支持图片"处理——这是能干活的最小假设，
+	// 而写错成 false 的代价是客户端会把请求体里的 tools 删掉。
+	SupportsToolCall *bool `json:"supportsToolCall,omitempty"`
+	SupportsImages   *bool `json:"supportsImages,omitempty"`
+}
+
+// EntryPrefix 返回这个提供方的注入条目前缀。
+func (p Provider) EntryPrefix() string { return ProviderIDPrefix + p.ID + "-" }
+
+// ToolsSupported 报告是否声明支持工具调用（缺省为真）。
+func (p Provider) ToolsSupported() bool {
+	return p.SupportsToolCall == nil || *p.SupportsToolCall
+}
+
+// ImagesSupported 报告是否声明支持图片（缺省为假）。
+func (p Provider) ImagesSupported() bool {
+	return p.SupportsImages != nil && *p.SupportsImages
+}
+
+// Validate 检查这张卡能不能用。返回的错误直接给用户看，所以要写人话。
+func (p Provider) Validate() error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("请填一个名字")
+	}
+	raw := strings.TrimSpace(p.BaseURL)
+	if raw == "" {
+		return fmt.Errorf("请填接口地址")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("接口地址要形如 https://api.example.com/v1/chat/completions（只支持 http/https）")
+	}
+	if len(p.Models) == 0 {
+		return fmt.Errorf("请至少填一个模型名")
+	}
+	return nil
+}
+
+// NextProviderID 生成一个没用过的短 id。
+func NextProviderID(existing []Provider) string {
+	used := map[string]bool{}
+	for _, p := range existing {
+		used[p.ID] = true
+	}
+	for i := 1; ; i++ {
+		id := fmt.Sprintf("p%d", i)
+		if !used[id] {
+			return id
+		}
+	}
+}
+
+// FindProvider 按 id 找提供方；找不到返回 nil。
+func FindProvider(list []Provider, id string) *Provider {
+	for i := range list {
+		if list[i].ID == id {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+// UpsertProvider 写入或替换一张卡片，返回新的列表。
+func UpsertProvider(list []Provider, p Provider) []Provider {
+	out := make([]Provider, 0, len(list)+1)
+	replaced := false
+	for _, old := range list {
+		if old.ID == p.ID {
+			out = append(out, p)
+			replaced = true
+			continue
+		}
+		out = append(out, old)
+	}
+	if !replaced {
+		out = append(out, p)
+	}
+	return out
+}
+
+// RemoveProvider 删掉一张卡片，返回新的列表与是否找到。
+func RemoveProvider(list []Provider, id string) ([]Provider, bool) {
+	out := make([]Provider, 0, len(list))
+	found := false
+	for _, p := range list {
+		if p.ID == id {
+			found = true
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, found
 }
 
 // rootOverride 允许把设置目录临时指向别处，供测试使用。

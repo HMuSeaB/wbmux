@@ -158,6 +158,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
+	mux.HandleFunc("/api/providers", s.guard(s.handleProviders))
 	mux.HandleFunc("/api/proxy-log", s.guard(s.handleProxyLog))
 	s.registerOpenAI(mux)
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
@@ -527,51 +528,87 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
-// handleInjectCustomModels 把国际限时免费模型注入国内客户端的自定义
-// 模型清单（经 wbmux 代理转发、扣国际额度），实现"国内壳子里无缝
-// 用国际模型"。代理地址取当前请求的 Host（同一台机器、同一个端口）。
+// handleInjectCustomModels 把 wbmux 能提供的模型注入国内客户端的自定义
+// 模型清单：国际限时免费模型（经代理转发、扣国际额度）+ 自备提供方（BYOK），
+// 实现"国内壳子里无缝用别的模型"。
 func (s *Server) handleInjectCustomModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
 		return
 	}
-	live := usage.LiveAccounts(s.probe())[string(variant.Intl)]
-	if live == nil || !live.OK {
-		msg := "国际侧凭据不可用，无法注入"
-		if live != nil && live.Err != "" {
-			msg = live.Err
-		}
-		writeErr(w, http.StatusServiceUnavailable, msg)
-		return
-	}
-	host := r.Host
-	host = strings.TrimPrefix(host, "localhost:")
-	host = strings.TrimPrefix(host, "[::1]:")
-	base := "http://" + host + "/v1/chat/completions"
-	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
-	added, err := custommodels.Sync(path, base, s.token, live.Models)
+	added, note, err := s.syncInto()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{
-		"added": added,
-		"note":  "已注入并备份原文件；重启国内客户端后可见（名称带「国际免费」）。地址与令牌跨重启沿用，之后再重启 wbmux 不用再重启客户端",
-	})
+	writeJSON(w, map[string]any{"added": added, "note": note})
 }
 
-// SyncCustomModels 把国际限时免费模型同步进国内客户端的自定义清单，
-// 代理地址与令牌取自当前运行实例。GUI 每次启动都会调用：
-// 端口与令牌每次都变，不同步的话上次注入的模型会悄悄失效。
-// 模型清单要拉一次官方接口（约 2 秒），调用方放后台跑。
-func (s *Server) SyncCustomModels() (int, error) {
-	live := usage.LiveAccounts(s.probe())[string(variant.Intl)]
-	if live == nil || !live.OK {
-		return 0, fmt.Errorf("国际侧凭据不可用")
+// syncInto 把当前能提供的模型写进国内客户端的清单，返回注入条数与一句
+// 给用户看的话。
+//
+// 两个来源**互相独立**：国际侧凭据不可用时仍然要注入自备提供方的模型
+// ——那正是 BYOK 存在的意义（不依赖那个账号）。所以这里把国际侧的失败
+// 降级成"消息里说明一句"，而不是直接失败。
+func (s *Server) syncInto() (int, string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		// 设置读不动只影响 BYOK 那部分，不该挡住国际侧的注入。
+		s.note(ProxyLogEntry{Level: "bad", Text: "读取设置失败（自备提供方将不注入）：" + compactError(err.Error())})
+		cfg = config.Config{}
 	}
+
+	var intlErr string
+	var intl []usage.LiveModel
+	if live := usage.LiveAccounts(s.probe())[string(variant.Intl)]; live != nil && live.OK {
+		intl = live.Models
+	} else if live != nil && live.Err != "" {
+		intlErr = live.Err
+	} else {
+		intlErr = "国际侧凭据不可用"
+	}
+
 	base := "http://" + s.Addr() + "/v1/chat/completions"
 	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
-	return custommodels.Sync(path, base, s.token, live.Models)
+	added, err := custommodels.Sync(path, base, s.token, intl, cfg.Providers)
+	if err != nil {
+		return 0, "", err
+	}
+
+	free := 0
+	for _, m := range intl {
+		if m.FreeNow {
+			free++
+		}
+	}
+	own := 0
+	for _, p := range cfg.Providers {
+		own += len(p.Models)
+	}
+
+	parts := fmt.Sprintf("已注入 %d 个模型（国际免费 %d + 自备提供方 %d）", added, free, own)
+	if intlErr != "" {
+		parts += "；国际侧这一轮没注入：" + intlErr
+	}
+	if added == free {
+		// 一个自有模型都没注入：多半是还没建卡片，顺带提一句入口在哪。
+		parts += "。想接自己的 key：侧边栏「提供方」页"
+	}
+	parts += "。重启国内客户端后在模型选择器里可见"
+	return added, parts, nil
+}
+
+// SyncCustomModels 是 GUI 启动时的自动同步入口（模型清单会变，每次对齐
+// 一遍）。失败只记日志，不该挡住界面。
+func (s *Server) SyncCustomModels() (int, error) {
+	added, note, err := s.syncInto()
+	if err != nil {
+		return 0, err
+	}
+	if note != "" {
+		s.note(ProxyLogEntry{Level: "info", Text: note})
+	}
+	return added, nil
 }
 
 // launchBothResult 是一侧的双开结果。

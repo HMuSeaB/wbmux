@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -388,5 +389,96 @@ func TestChatStreamIsByteExact(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Errorf("Content-Type 应为 text/event-stream，得到 %q", ct)
+	}
+}
+
+// TestResolveRoute 钉住"这次请求该发给谁"：客户端只把注入条目的 id 原样
+// 带回来，代理全靠前缀判断走内置国际后端还是用户自备的端点。
+func TestResolveRoute(t *testing.T) {
+	providers := []config.Provider{
+		{ID: "p1", Name: "自备A", BaseURL: "https://a.example/v1/chat/completions", APIKey: "sk-a"},
+		{ID: "p10", Name: "自备B", BaseURL: "https://b.example/v1/chat/completions", APIKey: "sk-b"},
+	}
+	cases := []struct {
+		name      string
+		in        string
+		wantModel string
+		wantLabel string // "国际后端" = 走内置
+		wantKey   string
+	}{
+		{"注入的国际免费模型", "wbmux-intl-deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", ""},
+		{"客户端又套了一层前缀", "custom-local:wbmux-intl-hy3", "hy3", "国际后端", ""},
+		{"自备提供方", "wbmux-byok-p1-deepseek-chat", "deepseek-chat", "自备A", "sk-a"},
+		{"客户端前缀叠在自备上", "custom-local:wbmux-byok-p1-qwen-max", "qwen-max", "自备A", "sk-a"},
+		// p1 是 p10 的前缀：必须先匹配更长的那个，否则 p10 会被 p1 吃掉。
+		{"前缀更长的优先", "wbmux-byok-p10-glm-4", "glm-4", "自备B", "sk-b"},
+		{"外部工具直连（官方 id）", "deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", ""},
+		{"没见过的提供方前缀当不明来源", "wbmux-byok-p99-x", "wbmux-byok-p99-x", "国际后端", ""},
+		{"只有前缀没有模型名", "wbmux-byok-p1-", "wbmux-byok-p1-", "国际后端", ""},
+	}
+	for _, c := range cases {
+		got := resolveRoute(c.in, providers)
+		if got.Model != c.wantModel || got.Label != c.wantLabel || got.APIKey != c.wantKey {
+			t.Errorf("%s：resolveRoute(%q) = {model:%q label:%q key:%q}，期望 {%q %q %q}",
+				c.name, c.in, got.Model, got.Label, got.APIKey, c.wantModel, c.wantLabel, c.wantKey)
+		}
+		if (got.Provider == nil) != (c.wantLabel == "国际后端") {
+			t.Errorf("%s：Provider 判空不对（%v）", c.name, got.Provider)
+		}
+	}
+}
+
+// TestChatRoutesToBYOKProvider 端到端：带自备前缀的请求必须打到卡片里的
+// 端点、用卡片里的 key，并且把**上游模型名**（去掉前缀）发过去。
+func TestChatRoutesToBYOKProvider(t *testing.T) {
+	var gotPath, gotAuth string
+	var gotBody map[string]any
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"model\":\"vendor-model\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer vendor.Close()
+
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+	cfg := config.Config{Providers: []config.Provider{{
+		ID: "p1", Name: "自备A",
+		BaseURL: vendor.URL + "/v1/chat/completions",
+		APIKey:  "sk-vendor",
+		Models:  []string{"vendor-model"},
+	}}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"custom-local:wbmux-byok-p1-vendor-model","stream":true,"messages":[{"role":"user","content":"x"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d：%s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("应打到卡片的端点，得到 %q", gotPath)
+	}
+	if gotAuth != "Bearer sk-vendor" {
+		t.Errorf("应带上卡片里的 key，得到 %q", gotAuth)
+	}
+	if gotBody["model"] != "vendor-model" {
+		t.Errorf("上游应收到去掉前缀的模型名，得到 %v", gotBody["model"])
+	}
+	// 日志里也要能看出这次走的是哪张卡。
+	entries := readProxyLog(t, srv)
+	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Text, "自备A") {
+		t.Errorf("日志应写明经过哪个提供方：%+v", entries)
 	}
 }

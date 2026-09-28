@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
@@ -23,7 +24,7 @@ func TestSyncCarriesOfficialCapabilities(t *testing.T) {
 		ID: "deepseek-v4.1-flash", Name: "Deepseek-V4.1-Flash", FreeNow: true,
 		Tools: true, Images: true, Ctx: 1000000, MaxOutput: 128000,
 	}
-	if _, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok", []usage.LiveModel{m}); err != nil {
+	if _, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok", []usage.LiveModel{m}, nil); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -50,7 +51,7 @@ func TestSyncCarriesOfficialCapabilities(t *testing.T) {
 // 客户端会把 0 当成"上限为零"，而不是"未知"。
 func TestSyncOmitsUnknownLimits(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "models.json")
-	if _, err := Sync(path, "http://x/v1/chat/completions", "tok", []usage.LiveModel{lm("hy3", true)}); err != nil {
+	if _, err := Sync(path, "http://x/v1/chat/completions", "tok", []usage.LiveModel{lm("hy3", true)}, nil); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -69,7 +70,7 @@ func TestSyncAddsFreeOnlyAndPreservesUserEntries(t *testing.T) {
 	_ = os.WriteFile(path, mustJSON([]map[string]any{user, old}), 0o644)
 
 	added, err := Sync(path, "http://127.0.0.1:8817/v1/chat/completions", "tok",
-		[]usage.LiveModel{lm("deepseek-v4.1-flash", true), lm("gpt-6-astra", false)})
+		[]usage.LiveModel{lm("deepseek-v4.1-flash", true), lm("gpt-6-astra", false)}, nil)
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestSyncAddsFreeOnlyAndPreservesUserEntries(t *testing.T) {
 // TestSyncMissingFileCreatesIt 文件不存在时（新客户端）应能凭空创建。
 func TestSyncMissingFileCreatesIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "models.json")
-	added, err := Sync(path, "http://x/v1/chat/completions", "tok", []usage.LiveModel{lm("hy3", true)})
+	added, err := Sync(path, "http://x/v1/chat/completions", "tok", []usage.LiveModel{lm("hy3", true)}, nil)
 	if err != nil || added != 1 {
 		t.Fatalf("added=%d err=%v", added, err)
 	}
@@ -130,4 +131,79 @@ func mustJSON(v any) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// TestSyncInjectsBYOKProviders 自备提供方也要按卡片清单注入，并且：
+//   - 条目 id 带提供方前缀（代理靠它路由到对的那个端点）
+//   - 条目里的 url/apiKey 指向**本机代理**，上游 key 绝不能落到客户端目录里
+//   - 能力开关缺省为"支持工具、不支持图片"（写 false 会让客户端删掉 tools）
+func TestSyncInjectsBYOKProviders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	const upstreamKey = "sk-upstream-should-not-leak"
+	providers := []config.Provider{{
+		ID:      "p1",
+		Name:    "自备",
+		BaseURL: "https://api.example.com/v1/chat/completions",
+		APIKey:  upstreamKey,
+		Models:  []string{"deepseek-chat", "qwen-max"},
+	}}
+	added, err := Sync(path, "http://127.0.0.1:9/v1/chat/completions", "gui-token", nil, providers)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if added != 2 {
+		t.Fatalf("两张模型应各注入一条，得到 %d", added)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), upstreamKey) {
+		t.Fatalf("上游 key 不该出现在客户端清单里：%s", raw)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("写后应可解析: %v", err)
+	}
+	byID := map[string]map[string]any{}
+	for _, m := range list {
+		byID[m["id"].(string)] = m
+	}
+	entry, ok := byID["wbmux-byok-p1-deepseek-chat"]
+	if !ok {
+		t.Fatalf("缺少带提供方前缀的条目，实际有 %v", keysOf(byID))
+	}
+	if entry["url"] != "http://127.0.0.1:9/v1/chat/completions" || entry["apiKey"] != "gui-token" {
+		t.Errorf("条目应指向本机代理：%v", entry)
+	}
+	if entry["supportsToolCall"] != true || entry["supportsImages"] != false {
+		t.Errorf("能力缺省应为「支持工具、不支持图片」：%v", entry)
+	}
+	if name, _ := entry["name"].(string); !strings.Contains(name, "自备") || !strings.Contains(name, "deepseek-chat") {
+		t.Errorf("名字应能让人认出是哪张卡片：%q", name)
+	}
+}
+
+// TestSyncReplacesStaleBYOKEntries 卡片删掉后，旧条目也要跟着消失——
+// 否则用户会把已经失效的模型留在选择器里点。
+func TestSyncReplacesStaleBYOKEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	one := []config.Provider{{ID: "p1", Name: "A", BaseURL: "https://a/v1/chat/completions", APIKey: "k", Models: []string{"m1", "m2"}}}
+	if _, err := Sync(path, "http://127.0.0.1:9/v1/chat/completions", "tok", nil, one); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// 缩到只剩 m1（等价于用户改卡片时删了一个模型）
+	shrunk := []config.Provider{{ID: "p1", Name: "A", BaseURL: "https://a/v1/chat/completions", APIKey: "k", Models: []string{"m1"}}}
+	if _, err := Sync(path, "http://127.0.0.1:9/v1/chat/completions", "tok", nil, shrunk); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "m2") {
+		t.Errorf("旧的 BYOK 条目应被清掉：%s", raw)
+	}
+}
+
+func keysOf(m map[string]map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

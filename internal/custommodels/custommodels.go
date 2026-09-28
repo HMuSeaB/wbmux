@@ -19,26 +19,60 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
-// IDPrefix 是注入条目的 id 前缀：同步时整体替换旧条目，
+// IDPrefix 是"国际免费模型"注入条目的 id 前缀：同步时整体替换旧条目，
 // 绝不动用户自己加的自定义模型。
 const IDPrefix = "wbmux-intl-"
 
-// Sync 把国际模型写入国内客户端的自定义模型清单。
+// ownedPrefixes 是所有属于 wbmux 的条目前缀。
+//
+// 两个来源（借国际账号的免费模型、自备提供方）用不同前缀区分，代理靠它
+// 决定把请求转给谁（见 webui.resolveRoute）。凡是这几个前缀开头的条目，
+// 同步时都可以放心重写——它们是我们的，不是用户的。
+func ownedPrefixes() []string {
+	return []string{IDPrefix, config.ProviderIDPrefix}
+}
+
+// isOwned 判断一条条目是不是 wbmux 注入的。
+func isOwned(id string) bool {
+	for _, p := range ownedPrefixes() {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Sync 把 wbmux 提供的模型写入国内客户端的自定义模型清单。
+//
+// 两个来源，代理按条目前缀分流：
+//   - 国际限时免费模型（借国际账号凭据，前缀 IDPrefix）
+//   - 用户自备的提供方（BYOK，前缀 config.ProviderIDPrefix）
 //
 // 规则：
-//   - 先剥掉此前注入的旧条目（按 IDPrefix 识别），用户自己的条目原样保留
-//   - 只注入限时免费模型（FreeNow）：测试与日常都零成本，不盲发计费模型
+//   - 先剥掉此前注入的旧条目（按 ownedPrefixes 识别），用户自己的条目原样保留
+//   - 国际侧只注入限时免费模型（FreeNow）：测试与日常都零成本，不盲发计费模型
 //   - 写前备份原文件（models.json.wbmux-bak），写后校验可解析
 //
 // chatURL 是代理的补全端点（http://127.0.0.1:<port>/v1/chat/completions），
 // apiKey 是代理的鉴权令牌（GUI 令牌，仅本机回环有效）。
 // 返回注入的条目数。
-func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel) (int, error) {
+func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, providers []config.Provider) (int, error) {
+	// 目录不存在时**不**替客户端创建：凭空生成一个空的 ~/.workbuddy 会让
+	// 客户端自己以为"这是已有档位"，而里面没有登录态。宁可明确报错，
+	// 让人先启动一次客户端——顺带把操作系统那句"找不到路径"翻译成人话。
+	if dir := filepath.Dir(modelsJSONPath); dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			return 0, fmt.Errorf("国内客户端的数据目录还不存在（%s）：先启动一次客户端，再点注入", dir)
+		}
+	}
+
 	var list []map[string]any
 	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
 		if err := json.Unmarshal(raw, &list); err != nil {
@@ -54,7 +88,7 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel) (int, 
 	var kept []map[string]any
 	for _, m := range list {
 		id, _ := m["id"].(string)
-		if strings.HasPrefix(id, IDPrefix) {
+		if isOwned(id) {
 			continue
 		}
 		kept = append(kept, m)
@@ -101,6 +135,41 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel) (int, 
 		added++
 	}
 
+	// 自备提供方（BYOK）：每张卡片按它的模型清单各生成一条。
+	//
+	// 这些条目的"上游"是用户自己的端点，注入条目本身仍然指向本机代理
+	// （凭据是我们自己的令牌），所以 key 不会落到客户端目录里。
+	for _, p := range providers {
+		for _, model := range p.Models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			entry := map[string]any{
+				"id":                p.EntryPrefix() + model,
+				"name":              fmt.Sprintf("%s · %s", p.Name, model),
+				"vendor":            "Custom",
+				"url":               chatURL,
+				"apiKey":            apiKey,
+				"useCustomProtocol": true,
+				"onlyReasoning":     false,
+				// 能力缺省按"支持工具、不支持图片"：写 false 的代价是客户端
+				// 把请求体里的 tools 删掉，Agent 直接废掉（见上面国际侧注释）。
+				"supportsToolCall":  p.ToolsSupported(),
+				"supportsImages":    p.ImagesSupported(),
+				"supportsReasoning": false,
+			}
+			if p.MaxInputTokens > 0 {
+				entry["maxInputTokens"] = p.MaxInputTokens
+			}
+			if p.MaxOutputTokens > 0 {
+				entry["maxOutputTokens"] = p.MaxOutputTokens
+			}
+			kept = append(kept, entry)
+			added++
+		}
+	}
+
 	// 写前备份
 	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
 		_ = os.WriteFile(modelsJSONPath+".wbmux-bak", raw, 0o644)
@@ -143,7 +212,7 @@ func Remove(modelsJSONPath string) (int, error) {
 	removed := 0
 	for _, m := range list {
 		id, _ := m["id"].(string)
-		if strings.HasPrefix(id, IDPrefix) {
+		if isOwned(id) {
 			removed++
 			continue
 		}

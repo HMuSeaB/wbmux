@@ -434,6 +434,18 @@
   .log-ok .log-text   { color: var(--ok); }
   .log-bad .log-text  { color: var(--bad); }
   .log-info .log-text { color: var(--ink-2); }
+  /* ---- 提供方（BYOK）表单 ---- */
+  /* 表单控件独立写一套：这里此前只有 checkbox，没有文本输入。 */
+  .form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+  .form input[type="text"], .form input[type="password"], .form textarea {
+    background: var(--g3); border: 1px solid var(--g4); border-radius: var(--r-sm);
+    color: var(--ink); font-family: var(--mono); font-size: 12px; padding: 7px 9px;
+  }
+  .form input:focus, .form textarea:focus { outline: none; border-color: var(--brand); }
+  .form textarea { resize: vertical; }
+  .prov-card .path { margin-top: 6px; }
+  .prov-card .models { color: var(--ink-2); font-size: 12px; margin-top: 4px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -446,6 +458,7 @@
     <nav class="nav">
       <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
+      <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
       <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
       <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
       <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>体检</div>
@@ -515,6 +528,54 @@
       <span class="hint" id="log-summary" style="margin:0"></span>
     </div>
     <div id="log-body" style="margin-top:12px"></div>
+  </section>
+
+    </div>
+    <div data-page="providers" hidden>
+  <section id="prov-sec">
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-server"/></svg>提供方（自备 key）</h2>
+    <p class="hint" style="margin-top:0">
+      在这里填你自己的 OpenAI 兼容端点，保存后会注入国内客户端：模型选择器里出现
+      「<strong>卡片名 · 模型名</strong>」。请求仍走本机代理，但这次用的是你填的 key，
+      <strong>不依赖任何 WorkBuddy 账号</strong>——所以国际客户端卸不卸载都无所谓。
+    </p>
+    <p class="hint" style="margin-top:6px">
+      上游 key 只写在 <code>%USERPROFILE%\.wbmux\config.json</code>（0600），
+      不会进客户端的数据目录；界面上也只回显最后 4 位，留空表示不改动。
+    </p>
+
+    <div class="grid2" id="prov-list" style="margin-top:12px"></div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head"><span class="card-title" id="prov-form-title">新增提供方</span></div>
+      <div class="form">
+        <label>名字
+          <input type="text" id="prov-name" placeholder="例如：自备 DeepSeek">
+        </label>
+        <label>接口地址（完整的 chat/completions 端点）
+          <input type="text" id="prov-url" placeholder="https://api.deepseek.com/v1/chat/completions">
+        </label>
+        <label>API Key
+          <input type="password" id="prov-key" placeholder="留空 = 不改动已有 key">
+        </label>
+        <label>模型名（每行一个，也可以逗号分隔）
+          <textarea id="prov-models" rows="3" placeholder="deepseek-chat&#10;deepseek-reasoner"></textarea>
+        </label>
+        <label class="check" style="flex-direction:row;align-items:center;gap:8px">
+          <input type="checkbox" id="prov-tools" checked>
+          <span>支持工具调用<span class="desc">勾上才带 tools 请求体（Agent 干活靠它；不确定就保持勾选）</span></span>
+        </label>
+        <label class="check" style="flex-direction:row;align-items:center;gap:8px">
+          <input type="checkbox" id="prov-images">
+          <span>支持图片输入</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="btn-prov-save">保存并注入</button>
+        <button class="ghost" id="btn-prov-reset">清空表单</button>
+        <span class="hint" id="prov-note" style="margin:0"></span>
+      </div>
+    </div>
   </section>
 
     </div>
@@ -1027,6 +1088,129 @@
     loadProxyLog(false);
   }, LOG_INTERVAL);
 
+  // ---------- 提供方（自备 key / BYOK） ----------
+  // 表单里的 key 永远不回显：列表只显示最后 4 位，留空表示"不改动"。
+  // 页面上的所有文本都走 textContent（见 el 的说明），地址里带尖括号也不会出事。
+  var provEditing = "";   // 正在编辑的卡片 id；空 = 新增
+
+  function renderProviders(res) {
+    var box = document.getElementById("prov-list");
+    clear(box);
+    var list = res.providers || [];
+    if (!list.length) {
+      box.appendChild(el("p", { class: "hint", style: "grid-column:1/-1",
+        text: "还没有卡片。用下面这张表加上第一个端点，保存后就会注入到国内客户端。" }));
+      return;
+    }
+    list.forEach(function (p) {
+      var models = (p.models || []).join(" · ") || "（没有填模型名）";
+      box.appendChild(el("div", { class: "card prov-card" }, [
+        el("div", { class: "card-head" }, [
+          el("span", { class: "card-title", text: p.name }),
+          el("span", { class: "pill " + (p.hasKey ? "info" : "bad"),
+            text: p.hasKey ? "key …" + p.keyTail : "缺 key" })
+        ]),
+        el("div", { class: "path", text: p.baseURL }),
+        el("div", { class: "models", text: models + (p.supportsToolCall ? " · 支持工具" : " · 不带工具") }),
+        el("div", { class: "row", style: "margin-top:10px" }, [
+          el("button", { class: "ghost", text: "编辑", onclick: function () { fillProviderForm(p); } }),
+          el("button", { class: "ghost danger", text: "删除", onclick: function () { removeProvider(p); } })
+        ])
+      ]));
+    });
+  }
+
+  function loadProviders(showError) {
+    return api("/api/providers").then(renderProviders).catch(function (e) {
+      if (showError) toast("读取提供方失败：" + e.message, "bad");
+    });
+  }
+
+  function fillProviderForm(p) {
+    provEditing = p.id;
+    document.getElementById("prov-form-title").textContent = "编辑：" + p.name;
+    document.getElementById("prov-name").value = p.name || "";
+    document.getElementById("prov-url").value = p.baseURL || "";
+    document.getElementById("prov-key").value = "";
+    document.getElementById("prov-key").placeholder = p.hasKey ? "留空 = 不改动（现有 key …" + p.keyTail + "）" : "";
+    document.getElementById("prov-models").value = (p.models || []).join("\n");
+    document.getElementById("prov-tools").checked = !!p.supportsToolCall;
+    document.getElementById("prov-images").checked = !!p.supportsImages;
+    document.getElementById("prov-note").textContent = "正在编辑这张卡";
+  }
+
+  function resetProviderForm() {
+    provEditing = "";
+    document.getElementById("prov-form-title").textContent = "新增提供方";
+    ["prov-name", "prov-url", "prov-key", "prov-models"].forEach(function (id) {
+      document.getElementById(id).value = "";
+    });
+    document.getElementById("prov-key").placeholder = "留空 = 不改动已有 key";
+    document.getElementById("prov-tools").checked = true;
+    document.getElementById("prov-images").checked = false;
+    document.getElementById("prov-note").textContent = "";
+  }
+
+  // splitModels 接受逗号、空格、换行三种分隔（用户随手粘什么都能用）。
+  function splitModels(s) {
+    return String(s || "").split(/[\s,，、;；]+/).filter(function (x) { return x; });
+  }
+
+  function saveProvider() {
+    if (busy) return;
+    var body = {
+      id: provEditing,
+      name: document.getElementById("prov-name").value.trim(),
+      baseURL: document.getElementById("prov-url").value.trim(),
+      apiKey: document.getElementById("prov-key").value,
+      models: splitModels(document.getElementById("prov-models").value),
+      supportsToolCall: document.getElementById("prov-tools").checked,
+      supportsImages: document.getElementById("prov-images").checked
+    };
+    if (!body.name || !body.baseURL || !body.models.length) {
+      toast("名字、接口地址、至少一个模型名都得填", "bad");
+      return;
+    }
+    busy = true;
+    var btn = document.getElementById("btn-prov-save");
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+    api("/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      renderProviders(res);
+      resetProviderForm();
+      toast(res.note || "已保存并注入", "ok");
+    }).catch(function (e) {
+      toast("保存失败：" + e.message, "bad");
+    }).then(function () {
+      busy = false;
+      btn.disabled = false;
+      btn.textContent = "保存并注入";
+    });
+  }
+
+  function removeProvider(p) {
+    if (!confirm("删除卡片「" + p.name + "」？注入到客户端的对应模型也会一并清掉。")) return;
+    api("/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: p.id, remove: true })
+    }).then(function (res) {
+      renderProviders(res);
+      if (provEditing === p.id) resetProviderForm();
+      toast(res.note || "已删除", "ok");
+    }).catch(function (e) {
+      toast("删除失败：" + e.message, "bad");
+    });
+  }
+
+  document.getElementById("btn-prov-save").addEventListener("click", saveProvider);
+  document.getElementById("btn-prov-reset").addEventListener("click", resetProviderForm);
+  loadProviders(false);
+
   // ---------- 二级页面 ----------
   // 侧边栏切换：状态 / 代理日志 / 切换与双开 / 历史搬运 / 体检。
   // 整页 hidden 切换，比一页长滚动清晰——页面之间互不挤压。
@@ -1040,6 +1224,7 @@
     // 切进来先拉一次，别让用户对着空页面等下一个刷新周期。
     if (page === "log") loadProxyLog(true);
     if (page === "recycle") loadRecycle();
+    if (page === "providers") loadProviders(true);
   }
   document.querySelectorAll(".nav-item").forEach(function (n) {
     n.addEventListener("click", function () { showPage(n.dataset.page); });
