@@ -116,6 +116,8 @@ wbmux run intl --native    # 用国际版自己的安装原生启动，作对照
 wbmux export intl -o x.json  # 只生成合并配置，不启动
 wbmux migrate                # 看看另一侧有什么历史可以搬过来
 wbmux migrate intl cn --yes  # 把国际版的会话搬进国内版
+wbmux sessions               # 会话中心：跨 IDE 历史会话按项目归组（只读）
+wbmux sessions --web         # 打开会话中心的图形页面
 ```
 
 ### 图形界面
@@ -218,6 +220,31 @@ better-sqlite3：Electron 主程序加上 `ELECTRON_RUN_AS_NODE=1` 就是普通 
 搬运会按会话自带的 `cwd` 把它放进目标端对应的工作区目录（目录名是 cwd 的
 有损压缩，规则已用本机 11 个真实目录逐一验证）。放不进去的（读不到 `cwd`）
 会跳过并说明原因，而不是凭空造一个工作区。
+
+### 会话中心
+
+`migrate` 解决"两边的历史互相看不见"，`sessions` 解决"每家的历史各自关在
+各自的数据目录里"：把 WorkBuddy 国内/国际、ZCode、Codex、Claude Code 的
+历史会话统一索引，**按项目路径归组**——一个项目底下用哪些工具聊过什么，
+一页看全。
+
+```bash
+wbmux sessions               # 控制台摘要：项目分组 + 候选清单
+wbmux sessions --web         # 打开图形页面（左侧项目、右侧会话明细）
+wbmux sessions --refresh     # 无视缓存强制重扫
+wbmux sessions --days 30 --keep 1   # 调清理候选的规则参数
+```
+
+设计上的三条边界：
+
+- **只读**。全部源以 immutable / readonly 方式读取，ZCode 这类常驻客户端
+  的库优先读实时快照（含 WAL），失败自动退回陈旧快照并提示。
+- **候选只是标记**。"超过 N 天没动 **且** 项目内名次高于保底值"才标为候选
+  ——第二个条件是需求本身：有些项目 30 天后还要用，纯按时间清会把老项目
+  清到一条不剩。每个项目永远至少留最新 K 条。
+- **一期不执行清理**。删什么、怎么删（归档还是删除）是下一期的事。
+
+缓存写在 `~/.wbmux/sessions-index.json`，第二次打开是毫秒级；重扫永远手动。
 
 ### 体检输出
 
