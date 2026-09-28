@@ -236,7 +236,9 @@ func cmdGUI(args []string) error {
 			// 所以这个 goroutine 要锁住自己的 OS 线程。
 			runtime.LockOSThread()
 			err := tray.Run(tray.Options{
-				Tooltip: "wbmux 图形界面 · " + srv.Addr(),
+				// 悬停提示：说清楚"这是什么"和"怎么用"。图标本身是画出来的
+				// （见 internal/tray/icon.go），加上这句才算能认。
+				Tooltip: "wbmux 图形界面（右键：打开界面 / 退出）· " + srv.Addr(),
 				OnOpen:  func() { _ = browser.Open(srv.URL()) },
 				OnQuit: func() {
 					guiLog("托盘：选择退出")

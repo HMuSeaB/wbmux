@@ -14,8 +14,10 @@
 // 本项目零第三方依赖，托盘也没有标准库支持。这里用 syscall 直调
 // shell32 / user32，与 internal/console 的做法一致。
 //
-// 图标用系统自带的通用应用图标（LoadIconW(NULL, IDI_APPLICATION)）：
-// 本项目的二进制没有嵌资源图标，硬去抽一个反而更脆。
+// 图标是运行时画的一张 32×32 图（见 icon.go）：起点是系统通用图标
+// （`LoadIconW(NULL, IDI_APPLICATION)`，一个"窗口"灰框），但通知区域里
+// 出现多个通用图标时分不清谁是谁（用户 2026-09-27 的反馈），所以自己画。
+// 画失败会退回那个通用图标，不至于连托盘都起不来。
 package tray
 
 import (
@@ -68,6 +70,9 @@ var (
 	procDestroyWindow    = user32.NewProc("DestroyWindow")
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 	procShellNotifyIconW = shell32.NewProc("Shell_NotifyIconW")
+
+	// 托盘图标是运行时画出来的（见 icon.go）；这里负责把画好的字节变成 HICON。
+	procCreateIconFromResourceEx = user32.NewProc("CreateIconFromResourceEx")
 )
 
 const (
@@ -209,7 +214,7 @@ func Run(opts Options) error {
 	}
 	state.hwnd = hwnd
 
-	icon, _, _ := procLoadIconW.Call(0, idiApplication)
+	icon := createAppIcon()
 	state.icon = icon
 
 	nid := notifyIconDataW{
