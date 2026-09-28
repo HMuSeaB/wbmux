@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 )
@@ -41,6 +43,70 @@ func serveFake(t *testing.T) (addr, url string) {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.Listener.Addr().String(), srv.URL + "/?t=" + token
+}
+
+// TestQuitAndWaitGone 覆盖 `--restart` 依赖的两步：先让旧实例退出，再等它
+// 把地址让出来。只发请求不等，下一次绑定同一个地址会失败。
+func TestQuitAndWaitGone(t *testing.T) {
+	withTempConfigDir(t)
+
+	const token = "test-token"
+	var quitHit int
+	var mu sync.Mutex
+	// 先声明再赋值：处理函数里要用到 srv 自己（收到退出请求就关掉它）。
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Wbmux-Token") != token {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == "/api/ping" { // 判活要先答得上话
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path != "/api/quit" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		quitHit++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		// 退出请求被接受后，地址很快就不再答话——用 Close 模拟，
+		// 这样 WaitGone 才等得到"它没了"。
+		go srv.Close()
+	}))
+
+	info := Info{Addr: srv.Listener.Addr().String(), URL: srv.URL + "/?t=" + token, PID: 1}
+	if err := Claim(info); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if _, ok := Lookup(); !ok {
+		t.Fatal("刚登记的实例应当被判为在跑")
+	}
+
+	if err := info.Quit(); err != nil {
+		t.Fatalf("Quit: %v", err)
+	}
+	mu.Lock()
+	hits := quitHit
+	mu.Unlock()
+	if hits != 1 {
+		t.Errorf("应当恰好收到一次退出请求，得到 %d", hits)
+	}
+	if !WaitGone(info, 3*time.Second) {
+		t.Error("实例停止答话后，WaitGone 应当返回 true")
+	}
+}
+
+// TestQuitRejectsWrongToken 令牌不对要报错，而不是"发了就算成功"。
+func TestQuitRejectsWrongToken(t *testing.T) {
+	withTempConfigDir(t)
+	addr, _ := serveFake(t)
+	bad := Info{Addr: addr, URL: "http://" + addr + "/?t=wrong-token"}
+	if err := bad.Quit(); err == nil {
+		t.Error("令牌不对时 Quit 应当报错")
+	}
 }
 
 // deadAddr 返回一个确定没人监听的地址。

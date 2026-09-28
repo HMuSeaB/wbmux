@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -71,6 +72,7 @@ func cmdGUI(args []string) error {
 	addr := f.String("addr", "")
 	noOpen := f.Bool("no-open", false)
 	idle := f.String("idle", "")
+	restart := f.Bool("restart", false)
 	help := f.Bool("help", false)
 
 	if err := f.Parse(args); err != nil {
@@ -133,24 +135,57 @@ func cmdGUI(args []string) error {
 	// 已经在跑就不要再起一个：
 	// 两个窗口长得一模一样，用户分不清哪个是活的，旧的那个死掉之后
 	// 更是"点了没反应"。直接指向已经在跑的那个即可。
+	//
+	// 代价是**重新编译后双击换不掉版本**——复用是刻意的（不打断正在跑的东西），
+	// 但用户看到的只是"图标/界面怎么还是旧的"（2026-09-28 实际反馈）。
+	// 所以这里分三种情况：--restart 换版本、版本不同就明说、其余照旧复用。
 	if prev, ok := instance.Lookup(); ok {
-		guiLog("发现已有实例 addr=%s pid=%d，复用它", prev.Addr, prev.PID)
-		u.title("wbmux 图形界面")
-		u.info("已经有一个界面在跑了，直接为你打开它。")
-		u.kv("界面地址", prev.URL)
-		u.kv("进程号", fmt.Sprintf("%d", prev.PID))
-		u.blank()
-		if *noOpen {
-			u.info("--no-open：请手动打开上面的地址")
-		} else if err := browser.Open(prev.URL); err != nil {
-			guiLog("打开浏览器失败：%v", err)
-			u.warn("无法自动打开浏览器：" + err.Error())
-			u.info("请手动打开上面的地址")
+		guiLog("发现已有实例 addr=%s pid=%d version=%s，复用它", prev.Addr, prev.PID, prev.Version)
+		if *restart {
+			guiLog("--restart：先让已有实例退出")
+			u.title("wbmux 图形界面")
+			u.info("正在让已在运行的界面退出，随后启动新版本…")
+			if err := prev.Quit(); err != nil {
+				guiLog("--restart 失败：%v", err)
+				u.warn("无法让已有界面退出：" + err.Error())
+				return err
+			}
+			if !instance.WaitGone(prev, 5*time.Second) {
+				guiLog("--restart：等旧实例释放 %s 超时", prev.Addr)
+				u.warn("旧界面还没退干净，稍等一两秒再试一次")
+				return fmt.Errorf("等待旧实例退出超时")
+			}
+			guiLog("旧实例已退出，继续启动新版本")
 		} else {
-			guiLog("已在浏览器中打开已有实例")
-			u.ok("已在浏览器中打开")
+			openURL := prev.URL
+			stale := prev.Version != "" && prev.Version != version.Version
+			u.title("wbmux 图形界面")
+			u.info("已经有一个界面在跑了，直接为你打开它。")
+			u.kv("界面地址", prev.URL)
+			u.kv("进程号", fmt.Sprintf("%d", prev.PID))
+			if stale {
+				// 把"你手上这个是新版本"顺路告诉浏览器里的界面，
+				// 让它自己弹一条提示——只打在控制台里没人会看到。
+				openURL = prev.URL + "&newver=" + url.QueryEscape(version.Version)
+				guiLog("版本不同：在跑的是 %s，本次是 %s", prev.Version, version.Version)
+				u.blank()
+				u.warn("注意：正在运行的界面是 " + prev.Version + "，你刚打开的是 " + version.Version + "。")
+				u.info("复用旧实例是刻意的（不打断正在跑的东西），所以不会自动换版本。")
+				u.info("要换成新的：在界面里点「关闭界面」再双击一次，或运行 wbmux.exe --restart")
+			}
+			u.blank()
+			if *noOpen {
+				u.info("--no-open：请手动打开上面的地址")
+			} else if err := browser.Open(openURL); err != nil {
+				guiLog("打开浏览器失败：%v", err)
+				u.warn("无法自动打开浏览器：" + err.Error())
+				u.info("请手动打开上面的地址")
+			} else {
+				guiLog("已在浏览器中打开已有实例")
+				u.ok("已在浏览器中打开")
+			}
+			return nil
 		}
-		return nil
 	}
 
 	opts := webui.Options{
@@ -216,6 +251,7 @@ func cmdGUI(args []string) error {
 		URL:       srv.URL(),
 		PID:       os.Getpid(),
 		StartedAt: time.Now().UnixMilli(),
+		Version:   version.Version,
 	}
 	if err := instance.Claim(self); err != nil {
 		// 登记失败不影响本次使用，只是下次启动可能多开一个窗口。
@@ -239,7 +275,18 @@ func cmdGUI(args []string) error {
 				// 悬停提示：说清楚"这是什么"和"怎么用"。图标本身是画出来的
 				// （见 internal/tray/icon.go），加上这句才算能认。
 				Tooltip: "wbmux 图形界面（右键：打开界面 / 退出）· " + srv.Addr(),
-				OnOpen:  func() { _ = browser.Open(srv.URL()) },
+				// 打开失败必须说出来：原先这里是 `_ = browser.Open(...)`，
+				// 出错直接丢掉，用户点了菜单什么都没发生，只能理解为
+				// "这功能没用"（2026-09-28 的反馈）。气泡里带上地址，
+				// 至少能手动访问。
+				OnOpen: func() {
+					if err := browser.Open(srv.URL()); err != nil {
+						guiLog("托盘：打开界面失败：%v", err)
+						tray.Notify("打不开浏览器", "请手动访问 "+srv.URL())
+						return
+					}
+					guiLog("托盘：已请求打开界面（%s）", srv.Addr())
+				},
 				OnQuit: func() {
 					guiLog("托盘：选择退出")
 					srv.Shutdown()
@@ -358,6 +405,7 @@ func printGUIHelp(u *ui) {
 选项:
   --addr <地址>    监听地址，只允许回环地址（默认沿用上次的地址，没有则自动选）
   --no-open        只启动服务，不自动打开浏览器
+  --restart        先让已在运行的实例退出，再用本次的二进制启动（换版本用）
   --idle <时长>    界面无人访问多久后自动退出（默认不退出；30m、off 均可显式指定）
   --color <模式>   auto（默认）/ always / never
   -h, --help       打印本帮助

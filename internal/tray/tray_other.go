@@ -29,3 +29,6 @@ type Options struct {
 func Run(opts Options) error {
 	return errors.New("tray: 当前平台暂不支持系统托盘")
 }
+
+// Notify 在非 Windows 平台是空操作（没有托盘，没有东西可挂气泡）。
+func Notify(title, message string) {}

@@ -442,6 +442,7 @@
   <aside class="sidebar">
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
     <p class="brand-sub">用一份安装连两套后端。安装目录本身不动。</p>
+    <p class="brand-sub" id="stale-note" hidden></p>
     <nav class="nav">
       <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
@@ -697,6 +698,19 @@
       /^\d/.test(v) ? "v" + v : v;
     document.getElementById("settings-note").textContent =
       state.settings.path ? "设置文件：" + state.settings.path : "";
+
+    // 启动器发现"你手上是另一个版本"时会带 &newver= 打开界面：说明它在
+    // 复用旧实例（刻意设计——不打断正在跑的东西），得告诉你换版本的办法，
+    // 否则表现成"重新编译了、双击了，界面还是旧的"（2026-09-28 反馈）。
+    var note = document.getElementById("stale-note");
+    var nv = new URLSearchParams(location.search).get("newver");
+    if (nv && state.version && nv !== state.version) {
+      note.hidden = false;
+      note.textContent = "运行中的界面是 " + state.version + "，你刚打开的是 " + nv +
+        "。想换成新版本：点侧边栏「关闭界面」，再双击一次 wbmux.exe（或运行 wbmux.exe --restart）。";
+      note.style.color = "var(--warn)";
+      toast("界面还是旧版本 " + state.version + "，换版本要先退出它", "bad");
+    }
   }
 
   // ---------- 渲染：提示条 ----------

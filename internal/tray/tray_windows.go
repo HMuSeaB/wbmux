@@ -81,10 +81,17 @@ const (
 	trayCallbackMessage = 0x8000 + 1
 
 	nimAdd    = 0x00000000
+	nimModify = 0x00000001
 	nimDelete = 0x00000002
 	nifMsg    = 0x00000001
 	nifIcon   = 0x00000002
 	nifTip    = 0x00000004
+	nifInfo   = 0x00000010
+
+	// 气泡图标类型：0x1 信息、0x2 警告、0x3 错误。
+	niifInfo    = 0x00000001
+	niifWarning = 0x00000002
+	niifError   = 0x00000003
 
 	wmDestroy   = 0x0002
 	wmClose     = 0x0010
@@ -318,6 +325,45 @@ func showMenu(hwnd uintptr) {
 	)
 	// 之后补一个 WM_NULL，同样是官方建议的收尾动作。
 	_, _, _ = procPostMessageW.Call(hwnd, 0, 0, 0)
+}
+
+// Notify 弹一个气泡通知（挂在托盘图标上）。
+//
+// # 为什么需要它
+//
+// 托盘菜单里的动作失败时必须说话。原先"打开界面"是
+// `_ = browser.Open(...)`——错误直接丢掉，用户点了什么都没发生，只能得出
+// "这功能没用"（2026-09-28 的实际反馈）。气泡能把"为什么没开"和"手动该访问
+// 哪个地址"告诉用户，而且是随手就有的能力，不需要额外依赖。
+//
+// 未初始化（没有托盘）时静默返回：调用方不必为此加判断。
+func Notify(title, message string) {
+	if !state.inited {
+		return
+	}
+	nid := notifyIconDataW{
+		cbSize:      uint32(unsafe.Sizeof(notifyIconDataW{})),
+		hWnd:        state.hwnd,
+		uID:         1,
+		uFlags:      nifInfo,
+		dwInfoFlags: niifWarning,
+	}
+	setUTF16(nid.szInfoTitle[:], title)
+	setUTF16(nid.szInfo[:], message)
+	_, _, _ = procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
+}
+
+// setUTF16 把字符串写进定长 UTF-16 缓冲，**保留结尾的 0**。
+//
+// 直接用 syscall.StringToUTF16 再 copy 不安全：字符串比缓冲长时，
+// copy 会把结尾的 0 挤掉，Windows 就会一路读到缓冲区外面去。
+func setUTF16(dst []uint16, s string) {
+	u := syscall.StringToUTF16(s)
+	if len(u) > len(dst) {
+		u = u[:len(dst)-1]
+		u[len(u)-1] = 0
+	}
+	copy(dst, u)
 }
 
 // 保证 LockOSThread 被引用到，提示调用方的义务。

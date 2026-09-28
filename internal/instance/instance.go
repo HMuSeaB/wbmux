@@ -45,6 +45,12 @@ type Info struct {
 	PID int `json:"pid"`
 	// StartedAt 是启动时刻的 Unix 毫秒。
 	StartedAt int64 `json:"startedAt"`
+	// Version 是那个实例的构建版本。
+	//
+	// 存在的理由：再双击一次**不会**换掉正在跑的实例（复用是刻意的设计），
+	// 于是"重新编译后双击却还是旧界面"会反复发生——而这个信息是唯一能
+	// 判断"要不要先退出它"的依据（2026-09-28 用户实际踩到）。
+	Version string `json:"version,omitempty"`
 }
 
 // path 返回运行标记的路径。
@@ -128,6 +134,57 @@ func alive(info Info) bool {
 	// 令牌正确时 wbmux 返回 200。别的服务不可能对这个自定义头
 	// 做出同样的响应。
 	return resp.StatusCode == http.StatusOK
+}
+
+// Quit 请求已在运行的实例退出。
+//
+// 走的是界面里「关闭界面」用的同一个入口（`POST /api/quit`），令牌就在它
+// 自己记下的 URL 里，所以不需要额外凭据、也不会留下半死的状态。
+//
+// 用途是「编译完想换成新版本」：复用旧实例是刻意的设计（避免两个长得一样的
+// 窗口），所以换版本必须先让它退出。
+func (i Info) Quit() error {
+	if i.URL == "" {
+		return fmt.Errorf("运行标记里没有地址")
+	}
+	u, err := url.Parse(i.URL)
+	if err != nil {
+		return fmt.Errorf("运行标记里的地址无法解析: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, u.Scheme+"://"+u.Host+"/api/quit", nil)
+	if err != nil {
+		return err
+	}
+	if token := u.Query().Get("t"); token != "" {
+		req.Header.Set("X-Wbmux-Token", token)
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求退出失败: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("退出请求被拒绝（HTTP %d）", resp.StatusCode)
+	}
+	return nil
+}
+
+// WaitGone 等到那个实例真的把地址让出来，最长等 timeout。
+//
+// 光发一次退出请求不够：进程要跑完 Shutdown 才释放监听端口，抢在它前面
+// 绑定同一个地址会失败（`--restart` 场景下表现为"地址被占用"）。
+func WaitGone(i Info, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, ok := Lookup(); !ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // Claim 把自己登记为当前实例。
