@@ -112,24 +112,34 @@ func TestCreateEndToEnd(t *testing.T) {
 	restore := config.SetRoot(t.TempDir())
 	defer restore()
 
-	// 当前测试进程的 exe 在临时目录里，Create 会拒绝——先自己复制到
-	// 一个"稳定"的临时目录，再用它冒充正式安装位置。
-	stableDir := t.TempDir()
-	// t.TempDir() 在 %TEMP% 下，会被判成临时目录，所以这里刻意用
-	// 设置目录下的 bin/ 冒充（selfCopy 的落点）。
-	cfgDir, err := config.Dir()
+	// 拿自己的可执行文件**复制到临时目录**，当作"正式安装位置的那份 exe"。
+	//
+	// # 绝不能往 <设置目录>/bin/ 里写（2026-09-28 真实事故）
+	//
+	// 我这条测试原先就是把测试二进制写进 `<config.Dir()>/bin/wbmux.exe`。
+	// 而 `config.SetRoot` 是**进程级全局**：包内测试串行时看着没事，但只要
+	// 同包里别的用例把它 restore 回真实路径，写进去的就是**用户的程序**——
+	// `~/.wbmux/bin/wbmux.exe` 正是自助升级的落点、也是用户双击的那份。
+	// 用户当晚看到的"稳定版变成测试二进制（`version` 输出 PASS）"就是这么来的。
+	//
+	// 现在的做法：源文件放 t.TempDir()（%TEMP% 下会被 createFor 判为临时目录，
+	// 所以**不能**拿它当目标），目标是**另一个临时目录里的普通文件**——
+	// createFor 只拒绝"像编译产物"的路径，普通临时目录照收。
+	self, err := os.Executable()
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("拿不到自身路径：%v", err)
 	}
-	stable := filepath.Join(cfgDir, "bin", "wbmux.exe")
-	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_ = stableDir
-	self, _ := os.Executable()
+	src := filepath.Join(t.TempDir(), "wbmux.exe")
 	raw, err := os.ReadFile(self)
 	if err != nil {
 		t.Skipf("读不到自身：%v", err)
+	}
+	if err := os.WriteFile(src, raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stable := filepath.Join(t.TempDir(), "installed", "wbmux.exe")
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(stable, raw, 0o755); err != nil {
 		t.Fatal(err)
@@ -172,23 +182,33 @@ func decodeUTF16(b []byte) string {
 }
 
 // TestExePathRejectsTemporary 当前测试进程就跑在临时目录里（go test 的产物），
-// 所以 ExePath 应该**明确拒绝**，而不是给出一个骗人的路径。
+// 所以 ExePath 不该给出一个骗人的路径。
 //
-// 这条在 Windows 上才有意义（go test 的临时目录路径形态如此），
-// 但它同时也是"判据别误伤正常路径"的回归：如果哪天 looksTemporary 变成
-// 恒真，正常目录的用例会先失败。
+// # 这条测试必须**先隔离设置目录**（2026-09-28 踩到）
+//
+// `ExePath()` 在发现 exe 位于临时目录时会退而求其次：把自己复制到
+// `<设置目录>/bin/`。我第一次写这条测试时没隔离设置目录，于是它**真的把
+// 测试二进制复制进了 `~/.wbmux/bin/wbmux.exe`**——那正是用户双击的程序
+// （用户当晚看到稳定版 `version` 输出 "PASS" 就是这么来的）。
+//
+// 现在：先 SetRoot 隔离；并且 config 侧有 GuardRealWrite 兜底——测试进程
+// 往真实设置目录写会直接 panic，而不是静默改掉用户数据。
 func TestExePathRejectsTemporary(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("临时目录判据是按 Windows 的布局写的")
 	}
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+
 	exe, _ := os.Executable()
 	if !strings.Contains(strings.ToLower(exe), "go-build") && !strings.Contains(strings.ToLower(exe), "temp") {
 		t.Skipf("测试进程不在临时目录里（%s），跳过", exe)
 	}
 	path, ok := ExePath()
-	if ok {
-		if looksTemporary(path) {
-			t.Errorf("ExePath 报告可用，却仍指向临时目录：%s", path)
-		}
+	if !ok {
+		return // 拒绝也是一种正确结果（调用方会给出明确错误）
+	}
+	if looksTemporary(path) {
+		t.Errorf("ExePath 报告可用，却仍指向临时目录：%s", path)
 	}
 }

@@ -194,6 +194,31 @@ func SetRoot(dir string) (restore func()) {
 	return func() { rootOverride = prev }
 }
 
+// GuardRealWrite 在**测试里**拦下"往真实设置目录写"这件事。
+//
+// 背景（2026-09-28 真实事故）：几个用例通过 config.SetRoot 把设置目录指到
+// 临时目录，但只要有另一条用例在它之后 restore（或跑了并行用例），全局就
+// 退回真实的 ~/.wbmux——于是测试会把**用户的程序**覆盖掉。当晚
+// `~/.wbmux/bin/wbmux.exe` 被写成测试二进制就是这么来的。
+//
+// 用法：真正落盘前调一次，路径落在真实设置目录下就 panic（测试里直接失败，
+// 比事后发现用户数据被改好得多）。
+func GuardRealWrite(path string) {
+	if !inTestBinary() {
+		return
+	}
+	real, err := Dir()
+	if err != nil {
+		return
+	}
+	if rootOverride != "" {
+		return // 已被隔离到临时目录，放行
+	}
+	if strings.HasPrefix(filepath.Clean(path), filepath.Clean(real)) {
+		panic("测试试图往真实设置目录写文件：" + path)
+	}
+}
+
 // Dir 返回设置目录，不保证已存在。
 func Dir() (string, error) {
 	if rootOverride != "" {

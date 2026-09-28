@@ -54,13 +54,20 @@ func ExePath() (string, bool) {
 
 	// 退而求其次：exe 现在待在临时目录里，但**自己**会被复制到
 	// 设置目录下的 bin/ 再指过去——否则这条命令等于骗人。
-	exe, err = os.Executable()
+	//
+	// 复制目标同样要过 looksTemporary：设置目录也可能落在临时目录里
+	// （隔离测试、便携版、把 %USERPROFILE% 指到临时盘的场景）。指向那种
+	// 位置和指向编译产物一样不靠谱，所以这时老实报告"做不到"。
+	self, err := os.Executable()
 	if err != nil {
 		return "", false
 	}
-	dst, err := selfCopy(exe)
+	dst, err := selfCopy(self)
 	if err != nil {
-		return exe, false // 复制不成就老实指向原位，由调用方提醒
+		return self, false // 复制不成就老实指向原位，由调用方提醒
+	}
+	if looksTemporary(dst) {
+		return dst, false
 	}
 	return dst, true
 }
@@ -96,6 +103,7 @@ func selfCopy(src string) (string, error) {
 		return "", fmt.Errorf("创建 %s 失败：%w", binDir, err)
 	}
 	dst := filepath.Join(binDir, "wbmux.exe")
+	config.GuardRealWrite(dst)
 	raw, err := os.ReadFile(src)
 	if err != nil {
 		return "", fmt.Errorf("读取自身失败：%w", err)
