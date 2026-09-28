@@ -9,11 +9,11 @@ import (
 
 // wbQuery 读两侧 WorkBuddy 的会话索引。
 //
-// - custom_title 优先：用户自己起的名比自动标题值钱。
-// - deleted_at 有两种"没删"：本地行为 NULL，云同步行为 -1
-//   （客户端自己的云侧索引 `WHERE deleted_at = -1` 是实据）。
-//   漏了哪一种都会少一截会话，所以两个条件都要。
-// - is_playground 保留但打标记：试玩会话也是历史，只是界面上可过滤。
+//   - custom_title 优先：用户自己起的名比自动标题值钱。
+//   - deleted_at 有两种"没删"：本地行为 NULL，云同步行为 -1
+//     （客户端自己的云侧索引 `WHERE deleted_at = -1` 是实据）。
+//     漏了哪一种都会少一截会话，所以两个条件都要。
+//   - is_playground 保留但打标记：试玩会话也是历史，只是界面上可过滤。
 const wbQuery = `select id, cwd, coalesce(custom_title, title) as title, ` +
 	`created_at, updated_at, is_playground, status ` +
 	`from sessions where deleted_at is null or deleted_at = -1 ` +

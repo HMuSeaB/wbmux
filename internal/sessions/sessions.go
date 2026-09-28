@@ -27,7 +27,6 @@ package sessions
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -101,7 +100,7 @@ type Session struct {
 	// Rank 是项目内按更新时间倒序的名次，1 起始。候选规则用它做保底。
 	Rank int `json:"rank"`
 	// Candidate 是清理候选标记。见包注释"项目保底"：只标记，不动手。
-	Candidate bool `json:"candidate"`
+	Candidate bool   `json:"candidate"`
 	Source    Source `json:"source"`
 }
 
@@ -124,12 +123,16 @@ type Project struct {
 
 // Index 是一次扫描的完整结果。
 type Index struct {
-	GeneratedAt int64      `json:"generatedAt"`
-	KeepDays    int        `json:"keepDays"`
-	KeepPerProj int        `json:"keepPerProject"`
-	Sessions    []Session  `json:"sessions"`
-	Projects    []Project  `json:"projects"`
-	Warnings    []string   `json:"warnings"`
+	GeneratedAt int64     `json:"generatedAt"`
+	KeepDays    int       `json:"keepDays"`
+	KeepPerProj int       `json:"keepPerProject"`
+	Sessions    []Session `json:"sessions"`
+	Projects    []Project `json:"projects"`
+	Warnings    []string  `json:"warnings"`
+	// Cached 表示这份索引来自缓存而不是刚扫完。界面把它显示成头部的
+	// "（缓存）"角标；Warnings 里只放真警告（某源读失败之类），
+	// 缓存说明不往那儿混——否则每次秒开都挂着一条黄色警告。
+	Cached bool `json:"cached,omitempty"`
 }
 
 // Options 控制一次扫描。
@@ -161,9 +164,11 @@ func Scan(probe *variant.Probe, opts Options) (*Index, error) {
 	if !opts.Refresh {
 		if cached := loadCacheSessions(); cached != nil {
 			// 缓存命中的是"会话清单"；候选与归组依赖当前参数和"现在"，
-			// 必须当场重算，不能信缓存里的旧值。
-			return buildIndex(cached, []string{"以下为缓存（重新扫描可刷新）"}, opts,
-				cachedGeneratedAt), nil
+			// 必须当场重算，不能信缓存里的旧值。缓存说明走 Cached 字段，
+			// 不混进 Warnings——那里只放真警告（某源读失败之类）。
+			idx := buildIndex(cached, nil, opts, cachedGeneratedAt)
+			idx.Cached = true
+			return idx, nil
 		}
 	}
 
@@ -354,18 +359,4 @@ func saveCache(idx *Index) {
 		return
 	}
 	_ = os.Rename(tmp, path)
-}
-
-// humanBytes 是给控制台输出用的极简字节数格式。
-func humanBytes(n int64) string {
-	const kb, mb, gb = 1 << 10, 1 << 20, 1 << 30
-	switch {
-	case n >= gb:
-		return fmt.Sprintf("%.1fG", float64(n)/gb)
-	case n >= mb:
-		return fmt.Sprintf("%.0fM", float64(n)/mb)
-	case n >= kb:
-		return fmt.Sprintf("%.0fK", float64(n)/kb)
-	}
-	return fmt.Sprintf("%dB", n)
 }

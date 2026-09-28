@@ -10,11 +10,11 @@ import (
 
 // zcodeQuery 读 ZCode 的会话表（schema 于 2026-09-28 实测）。
 //
-// - directory 就是项目路径，不用 join 任何表。
-// - task_type 区分 interactive（真人对话）与 subagent_child（子代理）：
-//   都收进来，界面默认滤掉子代理——它也是历史，但通常是噪音。
-// - time_archived 非空即已归档。ZCode 的归档只清 checkpoint、会话本体
-//   仍在（可恢复查看），所以归档会话照样展示，只打标记。
+//   - directory 就是项目路径，不用 join 任何表。
+//   - task_type 区分 interactive（真人对话）与 subagent_child（子代理）：
+//     都收进来，界面默认滤掉子代理——它也是历史，但通常是噪音。
+//   - time_archived 非空即已归档。ZCode 的归档只清 checkpoint、会话本体
+//     仍在（可恢复查看），所以归档会话照样展示，只打标记。
 const zcodeQuery = `select id, directory, title, time_created, time_updated, ` +
 	`time_archived, task_type from session order by time_updated desc`
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/browser"
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/sessions"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 	"github.com/HMuSeaB/wbmux/internal/version"
@@ -71,6 +72,9 @@ func cmdSessions(args []string) error {
 	for _, w := range idx.Warnings {
 		u.warn(w)
 	}
+	if idx.Cached {
+		u.info("以下为缓存（--refresh 强制重扫）")
+	}
 
 	// 项目摘要：按扫描给出的最近活跃序展示。
 	candidates := 0
@@ -122,9 +126,17 @@ func cmdSessions(args []string) error {
 // 不带托盘——这是个查一眼就走的服务，控制台窗口本身就是存在感，
 // Ctrl+C 或页面闲置都能退。
 func runSessionsWeb(u *ui, probe *variant.Probe, days, keep int, noOpen bool) error {
+	// 令牌沿用 ~/.wbmux/config.json 的 GUIToken（与主界面同一把钥匙、
+	// 同一个信任域）：随机令牌会让用户开着的标签页和书签在每次
+	// --web 重启后全部 403。首次生成后记回去，下次沿用。
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.Config{} // 设置读不动不该挡住界面：最坏结果是换一把令牌
+	}
 	srv, err := webui.New(webui.Options{
 		Version: version.String(),
 		Probe:   probe,
+		Token:   cfg.GUIToken,
 		Logf:    func(format string, args ...any) { u.kv("web", fmt.Sprintf(format, args...)) },
 	})
 	if err != nil {
@@ -132,6 +144,12 @@ func runSessionsWeb(u *ui, probe *variant.Probe, days, keep int, noOpen bool) er
 	}
 	if err := srv.Start(); err != nil {
 		return err
+	}
+	if cfg.GUIToken != srv.Token() {
+		cfg.GUIToken = srv.Token()
+		if serr := config.Save(cfg); serr != nil {
+			u.warn("无法保存访问令牌：" + serr.Error())
+		}
 	}
 	// URL() 自带 "?t=令牌" 且路径固定是 "/"，会话页要自己拼路径，
 	// 所以从 Addr() 出发重新组装，别在 URL() 后面续字符串。

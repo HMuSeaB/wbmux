@@ -138,8 +138,8 @@ function load(refresh) {
 function render(idx) {
   state.idx = idx;
   document.getElementById("gen").textContent =
-    "扫描于 " + fmtMs(idx.generatedAt) + " · 共 " + idx.sessions.length + " 条会话 / " +
-    idx.projects.length + " 个项目";
+    "扫描于 " + fmtMs(idx.generatedAt) + (idx.cached ? "（缓存）" : "") +
+    " · 共 " + idx.sessions.length + " 条会话 / " + idx.projects.length + " 个项目";
   var warn = document.getElementById("warn");
   if (idx.warnings && idx.warnings.length) {
     warn.style.display = "";

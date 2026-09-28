@@ -22,8 +22,9 @@ import (
 // 1.4G 的目录也只付元数据的代价。
 
 type codexMeta struct {
-	Type    string `json:"type"`
-	Payload struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Payload   struct {
 		ID  string `json:"id"`
 		Cwd string `json:"cwd"`
 	} `json:"payload"`
@@ -136,6 +137,12 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 			updatedMs = ms
 		}
 	}
+	// Created 用会话自己的时间戳（session_meta 顶层就有）：首行时间才是
+	// "这场对话什么时候开始的"，文件 mtime 只是兜底。
+	createdMs := updatedMs
+	if ms, terr := parseRFC3339Nanos(meta.Timestamp); terr == nil && ms > 0 {
+		createdMs = ms
+	}
 	title := "(无标题)"
 	if e, ok := titles[meta.Payload.ID]; ok && strings.TrimSpace(e.Name) != "" {
 		title = strings.TrimSpace(e.Name)
@@ -146,7 +153,7 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 		ProjectRaw: meta.Payload.Cwd,
 		ID:         meta.Payload.ID,
 		Title:      title,
-		CreatedMs:  updatedMs, // 会话创建时间取不到精确值时，更新时间兜底
+		CreatedMs:  createdMs,
 		UpdatedMs:  updatedMs,
 		SizeBytes:  fileSize(path),
 		Kind:       "thread",
