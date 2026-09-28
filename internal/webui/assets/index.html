@@ -455,6 +455,10 @@
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
     <p class="brand-sub">用一份安装连两套后端。安装目录本身不动。</p>
     <p class="brand-sub" id="stale-note" hidden></p>
+    <p class="brand-sub" style="display:flex;gap:6px;align-items:center">
+      <button class="ghost" id="btn-update" style="padding:2px 10px;font-size:12px">检查更新</button>
+      <span id="upd-msg" class="ver"></span>
+    </p>
     <nav class="nav">
       <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
@@ -2135,6 +2139,58 @@
       el("div", { class: "note bad", text: "无法读取状态：" + e.message })
     );
   });
+
+  // ---------- 自助升级 ----------
+  // 检查：/api/update/check 对比当前版本与 GitHub 最新 release；
+  // 升级：/api/update/apply 下载+解包+原位替换（internal/update 的
+  // 自替换利用"Windows 允许给运行中的 exe 改名"），替换完只欠一次重启。
+  var updBusy = false;
+  document.getElementById("btn-update").onclick = function () {
+    if (updBusy) return;
+    var btn = document.getElementById("btn-update");
+    var msg = document.getElementById("upd-msg");
+    updBusy = true;
+    btn.textContent = "检查中…";
+    msg.textContent = "";
+    api("/api/update/check").then(function (info) {
+      updBusy = false;
+      if (info.upToDate) {
+        btn.textContent = "检查更新";
+        msg.textContent = "已是最新 " + info.latest;
+        return;
+      }
+      msg.textContent = "发现新版本";
+      btn.textContent = "升级到 " + info.latest;
+      btn.onclick = function () {
+        if (updBusy) return;
+        updBusy = true;
+        msg.textContent = "下载并替换中…（几 MB，链路时通时断，请耐心）";
+        api("/api/update/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetURL: info.assetURL }),
+        }).then(function (r) {
+          byeOnce = true; // 升级谢幕页自己接管，别让 SSE 的 bye 再覆盖
+          document.body.innerHTML =
+            '<div class="gone-wrap"><div class="note ok" id="gone-note">' +
+            '<b>升级已就位（' + info.latest + '）。</b>' +
+            '<div>从托盘退出 wbmux，再启动一次即完成升级。</div>' +
+            '<div style="margin-top:6px">国内客户端不用跟着重启。</div></div></div>';
+          setTimeout(function () { window.close(); }, 1500);
+        }).catch(function (e) {
+          updBusy = false;
+          btn.textContent = "升级到 " + info.latest;
+          msg.textContent = "升级失败";
+          toast(e.message, "bad");
+        });
+      };
+    }).catch(function (e) {
+      updBusy = false;
+      btn.textContent = "检查更新";
+      msg.textContent = "检查失败";
+      toast(e.message, "bad");
+    });
+  };
 
   // 生命周期事件流：服务端一退（托盘退出/关闭界面/进程被杀），连接立刻断，
   // 页面先谢幕再尝试自关——--app 模式的窗口允许 window.close()；普通标签页

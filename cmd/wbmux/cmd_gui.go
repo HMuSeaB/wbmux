@@ -15,6 +15,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/console"
 	"github.com/HMuSeaB/wbmux/internal/instance"
 	"github.com/HMuSeaB/wbmux/internal/tray"
+	"github.com/HMuSeaB/wbmux/internal/update"
 	"github.com/HMuSeaB/wbmux/internal/version"
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
@@ -89,6 +90,11 @@ func cmdGUI(args []string) error {
 	if len(f.Args) > 0 {
 		return fmt.Errorf("gui 不接受位置参数，收到 %q", strings.Join(f.Args, " "))
 	}
+
+	// 上次自助升级留下的 .old 在这里清掉（见 internal/update 的包注释）：
+	// Windows 不让删正在运行的 exe，所以升级时只能把它改名让位，清理
+	// 只能等下一次启动来做。
+	update.CleanupOld()
 
 	guiLog("=== 启动 === 参数=%q 参数个数=%d 独占控制台=%v",
 		os.Args[1:], len(os.Args)-1, console.IsExclusiveConsole())
