@@ -20,7 +20,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // Create 在桌面创建（或覆盖）wbmux.lnk，指向当前正在运行的 exe，
@@ -56,7 +55,7 @@ func Create() (string, error) {
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	// 图形界面多半是双击启动的，父进程自己已经把控制台藏了；
 	// 此时子进程再弹一个黑窗口闪一下，用户会以为程序出错。
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("创建快捷方式失败：%w", err)
