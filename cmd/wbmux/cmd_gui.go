@@ -74,6 +74,7 @@ func cmdGUI(args []string) error {
 	noOpen := f.Bool("no-open", false)
 	idle := f.String("idle", "")
 	restart := f.Bool("restart", false)
+	mode := f.String("mode", "")
 	help := f.Bool("help", false)
 
 	if err := f.Parse(args); err != nil {
@@ -135,6 +136,12 @@ func cmdGUI(args []string) error {
 	idleTimeout, err := parseIdle(*idle)
 	if err != nil {
 		guiLog("失败：--idle 不合法：%v", err)
+		return err
+	}
+
+	headless, err := parseMode(*mode)
+	if err != nil {
+		guiLog("失败：--mode 不合法：%v", err)
 		return err
 	}
 
@@ -200,6 +207,7 @@ func cmdGUI(args []string) error {
 		Token:       cfg.GUIToken, // 空则随机生成，下面的保存步骤会把它记下来
 		ParentEnv:   os.Environ(),
 		IdleTimeout: idleTimeout,
+		Headless:    headless,
 		Logf:        guiLog,
 	}
 	srv, err := webui.New(opts)
@@ -280,7 +288,8 @@ func cmdGUI(args []string) error {
 			err := tray.Run(tray.Options{
 				// 悬停提示：说清楚"这是什么"和"怎么用"。图标本身是画出来的
 				// （见 internal/tray/icon.go），加上这句才算能认。
-				Tooltip: "wbmux 图形界面（右键：打开界面 / 退出）· " + srv.Addr(),
+				// headless 模式下多一句，免得用户以为"关了界面就停了"。
+				Tooltip: trayTooltip(srv.Addr(), headless),
 				// 打开失败必须说出来：原先这里是 `_ = browser.Open(...)`，
 				// 出错直接丢掉，用户点了菜单什么都没发生，只能理解为
 				// "这功能没用"（2026-09-28 的反馈）。气泡里带上地址，
@@ -330,6 +339,9 @@ func cmdGUI(args []string) error {
 		// 默认不自动退出，明说一句：要么在界面里点「关闭界面」，要么托盘右键退出。
 		u.kv("空闲退出", "关（不会自己结束；退出用界面里的「关闭界面」或托盘右键）")
 	}
+	if headless {
+		u.kv("运行模式", "只做转发：关掉/刷新界面都不影响服务，退出用托盘右键或 Ctrl+C")
+	}
 	u.blank()
 
 	if *noOpen {
@@ -367,6 +379,33 @@ func cmdGUI(args []string) error {
 	u.blank()
 	u.info("已退出")
 	return nil
+}
+
+// trayTooltip 拼托盘的悬停提示。
+//
+// headless 模式下必须点明"关了界面服务还在"——否则用户按常理关掉标签页，
+// 以为已经停服了，而注入到国内客户端的模型其实还在跑（或者反过来，
+// 用户以为还能用，其实已经退了）。这句话就是两种预期的分界线。
+func trayTooltip(addr string, headless bool) string {
+	if headless {
+		return "wbmux 转发服务（只做转发：关掉界面也继续跑；右键：打开界面 / 退出）· " + addr
+	}
+	return "wbmux 图形界面（右键：打开界面 / 退出）· " + addr
+}
+
+// parseMode 解析 --mode。
+//
+// 空字符串 = 默认（界面关闭时连服务一起关，与改动前的行为一致）。
+// "headless" / "proxy" / "service" = 只做转发：界面那一页关掉/刷新都不影响
+// 进程，注入到国内客户端的模型不会因为"关了个标签页"而失效。
+func parseMode(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "normal", "all":
+		return false, nil
+	case "headless", "proxy", "service":
+		return true, nil
+	}
+	return false, fmt.Errorf("--mode 只支持 headless（只做转发），收到 %q", s)
 }
 
 // waitForQuit 阻塞到界面请求关闭或收到中断信号。
@@ -412,6 +451,7 @@ func printGUIHelp(u *ui) {
   --addr <地址>    监听地址，只允许回环地址（默认沿用上次的地址，没有则自动选）
   --no-open        只启动服务，不自动打开浏览器
   --restart        先让已在运行的实例退出，再用本次的二进制启动（换版本用）
+  --mode <模式>    默认：关界面=停服。headless：只做转发，关界面照样跑
   --idle <时长>    界面无人访问多久后自动退出（默认不退出；30m、off 均可显式指定）
   --color <模式>   auto（默认）/ always / never
   -h, --help       打印本帮助

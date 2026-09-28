@@ -469,6 +469,7 @@
       <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
       <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
       <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
+      <div class="nav-item" data-page="sessions"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>会话中心</div>
       <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>体检</div>
       <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
     </nav>
@@ -650,6 +651,12 @@
     <div id="doctor-body" style="margin-top:12px"></div>
   </section>
 
+    </div>
+    <div data-page="sessions" hidden>
+      <!-- 会话中心是独立页面（/sessions，wbmux sessions --web 也能单独开），
+           这里整页内嵌：src 懒加载，第一次切到本页才设置，不给启动添负担。 -->
+      <iframe id="sessions-frame" title="会话中心"
+        style="width:100%;height:calc(100vh - 52px);border:0;border-radius:12px;background:var(--g0)"></iframe>
     </div>
     <div data-page="recycle" hidden>
   <section>
@@ -1233,6 +1240,10 @@
     if (page === "log") loadProxyLog(true);
     if (page === "recycle") loadRecycle();
     if (page === "providers") loadProviders(true);
+    if (page === "sessions") {
+      var fr = document.getElementById("sessions-frame");
+      if (fr && !fr.src) fr.src = "/sessions?t=" + encodeURIComponent(TOKEN);
+    }
   }
   document.querySelectorAll(".nav-item").forEach(function (n) {
     n.addEventListener("click", function () { showPage(n.dataset.page); });
@@ -1518,7 +1529,19 @@
 
   function quit() {
     api("/api/quit", { method: "POST" })
-      .then(function () {
+      .then(function (r) {
+        // headless（只做转发）模式下，关掉这一页**不等于**停服：
+        // 注入到国内客户端的模型还指着这个端口。必须如实说，
+        // 否则用户会以为"我已经关掉了"，而它其实还在跑。
+        if (r && r.stopped === false) {
+          document.body.innerHTML =
+            '<div class="gone-wrap"><div class="note ok">' +
+            '<b>界面已关闭，服务仍在后台运行。</b>' +
+            '<div>' + (r.note || "当前是「只做转发」模式；要停服请用托盘右键退出。") + '</div>' +
+            '<div style="margin-top:6px">想继续用界面：右键托盘图标 → 打开界面，或重新双击 wbmux.exe。</div>' +
+            '</div></div>';
+          return;
+        }
         document.body.innerHTML =
           '<div class="gone-wrap"><div class="note ok">界面已关闭，可以关掉这个标签页了。</div></div>';
       })

@@ -62,6 +62,16 @@ type Options struct {
 	// 托盘图标解决了（进程看得见、点得掉；没有托盘的平台保留控制台窗口）。
 	// 想要自动退出的仍然可以显式传 --idle 30m。
 	IdleTimeout time.Duration
+
+	// Headless 表示"只当转发服务用"：界面请求关闭时**不退出进程**。
+	//
+	// # 为什么需要它（2026-09-28 用户提出）
+	//
+	// 界面（浏览器那一页）和转发服务本来是两件事，却一直共享一条命：关掉界面
+	// 就等于把注入到国内客户端的模型一起停掉。于是"想刷新一下界面"这种无害
+	// 动作会连带断掉正在跑的会话。传了它之后，界面那一页可以随便关/刷新，
+	// 主动停服只剩两条明路：托盘右键退出、Ctrl+C。
+	Headless bool
 	// Logf 是可选的日志出口（GUI 传自己的日志器）。
 	//
 	// 存在的理由：代理转发失败时，用户能看到的只有客户端里一句
@@ -252,6 +262,9 @@ func (s *Server) Shutdown() {
 		}
 	})
 }
+
+// Headless 报告当前是否"只当转发服务用"（界面请求关闭不退出进程）。
+func (s *Server) Headless() bool { return s.opts.Headless }
 
 // guard 校验令牌。
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
@@ -718,7 +731,19 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]bool{"ok": true})
+	// 只当转发服务用的模式下，界面那一页关掉**不等于**停服：
+	// 注入到国内客户端的模型正指着这个端口，停了它们就一起废。
+	// 想真停服请用托盘右键退出或 Ctrl+C（界面上也会如实提示）。
+	if s.opts.Headless {
+		s.note(ProxyLogEntry{Level: "info", Text: "收到界面关闭请求：当前是「只做转发」模式，服务继续运行"})
+		writeJSON(w, map[string]any{
+			"ok":      true,
+			"stopped": false,
+			"note":    "当前是「只做转发」模式，界面已关闭但服务继续运行；要停服请用托盘右键退出",
+		})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "stopped": true})
 	// 先回响应再关服务，否则界面拿不到确认。
 	go func() {
 		time.Sleep(120 * time.Millisecond)

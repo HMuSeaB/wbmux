@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
@@ -480,5 +481,64 @@ func TestChatRoutesToBYOKProvider(t *testing.T) {
 	entries := readProxyLog(t, srv)
 	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Text, "自备A") {
 		t.Errorf("日志应写明经过哪个提供方：%+v", entries)
+	}
+}
+
+// TestQuitInHeadlessMode 只做转发的模式下，"关界面"不该把服务一起关掉。
+//
+// 这个语义值得钉住：注入到国内客户端的模型指着这个端口，界面那一页只是
+// 个壳。用户"想刷新一下界面"不该断掉正在跑的会话（2026-09-28 的诉求）。
+func TestQuitInHeadlessMode(t *testing.T) {
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+
+	srv, err := New(Options{Token: "test-token", Headless: true, Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.handleQuit(rec, httptest.NewRequest(http.MethodPost, "/api/quit", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d", rec.Code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("响应不是 JSON：%v", err)
+	}
+	if res["stopped"] != false {
+		t.Errorf("headless 模式下 stopped 应为 false，得到 %v", res["stopped"])
+	}
+	if note, _ := res["note"].(string); !strings.Contains(note, "托盘") {
+		t.Errorf("应当告诉用户真正的退出口在哪，得到 %q", note)
+	}
+	select {
+	case <-srv.Done():
+		t.Error("headless 模式下不该关闭服务")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestQuitInNormalMode 默认模式维持原样：关界面即停服（否则用户会以为退了，
+// 而进程还在，注入的模型也还在跑）。
+func TestQuitInNormalMode(t *testing.T) {
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.handleQuit(rec, httptest.NewRequest(http.MethodPost, "/api/quit", nil))
+	var res map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if res["stopped"] != true {
+		t.Errorf("默认模式下 stopped 应为 true，得到 %v", res["stopped"])
+	}
+	select {
+	case <-srv.Done():
+	case <-time.After(time.Second):
+		t.Error("默认模式下应当在收到请求后关闭服务")
 	}
 }
