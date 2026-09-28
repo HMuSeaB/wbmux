@@ -101,7 +101,7 @@ func TestScanCodex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ss, warns, err := scanCodex(root, indexPath)
+	ss, warns, err := scanCodex([]string{root}, indexPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,9 +127,65 @@ func TestScanCodex(t *testing.T) {
 }
 
 func TestScanCodexMissingRoot(t *testing.T) {
-	ss, _, err := scanCodex(filepath.Join(t.TempDir(), "不存在"), "")
+	ss, _, err := scanCodex([]string{filepath.Join(t.TempDir(), "不存在")}, "")
 	if err != nil || ss != nil {
 		t.Errorf("没有 Codex 目录应返回空且无错，got %v, %v", ss, err)
+	}
+}
+
+// 幽灵行与归档去重：首行是合法 JSON 但不是 session_meta 的文件整个跳过
+// （绝不能造出空厂商、空项目、空标题的幽灵行）；sessions/ 与
+// archived_sessions/ 里同 ID 的拷贝只留一条；归档根里独立的会话照常收录。
+func TestScanCodexGhostArchivedDedupe(t *testing.T) {
+	base := t.TempDir()
+	sessionsRoot := filepath.Join(base, "sessions")
+	archRoot := filepath.Join(base, "archived_sessions")
+	day := filepath.Join(sessionsRoot, "2026", "07", "22")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(archRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"timestamp":"2026-07-22T09:49:21.977Z","type":"session_meta","payload":` +
+		`{"id":"sid-1","cwd":"D:\\4rchive\\Code\\demo"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(day, "rollout-a.jsonl"), []byte(meta+"{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(day, "rollout-ghost.jsonl"), []byte("{\"type\":\"event_msg\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archMeta := `{"timestamp":"2026-03-16T22:37:48.000Z","type":"session_meta","payload":` +
+		`{"id":"sid-2","cwd":"D:\\4rchive\\Code\\arch"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(archRoot, "rollout-b.jsonl"), []byte(archMeta+"{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archRoot, "rollout-a-copy.jsonl"), []byte(meta+"{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(base, "session_index.jsonl")
+	if err := os.WriteFile(indexPath, []byte(
+		`{"id":"sid-1","thread_name":"演示会话","updated_at":"2026-07-22T10:00:00.5Z"}`+"\n"+
+			`{"id":"sid-2","thread_name":"归档会话","updated_at":"2026-03-16T23:00:00.5Z"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ss, warns, err := scanCodex([]string{sessionsRoot, archRoot}, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("不该有警告：%v", warns)
+	}
+	if len(ss) != 2 {
+		t.Fatalf("扫出 %d 条，want 2（幽灵跳过、sid-1 去重）：%+v", len(ss), ss)
+	}
+	byID := map[string]Session{}
+	for _, s := range ss {
+		byID[s.ID] = s
+	}
+	if byID["sid-1"].Title != "演示会话" || byID["sid-2"].Title != "归档会话" {
+		t.Errorf("标题取错：%v", byID)
 	}
 }
 

@@ -3,6 +3,7 @@ package sessions
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -34,9 +35,16 @@ type codexIndexEntry struct {
 	UpdatedAt string `json:"updated_at"` // RFC3339 纳秒串，解析失败就退回文件 mtime
 }
 
-func defaultCodexRoot() string {
+// defaultCodexRoots 返回 Codex 的两个会话根：在役的 sessions/（按年/月/日
+// 分层）与归档的 archived_sessions/（平铺）。归档会话同样是历史——真机
+// 实测 archived_sessions/ 里有 7 个 rollout 文件、格式与在役完全相同
+// （2026-09-28），只扫 sessions/ 会整块漏掉。
+func defaultCodexRoots() []string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "sessions")
+	return []string{
+		filepath.Join(home, ".codex", "sessions"),
+		filepath.Join(home, ".codex", "archived_sessions"),
+	}
 }
 
 func defaultCodexIndex() string {
@@ -44,31 +52,50 @@ func defaultCodexIndex() string {
 	return filepath.Join(home, ".codex", "session_index.jsonl")
 }
 
-// scanCodex 扫 Codex 会话目录。root / indexPath 抽出来是为了单测
+// scanCodex 扫 Codex 会话目录。roots / indexPath 抽出来是为了单测
 // 可以喂 testdata 小样本，不用真装一个 Codex。
-func scanCodex(root, indexPath string) ([]Session, []string, error) {
-	if _, err := os.Stat(root); err != nil {
+//
+// 两个根可能有同一会话的两份拷贝（归档语义上应是"移动"，但不赌它）：
+// 按 session id 去重，保留更新时间较新的那份。
+func scanCodex(roots []string, indexPath string) ([]Session, []string, error) {
+	var existing []string
+	for _, root := range roots {
+		if _, err := os.Stat(root); err == nil {
+			existing = append(existing, root)
+		}
+	}
+	if len(existing) == 0 {
 		return nil, nil, nil // 没装 Codex 不算错
 	}
 	titles := loadCodexIndex(indexPath)
 
+	byID := map[string]int{} // session id → out 里的下标
 	var out []Session
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // 单个目录读不动就跳过，别让整源失败
-		}
-		if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(d.Name(), ".jsonl") {
+	for _, root := range existing {
+		werr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil // 单个目录读不动就跳过，别让整源失败
+			}
+			if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(d.Name(), ".jsonl") {
+				return nil
+			}
+			s, perr := parseCodexFile(path, titles)
+			if perr != nil {
+				return nil // 同上：个别文件坏掉不算源失败
+			}
+			if idx, ok := byID[s.ID]; ok {
+				if s.UpdatedMs > out[idx].UpdatedMs {
+					out[idx] = s
+				}
+				return nil
+			}
+			byID[s.ID] = len(out)
+			out = append(out, s)
 			return nil
+		})
+		if werr != nil {
+			return nil, nil, werr
 		}
-		s, perr := parseCodexFile(path, titles)
-		if perr != nil {
-			return nil // 同上：个别文件坏掉不算源失败
-		}
-		out = append(out, s)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
 	}
 	return out, nil, nil
 }
@@ -89,8 +116,14 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 		return Session{}, err
 	}
 	var meta codexMeta
-	if err := json.Unmarshal(line, &meta); err != nil || meta.Type != "session_meta" {
-		return Session{}, err
+	if uerr := json.Unmarshal(line, &meta); uerr != nil {
+		return Session{}, uerr
+	}
+	if meta.Type != "session_meta" {
+		// 首行是合法 JSON 但不是 session_meta（截断、非会话文件）——
+		// 绝不能返回零值会话：那会在列表里造出一行空厂商、空项目、
+		// 空标题的"幽灵"。返回错误让调用方按坏文件整个跳过。
+		return Session{}, fmt.Errorf("首行不是 session_meta（%s）", meta.Type)
 	}
 
 	st, err := os.Stat(path)
