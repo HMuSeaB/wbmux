@@ -32,7 +32,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
-//go:embed assets/index.html
+//go:embed assets
 var assets embed.FS
 
 // Options 是构造服务端的输入。
@@ -151,6 +151,7 @@ func (s *Server) Start() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/sessions", s.handleSessionsPage)
 	mux.HandleFunc("/api/state", s.guard(s.handleState))
 	mux.HandleFunc("/api/doctor", s.guard(s.handleDoctor))
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))
@@ -166,6 +167,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
 	mux.HandleFunc("/api/ping", s.guard(s.handlePing))
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
+	mux.HandleFunc("/api/sessions", s.guard(s.handleSessionsAPI))
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
 	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wbmux · 会话中心</title>
+<style>
+  /* 配色与 index.html 同源：石墨灰低饱和，彩色只留给有含义的地方。 */
+  :root {
+    --g0: #0b0c0e; --g1: #131417; --g2: #191b1f; --g3: #212328;
+    --g4: #2c2f35; --g5: #3a3e46;
+    --ink: #e8eaed; --ink-2: #a8adb7; --ink-3: #71767f;
+    --ok: #4a9d6a; --warn: #b8863b; --bad: #c25550; --info: #5b8dd6;
+    --brand: #63b3c4;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--g0); color: var(--ink);
+         font: 13.5px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  header { padding: 14px 18px 10px; border-bottom: 1px solid var(--g4);
+           display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  header .sub { color: var(--ink-3); font-size: 12px; }
+  header input, header select {
+    background: var(--g3); color: var(--ink); border: 1px solid var(--g4);
+    border-radius: 6px; padding: 4px 8px; font-size: 12.5px; }
+  header input[type=number] { width: 62px; }
+  header button {
+    background: var(--g3); color: var(--ink); border: 1px solid var(--g5);
+    border-radius: 6px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+  header button:hover { background: var(--g4); }
+  header button:disabled { opacity: .5; cursor: wait; }
+  .warnbar { margin: 10px 18px 0; padding: 8px 12px; border-radius: 8px;
+             background: var(--g2); border: 1px solid var(--g5);
+             color: var(--warn); font-size: 12.5px; white-space: pre-line; }
+  main { display: flex; gap: 14px; padding: 14px 18px 30px; align-items: flex-start; }
+  /* 左：项目列表 */
+  #projects { width: 340px; flex: none; }
+  .proj { padding: 9px 11px; border-radius: 9px; background: var(--g1);
+          border: 1px solid transparent; margin-bottom: 7px; cursor: pointer; }
+  .proj:hover { background: var(--g2); }
+  .proj.sel { border-color: var(--brand); background: var(--g2); }
+  .proj .name { font-weight: 600; word-break: break-all; font-size: 13px; }
+  .proj .meta { color: var(--ink-3); font-size: 11.5px; margin-top: 2px;
+                display: flex; gap: 8px; flex-wrap: wrap; }
+  .proj .stale { color: var(--warn); }
+  /* 右：会话明细 */
+  #detail { flex: 1; min-width: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--ink-3); font-weight: 500;
+       padding: 4px 8px; border-bottom: 1px solid var(--g4); white-space: nowrap; }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--g3); vertical-align: top; }
+  tr.cand td { background: rgba(194, 85, 80, .07); }
+  td.title { word-break: break-all; }
+  td.path { font-family: var(--mono); color: var(--ink-3); font-size: 11px; word-break: break-all; }
+  .vb { display: inline-block; padding: 0 7px; border-radius: 9px;
+        font-size: 11px; border: 1px solid var(--g5); color: var(--ink-2); white-space: nowrap; }
+  .vb.wb-cn   { color: #7fb069; border-color: #3c5233; }
+  .vb.wb-intl { color: #5b8dd6; border-color: #2f4a6e; }
+  .vb.zcode   { color: #63b3c4; border-color: #2e525a; }
+  .vb.codex   { color: #b8863b; border-color: #5a451f; }
+  .vb.claude  { color: #c2885a; border-color: #5a3f2a; }
+  .candmark { color: var(--bad); font-weight: 600; }
+  .archived { color: var(--ink-3); }
+  #empty { color: var(--ink-3); padding: 30px; text-align: center; }
+  .hint { color: var(--ink-3); font-size: 12px; padding: 0 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>会话中心</h1>
+  <span class="sub" id="gen">未扫描</span>
+  <input type="search" id="q" placeholder="搜项目 / 标题…" style="width:220px">
+  <label class="sub">保留 <input type="number" id="days" value="30" min="1"> 天</label>
+  <label class="sub">项目保底 <input type="number" id="keep" value="1" min="1"> 条</label>
+  <select id="vendor"><option value="">全部来源</option></select>
+  <label class="sub"><input type="checkbox" id="onlyCand"> 只看清理候选</label>
+  <button id="refresh">重新扫描</button>
+  <button id="reload">套用参数</button>
+</header>
+<div class="hint">
+  候选 = 超过保留期 <b>且</b> 在项目内名次高于保底值——每个项目永远至少留最新几条，
+  不会清到零。<b>本页只标记，不执行任何删除。</b>
+</div>
+<div class="warnbar" id="warn" style="display:none"></div>
+<main>
+  <div id="projects"></div>
+  <div id="detail"><div id="empty">加载中…</div></div>
+</main>
+<script>
+"use strict";
+// 令牌跟首页同一模型：在 ?t= 里带着，API 调用原样回传。
+var TOKEN = new URLSearchParams(location.search).get("t") || "";
+var API = "/api/sessions?t=" + encodeURIComponent(TOKEN);
+
+var state = { idx: null, sel: null };
+
+function fetchJSON(url, opts) {
+  return fetch(url, opts).then(function (res) {
+    return res.json().then(function (body) {
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      return body;
+    });
+  });
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function fmtMs(ms) {
+  if (!ms) return "—";
+  var d = new Date(ms);
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+         " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function fmtBytes(n) {
+  if (!n) return "—";
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + "G";
+  if (n >= 1 << 20) return Math.round(n / (1 << 20)) + "M";
+  if (n >= 1 << 10) return Math.round(n / (1 << 10)) + "K";
+  return n + "B";
+}
+
+function load(refresh) {
+  var btn = document.getElementById(refresh ? "refresh" : "reload");
+  btn.disabled = true;
+  document.getElementById("empty").textContent = refresh ? "扫描中…第一次要十几秒" : "加载中…";
+  var url = API + "&days=" + document.getElementById("days").value +
+            "&keep=" + document.getElementById("keep").value + (refresh ? "&refresh=1" : "");
+  fetchJSON(url).then(render).catch(function (e) {
+    document.getElementById("empty").textContent = "加载失败：" + e.message;
+  }).finally(function () { btn.disabled = false; });
+}
+
+function render(idx) {
+  state.idx = idx;
+  document.getElementById("gen").textContent =
+    "扫描于 " + fmtMs(idx.generatedAt) + " · 共 " + idx.sessions.length + " 条会话 / " +
+    idx.projects.length + " 个项目";
+  var warn = document.getElementById("warn");
+  if (idx.warnings && idx.warnings.length) {
+    warn.style.display = "";
+    warn.textContent = idx.warnings.join("\n");
+  } else { warn.style.display = "none"; }
+
+  // 来源下拉（按实际扫到的来源动态生成）
+  var vendors = {};
+  idx.sessions.forEach(function (s) { vendors[s.vendor] = true; });
+  var sel = document.getElementById("vendor");
+  var cur = sel.value;
+  sel.innerHTML = '<option value="">全部来源</option>' + Object.keys(vendors).sort().map(function (v) {
+    return '<option value="' + esc(v) + '">' + esc(v) + "</option>";
+  }).join("");
+  if (vendors[cur]) sel.value = cur;
+
+  renderProjects();
+  renderDetail();
+}
+
+function passFilters(p, sessions) {
+  var q = document.getElementById("q").value.trim().toLowerCase();
+  var v = document.getElementById("vendor").value;
+  var onlyCand = document.getElementById("onlyCand").checked;
+  if (q && p.display.toLowerCase().indexOf(q) < 0 &&
+      !sessions.some(function (s) { return s.title.toLowerCase().indexOf(q) >= 0; })) return false;
+  if (v && !p.vendors[v]) return false;
+  if (onlyCand && !sessions.some(function (s) { return s.candidate; })) return false;
+  return true;
+}
+
+function renderProjects() {
+  var box = document.getElementById("projects");
+  var all = state.idx.sessions;
+  var shown = 0;
+  var html = state.idx.projects.map(function (p) {
+    var ss = all.filter(function (s) { return s.project === p.path; });
+    if (!passFilters(p, ss)) return "";
+    shown++;
+    if (!state.sel) state.sel = p.path;
+    var badges = Object.keys(p.vendors).sort().map(function (v) {
+      return '<span class="vb ' + esc(v) + '">' + esc(v) + "×" + p.vendors[v] + "</span>";
+    }).join(" ");
+    return '<div class="proj' + (state.sel === p.path ? " sel" : "") + '" data-p="' + esc(p.path) + '">' +
+      '<div class="name">' + esc(p.display) + "</div>" +
+      '<div class="meta">' + badges +
+      "<span>最近 " + fmtMs(p.lastMs) + "</span>" +
+      "<span>" + p.count + " 条</span>" +
+      (p.totalBytes ? "<span>" + fmtBytes(p.totalBytes) + "</span>" : "") +
+      (p.onlyStale ? '<span class="stale">⚠ 全部超期（保底 ' + state.idx.keepPerProject + " 条仍在）</span>" : "") +
+      "</div></div>";
+  }).join("");
+  box.innerHTML = html || '<div id="empty">没有匹配的项目</div>';
+  Array.prototype.forEach.call(box.querySelectorAll(".proj"), function (el) {
+    el.onclick = function () { state.sel = el.getAttribute("data-p"); renderProjects(); renderDetail(); };
+  });
+}
+
+function renderDetail() {
+  var box = document.getElementById("detail");
+  var ss = state.idx.sessions.filter(function (s) { return s.project === state.sel; });
+  var v = document.getElementById("vendor").value;
+  var q = document.getElementById("q").value.trim().toLowerCase();
+  var onlyCand = document.getElementById("onlyCand").checked;
+  var rows = ss.filter(function (s) {
+    if (v && s.vendor !== v) return false;
+    if (onlyCand && !s.candidate) return false;
+    if (q && s.title.toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+  if (!state.sel) { box.innerHTML = '<div id="empty">← 选一个项目</div>'; return; }
+  box.innerHTML = "<table><thead><tr>" +
+    "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th>" +
+    "</tr></thead><tbody>" + rows.map(function (s) {
+      return "<tr" + (s.candidate ? ' class="cand"' : "") + ">" +
+        '<td><span class="vb ' + esc(s.vendor) + '">' + esc(s.vendor) + "</span></td>" +
+        '<td class="title">' + esc(s.title) + (s.archived ? ' <span class="archived">（已归档）</span>' : "") + "</td>" +
+        "<td>" + fmtMs(s.updatedMs) + "</td>" +
+        "<td>" + fmtBytes(s.sizeBytes) + "</td>" +
+        "<td>" + esc(s.kind || "") + "</td>" +
+        "<td>" + (s.candidate ? '<span class="candmark">候选 #' + s.rank + "</span>" : "#" + s.rank) + "</td>" +
+        '<td class="path">' + esc(s.source.path) + "</td></tr>";
+    }).join("") + "</tbody></table>" +
+    (rows.length ? "" : '<div id="empty">该项目没有匹配的会话</div>');
+}
+
+document.getElementById("refresh").onclick = function () { load(true); };
+document.getElementById("reload").onclick = function () { load(false); };
+["q", "vendor", "onlyCand"].forEach(function (id) {
+  document.getElementById(id).addEventListener("input", function () {
+    state.sel = null; renderProjects(); renderDetail();
+  });
+});
+load(false);
+</script>
+</body>
+</html>
