@@ -96,6 +96,31 @@ var API = "/api/sessions?t=" + encodeURIComponent(TOKEN);
 
 var state = { idx: null, sel: null };
 
+// 生命周期事件流：服务端退出（Ctrl+C / 进程被杀）时连接立刻断，app 窗口
+// 自关；普通标签页退回"服务已退出"提示。onerror 不立刻认定退出——
+// EventSource 按 retry:2000 自动重连，3.5 秒内连回来就当没事发生。
+var byeOnce = false;
+var esRetry = null;
+function bye() {
+  if (byeOnce) return;
+  byeOnce = true;
+  document.body.innerHTML =
+    '<div style="padding:40px;text-align:center;color:var(--ink-3)">' +
+    '会话中心服务已退出。重新运行 <code>wbmux sessions --web</code> 即可恢复，地址与令牌不变。</div>';
+  setTimeout(function () { window.close(); }, 400);
+}
+try {
+  var es = new EventSource("/api/events?t=" + encodeURIComponent(TOKEN));
+  es.addEventListener("bye", bye);
+  es.onopen = function () {
+    if (esRetry) { clearTimeout(esRetry); esRetry = null; }
+  };
+  es.onerror = function () {
+    if (byeOnce || esRetry) return;
+    esRetry = setTimeout(function () { esRetry = null; bye(); }, 3500);
+  };
+} catch (e) { /* EventSource 不可用就走原有的加载失败提示 */ }
+
 function fetchJSON(url, opts) {
   return fetch(url, opts).then(function (res) {
     return res.json().then(function (body) {

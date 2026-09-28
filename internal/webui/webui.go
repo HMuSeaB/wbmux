@@ -166,6 +166,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
 	mux.HandleFunc("/api/ping", s.guard(s.handlePing))
+	mux.HandleFunc("/api/events", s.guard(s.handleEvents))
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
 	mux.HandleFunc("/api/sessions", s.guard(s.handleSessionsAPI))
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
@@ -263,6 +264,45 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+// handleEvents 是页面生命周期的事件流（SSE）。
+//
+// 为什么需要它：托盘退出/关闭界面只结束本地服务进程，界面窗口是浏览器
+// 开的，进程管不到它——窗口会一直挂着，用户只能手动关（2026-09-28 反馈
+// "托盘按退出了，这个还开着"）。有了这条长连，服务端一退连接立刻断开，
+// 前端收到就自己 window.close()（--app 模式的窗口允许脚本自关；普通
+// 标签页浏览器不让关，前端有自己的提示页兜底）。
+//
+// 注意 Shutdown 用的是 http.Close（直接掐断活动连接，见 Shutdown 注释），
+// 所以下面这层循环不需要优雅收尾——连接被掐，前端 onerror 立刻触发。
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "当前连接不支持事件流")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	// retry 告诉浏览器断线后 2 秒重连；前端的重连判定窗口（3.5 秒）
+	// 以它为准。先发一行注释让 onopen 尽早就绪。
+	fmt.Fprint(w, "retry: 2000\n\n: hello\n\n")
+	fl.Flush()
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-t.C:
+			fmt.Fprint(w, ": ping\n\n")
+			fl.Flush()
+		case <-s.done:
+			fmt.Fprint(w, "event: bye\ndata: {}\n\n")
+			fl.Flush()
+			return
+		}
 	}
 }
 

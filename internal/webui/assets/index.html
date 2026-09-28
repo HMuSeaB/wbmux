@@ -2136,6 +2136,36 @@
     );
   });
 
+  // 生命周期事件流：服务端一退（托盘退出/关闭界面/进程被杀），连接立刻断，
+  // 页面先谢幕再尝试自关——--app 模式的窗口允许 window.close()；普通标签页
+  // 浏览器不让脚本关，走下面 60 秒心跳的提示页兜底。
+  //
+  // onerror 不立刻认定退出：EventSource 会按 retry:2000 自动重连，3.5 秒
+  // 内连回来（比如服务端或网络抖了一下）就当没事发生。
+  var byeOnce = false;
+  var esRetry = null;
+  function bye() {
+    if (byeOnce) return;
+    byeOnce = true;
+    document.body.innerHTML =
+      '<div class="gone-wrap"><div class="note ok" id="gone-note">' +
+      '<b>界面已退出。</b>' +
+      '<div>重新双击 wbmux.exe 或运行 <code>wbmux gui</code> 可再次打开，地址与令牌保持不变。</div>' +
+      '</div></div>';
+    setTimeout(function () { window.close(); }, 400);
+  }
+  try {
+    var es = new EventSource("/api/events?t=" + encodeURIComponent(TOKEN));
+    es.addEventListener("bye", function () { bye(); });
+    es.onopen = function () {
+      if (esRetry) { clearTimeout(esRetry); esRetry = null; }
+    };
+    es.onerror = function () {
+      if (byeOnce || esRetry) return;
+      esRetry = setTimeout(function () { esRetry = null; bye(); }, 3500);
+    };
+  } catch (e) { /* EventSource 不可用就走 60 秒心跳兜底 */ }
+
   // 心跳：服务端默认**不会**自己退出（空闲退出默认关，见 cmd/wbmux/cmd_gui.go），
   // 心跳现在只用来判断"服务端还在不在"，好把话说清楚。
   //
