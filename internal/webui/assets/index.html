@@ -1161,11 +1161,32 @@
     return n + " B";
   }
 
+  // busy 期间禁用全部按钮；结束后**按当前数据重新判定**，而不是一律放开。
+  // 之前是 .then(function(){ recycleBusy(false); }) 直接把三个按钮全放开，
+  // 结果把 renderRecycle 刚设好的"没有噪声就禁用清理按钮"又覆盖掉了——
+  // 反过来也踩过一次：清完之后按钮该禁用却仍可点。
+  // 所以这里统一走 refreshRecycleButtons，由它看数据说话。
+  var recycleLast = null;
+
+  function refreshRecycleButtons() {
+    var s = (recycleLast && recycleLast.summary) || null;
+    var clean = document.getElementById("btn-recycle-clean");
+    var nuke = document.getElementById("btn-recycle-nuke");
+    if (clean) clean.disabled = !(s && s.noise > 0);
+    if (nuke) nuke.disabled = !(s && s.total > 0);
+  }
+
   function recycleBusy(on) {
-    ["btn-recycle-scan", "btn-recycle-clean", "btn-recycle-nuke"].forEach(function (id) {
-      var b = document.getElementById(id);
-      if (b) b.disabled = on;
-    });
+    if (on) {
+      ["btn-recycle-scan", "btn-recycle-clean", "btn-recycle-nuke"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = true;
+      });
+      return;
+    }
+    var scan = document.getElementById("btn-recycle-scan");
+    if (scan) scan.disabled = false;
+    refreshRecycleButtons();
   }
 
   function loadRecycle() {
@@ -1242,10 +1263,10 @@
       box.appendChild(det);
     }
 
-    var clean = document.getElementById("btn-recycle-clean");
-    var nuke = document.getElementById("btn-recycle-nuke");
-    if (clean) clean.disabled = !(s.noise > 0);
-    if (nuke) nuke.disabled = !(s.total > 0);
+    // 记下这次的数据，交给 refreshRecycleButtons 统一判定按钮状态。
+    // 不要在几处各写一遍 disabled，那样总会漏掉一处（这里就漏过）。
+    recycleLast = data;
+    refreshRecycleButtons();
 
     document.getElementById("recycle-note").textContent =
       s.total ? "共 " + s.total + " 项" : "";
