@@ -63,7 +63,7 @@ function main() {
   // query 同样开只读——它接收任意 SQL，更要靠这一层兜底。
   if (spec.mode === 'read' || spec.mode === 'query') options.readonly = true;
 
-  // query 还要开 immutable。
+  // query 默认开 immutable。
   //
   // 光 readonly 不够：它仍然会去碰数据库旁边的 `-wal` / `-shm`，
   // 而客户端正在跑时会占着这两个文件，结果就是
@@ -72,7 +72,14 @@ function main() {
   // immutable 告诉 SQLite「这个库不会变」，完全跳过 WAL 文件，
   // 于是客户端开着也能读。代价是拿到的是略微陈旧的快照（还没从 WAL
   // 落到主库的部分看不到）——对看仪表盘完全够用。
-  if (spec.mode === 'query') options.immutable = true;
+  //
+  // spec.live === true 时跳过 immutable：读的是"含 WAL 的实时快照"。
+  // 会话中心要读 ZCode 的库——它的客户端常驻，最近会话长期躺在 WAL
+  // 里没 checkpoint（2026-09-28 实测：immutable 只见到 2/26 条），
+  // 陈旧快照对"列历史"是硬伤。live 需要 -shm 可用，正在运行的客户端
+  // 自己维护着它；客户端关了也能由可写目录重建。真失败时调用方
+  // （internal/sessions 的 queryLive）自己退回 immutable。
+  if (spec.mode === 'query' && spec.live !== true) options.immutable = true;
 
   let db;
   try {

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "embed"
@@ -20,6 +21,9 @@ import (
 
 //go:embed assets/sqlite.js
 var sqliteScript []byte
+
+// sqliteSeq 是临时脚本文件的唯一序号，见 runSQLite 里的说明。
+var sqliteSeq atomic.Uint64
 
 // nodeModeEnv 是让 Electron 主程序退化成普通 Node 运行时的开关。
 const nodeModeEnv = "ELECTRON_RUN_AS_NODE"
@@ -114,6 +118,9 @@ type sqliteSpec struct {
 	// SQL 与 Params 只给 query 模式用。
 	SQL    string `json:"sql,omitempty"`
 	Params []any  `json:"params,omitempty"`
+	// Live 为 true 时 query 模式跳过 immutable，读"含 WAL 的实时快照"。
+	// 默认（缺省/false）维持 immutable——与既有 Query 行为一致。
+	Live bool `json:"live,omitempty"`
 }
 
 // sqliteResult 是脚本的输出。
@@ -141,6 +148,13 @@ func runSQLite(rt runtimePaths, spec sqliteSpec) (sqliteResult, error) {
 
 	// 脚本与参数写到 wbmux 自己的设置目录，而不是系统临时目录：
 	// 这样出问题时用户能自己去看这两个文件，也便于整目录清理。
+	//
+	// 文件名必须每次唯一：会话中心会**并行**跑三个 query（cn/intl/zcode
+	// 各起一个 Electron），曾经共用一对固定文件名，结果后写的 spec 覆盖
+	// 先写的——先起的进程读到别人的 spec，拿着 A 的 SQL 去查 B 的库，
+	// 返回的是"看起来成功"的错误数据（2026-09-28 实测：三家都吐了
+	// 国际档的 2 条会话）。用完即删，不让 tmp 目录积垃圾。
+	seq := sqliteSeq.Add(1)
 	dir, err := config.Dir()
 	if err != nil {
 		return sqliteResult{}, err
@@ -149,8 +163,12 @@ func runSQLite(rt runtimePaths, spec sqliteSpec) (sqliteResult, error) {
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return sqliteResult{}, fmt.Errorf("创建临时目录失败: %w", err)
 	}
-	scriptPath := filepath.Join(tmp, "sqlite.js")
-	specPath := filepath.Join(tmp, "sqlite.json")
+	scriptPath := filepath.Join(tmp, fmt.Sprintf("sqlite-%d.js", seq))
+	specPath := filepath.Join(tmp, fmt.Sprintf("sqlite-%d.json", seq))
+	defer func() {
+		_ = os.Remove(scriptPath)
+		_ = os.Remove(specPath)
+	}()
 	if err := os.WriteFile(scriptPath, sqliteScript, 0o600); err != nil {
 		return sqliteResult{}, fmt.Errorf("写出脚本失败: %w", err)
 	}
@@ -266,19 +284,64 @@ func readRows(rt runtimePaths, dbPath string) ([]Row, error) {
 //
 // 调用方不要把它当成通用数据库接口：它是为了读几个已知的表才存在的。
 func Query(probe *variant.Probe, id variant.ID, sql string, params ...any) ([]map[string]any, error) {
+	// SELECT 把关要走在"库存不存在"前面：非法语句与"库还没建"是两回事，
+	// 报错必须指对方向（TestQueryRejectsNonSelect 钉住了这个次序）。
+	// 与 QueryDB 里的检查看似重复，实则各守各的入口——QueryDB 的直接
+	// 调用方（如会话中心）不该依赖 Query 帮它把关。
 	trimmed := strings.TrimSpace(sql)
 	if !strings.HasPrefix(strings.ToLower(trimmed), "select") {
 		return nil, fmt.Errorf("Query 只接受 SELECT，收到 %q", trimmed)
 	}
-
-	// 优先用这一档位自己的安装：与它自己的数据库同一次构建，ABI 一致。
-	rt, err := detectRuntime(probe, id)
-	if err != nil {
-		return nil, err
-	}
 	dbPath := filepath.Join(probe.DataDir(id), "workbuddy.db")
 	if !fileExists(dbPath) {
 		return nil, fmt.Errorf("%s 侧还没有数据库：%s", id, dbPath)
+	}
+	return QueryDB(probe, id, dbPath, sql, params...)
+}
+
+// QueryDB 与 Query 的约束完全相同，只是数据库路径由调用方显式给出，
+// 且默认读**实时快照**（含 WAL）。
+//
+// 存在的理由：会话中心要读的不止 WorkBuddy 自己的库——ZCode 的
+// db.sqlite 是另一家客户端用另一套 schema 建的，但同样是 sqlite。
+// 执行桥（客户端自带的 better-sqlite3）只认 ABI，不认库是谁建的，
+// 所以运行时从 WorkBuddy 安装里借，库路径却可以指向别处。
+//
+// 为什么默认 live 而不是 immutable：ZCode 客户端常驻，最近会话长期
+// 躺在 WAL 里没 checkpoint，immutable 快照只看得到零星几条
+// （2026-09-28 实测 2/26）。live 需要 -shm 可用——正在运行的客户端
+// 自己维护着它，客户端关了也可由可写目录重建；真失败时调用方退回
+// QueryDBSnapshot 即可。
+//
+// 路径放开后，"只读"约束就更重了：这个口子能碰到任意 sqlite 文件，
+// 调用方必须自己保证传进来的 SQL 只是查询。会话中心（internal/sessions）
+// 是目前唯一的调用方，全部语句写死在代码里，不接受用户输入拼接。
+func QueryDB(probe *variant.Probe, id variant.ID, dbPath, sql string, params ...any) ([]map[string]any, error) {
+	return queryDB(probe, id, dbPath, true, sql, params...)
+}
+
+// QueryDBSnapshot 与 QueryDB 相同，但读 immutable 陈旧快照——
+// 跳过 WAL，客户端怎么跑都读得到，代价是最新写入看不见。
+// 作为 live 读取失败时的退路存在。
+func QueryDBSnapshot(probe *variant.Probe, id variant.ID, dbPath, sql string, params ...any) ([]map[string]any, error) {
+	return queryDB(probe, id, dbPath, false, sql, params...)
+}
+
+func queryDB(probe *variant.Probe, id variant.ID, dbPath string, live bool, sql string, params ...any) ([]map[string]any, error) {
+	trimmed := strings.TrimSpace(sql)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "select") {
+		return nil, fmt.Errorf("QueryDB 只接受 SELECT，收到 %q", trimmed)
+	}
+	if !fileExists(dbPath) {
+		return nil, fmt.Errorf("数据库不存在：%s", dbPath)
+	}
+
+	// 优先用这一档位自己的安装：与它自己的数据库同一次构建，ABI 一致。
+	// 目标库不是这一档位的也没关系——better-sqlite3 读的是文件格式，
+	// 与"库是谁建的"无关。
+	rt, err := detectRuntime(probe, id)
+	if err != nil {
+		return nil, err
 	}
 
 	res, err := runSQLite(rt, sqliteSpec{
@@ -288,6 +351,7 @@ func Query(probe *variant.Probe, id variant.ID, sql string, params ...any) ([]ma
 		NativeBinding: rt.nativeBinding,
 		SQL:           sql,
 		Params:        params,
+		Live:          live,
 	})
 	if err != nil {
 		return nil, err
