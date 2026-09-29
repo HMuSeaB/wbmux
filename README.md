@@ -118,6 +118,9 @@ wbmux migrate                # 看看另一侧有什么历史可以搬过来
 wbmux migrate intl cn --yes  # 把国际版的会话搬进国内版
 wbmux sessions               # 会话中心：跨 IDE 历史会话按项目归组（只读）
 wbmux sessions --web         # 打开会话中心的图形页面
+wbmux zcode --list           # 读 ZCode 的历史对话，可导出 Markdown（只读）
+wbmux checkin                # 查签到状态（只读）
+wbmux checkin claim          # 领今天的积分（写操作，幂等）
 wbmux shortcut               # 在桌面创建启动快捷方式
 ```
 
@@ -305,12 +308,19 @@ $ wbmux run intl --dry-run
 ## 状态
 
 可用，已在 Windows 上真机验证通过（`list` / `doctor` / `run --dry-run` /
-生成配置的逐字段比对，以及图形界面的完整交互路径）。
+生成配置的逐字段比对，以及图形界面的完整交互路径）。**签到**另有真机验证：
+国内侧凭据的加密信封能在本地解开（借客户端自己的运行时），签到状态与领取接口
+都打通过真实后端——见 [docs/EVIDENCE.md](docs/EVIDENCE.md) 第 9 节。
 
 尚未验证：macOS 与 Linux 上的实际行为（代码已按平台分支编写并通过交叉编译，
-但未实机运行）；以及"启动后的客户端确实在跟目标后端通信"这一步
-（配置内容与环境变量注入已确认正确，但没有完成一次真实登录）。
-详见 [docs/EVIDENCE.md](docs/EVIDENCE.md) 第 6 节。
+但未实机运行）；签到的凭据解密链路也只在 Windows 上跑通；以及"启动后的客户端
+确实在跟目标后端通信"这一步（配置内容与环境变量注入已确认正确，但没有完成一次
+真实登录）。详见 [docs/EVIDENCE.md](docs/EVIDENCE.md) 第 6 节。
+
+发布的目标平台是四个组合：`windows/amd64`、`darwin/amd64`、`darwin/arm64`、
+`linux/amd64`。不出 32 位，也不出 Windows / Linux 的 arm64 版（前者没有可驱动的
+ARM Windows 客户端，后者在 Linux 侧只能配 CodeBuddy CLI）；理由与"什么时候加
+回来"写在 [`.goreleaser.yml`](.goreleaser.yml) 的注释里。
 
 已确认的一项设计限制："远程控制"的微信系渠道（小程序 / 微信客服 / 微信 bot）
 在切到国际后端后会失效，且入口仍显示——见上方[已知限制](#已知限制)与
