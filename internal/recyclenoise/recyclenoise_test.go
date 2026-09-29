@@ -124,6 +124,52 @@ func TestClassify(t *testing.T) {
 			`D:\4rchive\Code\wbmux\dist\wbmux.exe~`, 7905792, "构建临时文件"},
 		{"工具链临时副本",
 			`D:\4rchive\Code\wbmux\internal\recyclenoise\recyclenoise.go.1415197015836502699`, 12124, "工具链临时副本"},
+		// 位数不止 19：这条是 18 位（实测遇到），原来的 {19} 会漏掉它。
+		{"工具链临时副本（18 位）",
+			`D:\4rchive\Code\wbmux\internal\zimport\zimport_test.go.688348325700437376`, 4096, "工具链临时副本"},
+
+		// ---------- 2026-09-29 补的规则（用户反馈"有些回收站文件没被命中"）----------
+		//
+		// 实测本机回收站 228 条里只认出 11 条，漏掉的绝大部分是下面这几类。
+		// 其中 **wbmux 自己的 sqlite 桥是最大头**（117 条）—— 它每次查库都写
+		// 一对脚本与结果，用完即弃，但正常删除也会进回收站。
+
+		{"wbmux sqlite 桥脚本",
+			`C:\Users\36230\.wbmux\tmp\sqlite-1.js`, 6991, "wbmux sqlite 桥临时件"},
+		{"wbmux sqlite 桥结果",
+			`C:\Users\36230\.wbmux\tmp\sqlite-3.json`, 483, "wbmux sqlite 桥临时件"},
+		{"wbmux sqlite 桥（两位数序号）",
+			`C:\Users\36230\.wbmux\tmp\sqlite-12.json`, 483, "wbmux sqlite 桥临时件"},
+
+		{"wbmux 构建产物 dist",
+			`D:\4rchive\Code\wbmux\dist\wbmux.exe`, 11645952, "wbmux 构建产物"},
+		{"wbmux 构建产物 仓库根",
+			`D:\4rchive\Code\wbmux\wbmux.exe`, 11645952, "wbmux 构建产物"},
+
+		{"pip install 临时目录",
+			`C:\Users\36230\AppData\Local\Temp\pip-install-d_6t02ll`, 0, "pip 安装临时件"},
+		{"pip unpack 临时目录",
+			`C:\Users\36230\AppData\Local\Temp\pip-unpack-orgg1t1r`, 0, "pip 安装临时件"},
+		{"pip 缓存目录",
+			`C:\Users\36230\AppData\Local\Temp\pip-ephem-wheel-cache-1nd8ouih`, 0, "pip 安装临时件"},
+		// 后来才出现的 prefix，规则要能自动覆盖（别写成只列举已知几种）。
+		{"pip download 临时目录（新前缀）",
+			`C:\Users\36230\AppData\Local\Temp\pip-download-253a8j7w`, 0, "pip 安装临时件"},
+		// 那棵树里每个文件都是一条独立记录，必须一起认出来。
+		{"pip unpack 里的 whl",
+			`C:\Users\36230\AppData\Local\Temp\pip-unpack-orgg1t1r\py7zr-1.1.3-py3-none-any.whl`, 72242, "pip 安装临时件"},
+
+		// SQLite 边的 WAL/SHM：**每次客户端正常退出都会产生**（SQLite 收尾时
+		// 删掉它们，删除动作进回收站）。纯瞬态，客户端下次启动重建。
+		{"SQLite 边车 -wal",
+			`C:\Users\36230\.workbuddy-ai\workbuddy.db-wal`, 0, "SQLite 边车文件"},
+		{"SQLite 边车 -shm",
+			`C:\Users\36230\.workbuddy-ai\workbuddy.db-shm`, 32768, "SQLite 边车文件"},
+		{"SQLite 边车 -journal",
+			`C:\Users\36230\.workbuddy\workbuddy.db-journal`, 1024, "SQLite 边车文件"},
+
+		{"Python access 测试残留",
+			`C:\Users\36230\.workbuddy\binaries\python\versions\3.13.12\Lib\site-packages\accesstest_deleteme_fishfingers_custard_s446au`, 0, "Python 测试残留"},
 
 		// 不该认出来的——用户自己的东西
 		{"用户删的安装包",
@@ -136,6 +182,12 @@ func TestClassify(t *testing.T) {
 			`C:\Users\36230\AppData\Local\Temp\oopz`, 296000000, ""},
 		{"普通文件",
 			`C:\Users\36230\Documents\report.pdf`, 1024, ""},
+		// 用户自己的数据库（不是边车文件）——别被 -wal 那条规则误伤。
+		{"用户自己的 sqlite 库",
+			`C:\Users\36230\Documents\我的数据.db`, 102400, ""},
+		// 名字里有 pip 但不在临时目录、也不是 pip 的临时目录格式。
+		{"文档里的 pip 笔记",
+			`C:\Users\36230\Documents\pip-notes.md`, 2048, ""},
 	}
 
 	for _, c := range cases {

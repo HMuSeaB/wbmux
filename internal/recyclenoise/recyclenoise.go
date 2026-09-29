@@ -182,10 +182,13 @@ var noiseRules = []noiseRule{
 	// 用结尾的波浪号判定——那是"这一份是被替换掉的旧版本"的通用约定。
 	{Kind: "构建临时文件", Re: regexp.MustCompile(`[\\/]wbmux\.exe~$`)},
 
-	// 工具链改写源文件时留下的中间副本：`<名字>.<19位随机数>`，
+	// 工具链改写源文件时留下的中间副本：`<名字>.<随机数字>`，
 	// 紧挨着原文件放在同一个目录里（如 recyclenoise.go.1415197015836502699）。
 	// 这是 gofmt / go test / 编辑器保存时的原子替换残留。
-	{Kind: "工具链临时副本", Re: regexp.MustCompile(`\.\d{19}$`), MaxSize: 1 << 20},
+	//
+	// 位数放宽到 10~25：实测见过 18 位（zimport_test.go.688348325700437376）
+	// 和 19 位（recyclenoise.go.1415197015836502699）两种，原来只认 19 位漏掉了前者。
+	{Kind: "工具链临时副本", Re: regexp.MustCompile(`\.\d{10,25}$`), MaxSize: 1 << 20},
 
 	// 工具每次调用建的短随机名目录：6~8 位小写字母/数字/下划线，
 	// 如 rj5ot4gb / _xcafdc2 / fxq_xbwd。
@@ -207,6 +210,60 @@ var noiseRules = []noiseRule{
 	// 紧跟 Test 开头"作为判据，不强制全 ASCII。
 	{Kind: "go test 临时目录", Re: regexp.MustCompile(`[\\/][Tt]emp[\\/]Test[^\\/]*\d{6,}[\\/]`)},
 	{Kind: "go test 临时目录", Re: regexp.MustCompile(`[\\/][Tt]emp[\\/]Test[^\\/]*\d{6,}$`)},
+
+	// ---------- wbmux 自己产生的（2026-09-29 实测：它才是最大头）----------
+	//
+	// 用户反馈"有些工作区的回收站的文件没有被命中"。实测本机回收站 228 条里
+	// 只认出 11 条，漏掉的 217 条有 **117 条是 wbmux 自己写的**。
+	//
+	// sqlite 桥每次查库都会在 ~/.wbmux/tmp 下写一对脚本与结果：
+	// `sqlite-N.js` / `sqlite-N.json`（N 是并发序号）。用完即弃，但
+	// **正常删除也会进回收站**——查几十次就攒出上百条，而且它们体积是 0
+	// 或几百字节，最典型的"条目数拖垮资源管理器"来源。
+	//
+	// 为什么之前没被"工具临时目录"那条命中：那条要求 Temp 段后紧跟
+	// 6~8 位随机名，而这里是 `sqlite-1.js` 这种**固定前缀 + 序号 + 扩展名**。
+	{Kind: "wbmux sqlite 桥临时件",
+		Re:      regexp.MustCompile(`[\\/]\.wbmux[\\/]tmp[\\/]sqlite-\d+\.(js|json)$`),
+		MaxSize: 1 << 20},
+
+	// 构建产物与被替换掉的旧版本：`wbmux\dist\wbmux.exe`、`wbmux\wbmux.exe`。
+	//
+	// 这些看着"像程序"，但都在源码树里——真正的稳定安装位是
+	// `~/.wbmux/bin/wbmux.exe`，源码树里的那份随时可以重新编出来。
+	// 限定在 wbmux 源码树的 dist/ 或仓库根下，避免误伤别处同名的 exe。
+	{Kind: "wbmux 构建产物",
+		Re: regexp.MustCompile(`[\\/](wbmux|wbmux-[^\\/]*)[\\/](dist[\\/])?wbmux\.exe$`)},
+
+	// ---------- Python 工具链的临时件 ----------
+	//
+	// pip 每次装包会建一串临时目录，名字是固定的几种前缀 + 随机后缀：
+	// pip-install- / pip-unpack- / pip-ephem-wheel-cache- / pip-build-tracker-
+	// / pip-download-，都在 Temp 下。装完即删，同样会进回收站。
+	//
+	// 必须连**里面的内容**一起匹配（如 pip-unpack-xxx\py7zr-1.1.3-...whl）：
+	// 那棵树里每个文件都是一条独立记录。所以用"路径中任意位置的 pip- 临时段"
+	// 作判据，而不是只认结尾。
+	//
+	// **别改成只列举已知前缀**：pip 的临时目录前缀随版本增加
+	// （download 这类就是后来补的），用 `pip-[a-z-]+-` 让新前缀自动覆盖。
+	{Kind: "pip 安装临时件",
+		Re: regexp.MustCompile(`[\\/][Tt]emp[\\/]pip-[a-z][a-z-]*-[^\\/]*`), MaxSize: 512 << 20},
+
+	// Python 自测用的可删文件（CPython 自己的 access 测试会建，名字很长且带随机尾巴）。
+	{Kind: "Python 测试残留", Re: regexp.MustCompile(`accesstest_deleteme_`)},
+
+	// SQLite 的 WAL / 共享内存边车文件。
+	//
+	// **这是每次客户端正常退出都会产生的**：SQLite 在最后一个连接关闭时会
+	// 删掉 <库>.db-wal 与 <库>.db-shm（属于正常收尾），而删除动作会进回收站。
+	// 于是每开关一次 WorkBuddy，回收站里就多两三条。它们**纯瞬态**——
+	// 客户端下次启动会重新建，删掉不影响任何数据。
+	//
+	// 判据限定在 .db-wal / .db-shm / .db-journal 结尾（而不是所有 -wal），
+	// 避免误伤用户自己起的同后缀文件。
+	{Kind: "SQLite 边车文件",
+		Re: regexp.MustCompile(`\.(db|sqlite|sqlite3)-(wal|shm|journal)$`), MaxSize: 64 << 20},
 }
 
 // Classify 判断一条记录是不是工具噪声，是则返回类别名。
