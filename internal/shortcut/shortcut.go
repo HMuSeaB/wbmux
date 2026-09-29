@@ -114,6 +114,30 @@ func selfCopy(src string) (string, error) {
 	return dst, nil
 }
 
+// desktopOverride 让测试把"桌面"指到临时目录。
+//
+// # 为什么必须有这个接缝（2026-09-29 真事故）
+//
+// 快捷方式的落点是**固定的**「<桌面>\wbmux.lnk」。测试里调 createFor 时，
+// 它建出来的东西与用户真实的快捷方式**同名同路径**——于是测试的清理
+// （`t.Cleanup(os.Remove(path))`）删掉的是用户桌面上那一份。
+//
+// 回收站里躺着 5 个 `C:\Users\36230\Desktop\wbmux.lnk` 就是证据：
+// 每次跑 `go test ./internal/shortcut/` 都会把用户的快捷方式删一次，
+// 用户看到的是"桌面的快捷方式又不见了"（2026-09-28、09-29 各反馈过一次）。
+//
+// 桌面路径原本写死在 shell 脚本里的 `GetFolderPath('Desktop')`，测试够不着。
+// 这个变量把那一行换成可控值；正常运行时为空，行为与从前完全一致。
+var desktopOverride string
+
+// DesktopForTest 把"桌面"临时指到 dir，返回恢复函数。
+// 名字里带 ForTest 是想让它在生产代码里显眼——**只有测试该调它**。
+func DesktopForTest(dir string) (restore func()) {
+	prev := desktopOverride
+	desktopOverride = dir
+	return func() { desktopOverride = prev }
+}
+
 // Create 在桌面创建（或覆盖）wbmux.lnk，返回快捷方式的完整路径。
 func Create() (string, error) {
 	exe, stable := ExePath()
@@ -159,11 +183,19 @@ func createFor(exe string) (string, error) {
 	// 结尾用 Set-StrictMode + 空串兜底：脚本里任何一步"静默失败"都要变成
 	// 非零退出。教训来自 2026-09-28——命令**报成功、文件却没被写**（lnk 时间戳
 	// 一动不动），因为 COM 调用没抛错而 Save() 也没生效，两边都看不出来。
+	// 桌面目录：默认走系统 API（能正确处理 OneDrive 重定向），
+	// 测试注入时用注入值——见 desktopOverride 的注释
+	// （不注入的话，测试的清理会删到用户桌面上的真快捷方式）。
+	desktopExpr := "$d = [Environment]::GetFolderPath('Desktop'); "
+	if desktopOverride != "" {
+		desktopExpr = "$d = " + psQuote(desktopOverride) + "; "
+	}
+
 	script := "$ErrorActionPreference = 'Stop'; " +
 		"trap { [Console]::Error.WriteLine($_.Exception.Message); exit 9 }; " +
 		"[Console]::OutputEncoding = [Text.Encoding]::UTF8; " +
 		"$ws = New-Object -ComObject WScript.Shell; " +
-		"$d = [Environment]::GetFolderPath('Desktop'); " +
+		desktopExpr +
 		"if (-not (Test-Path $d)) { throw \"找不到桌面目录：$d\" }; " +
 		"$lnk = Join-Path $d 'wbmux.lnk'; " +
 		"$s = $ws.CreateShortcut($lnk); " +

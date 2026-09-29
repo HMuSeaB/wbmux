@@ -112,6 +112,12 @@ func TestCreateEndToEnd(t *testing.T) {
 	restore := config.SetRoot(t.TempDir())
 	defer restore()
 
+	// **把"桌面"也隔离掉**（2026-09-29 真事故）：快捷方式的落点是固定的
+	// 「<桌面>\wbmux.lnk」，不隔离的话这条测试会覆盖/删除用户桌面上那份
+	// 真实的快捷方式——回收站里躺过 5 个 `Desktop\wbmux.lnk` 就是它干的。
+	desktop := t.TempDir()
+	defer DesktopForTest(desktop)()
+
 	// 拿自己的可执行文件**复制到临时目录**，当作"正式安装位置的那份 exe"。
 	//
 	// # 绝不能往 <设置目录>/bin/ 里写（2026-09-28 真实事故）
@@ -210,5 +216,55 @@ func TestExePathRejectsTemporary(t *testing.T) {
 	}
 	if looksTemporary(path) {
 		t.Errorf("ExePath 报告可用，却仍指向临时目录：%s", path)
+	}
+}
+
+// TestDesktopOverrideIsHonored 验证「桌面可注入」这个接缝真的生效。
+//
+// # 这条替换掉了原先的 TestDesktopIsIsolated —— 那个设计是错的
+//
+// 它为了验证「不该碰真桌面」，先去碰了真桌面：跑一遍未隔离的 createFor，
+// 看真实桌面有没有被改。结果当场把用户桌面上的快捷方式**覆盖**成了指向
+// 测试临时目录的假 exe（1854 → 2599 字节），还原又被环境拒绝——真的把
+// 用户的快捷方式弄坏了。这个思路自相矛盾，删掉。
+//
+// 正确做法是反过来：断言注入**生效**。注入临时目录后，产物必须落在注入的
+// 目录里；真实桌面那边由 TestCreateEndToEnd 的隔离来保证。
+func TestDesktopOverrideIsHonored(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("快捷方式是 Windows 专属")
+	}
+	restoreCfg := config.SetRoot(t.TempDir())
+	defer restoreCfg()
+
+	fakeDesktop := t.TempDir()
+	defer DesktopForTest(fakeDesktop)()
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip("拿不到自身路径")
+	}
+	raw, err := os.ReadFile(self)
+	if err != nil {
+		t.Skipf("读不到自身：%v", err)
+	}
+	stable := filepath.Join(t.TempDir(), "installed", "wbmux.exe")
+	if err := os.MkdirAll(filepath.Dir(stable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stable, raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := createFor(stable)
+	if err != nil {
+		t.Skipf("环境不允许建快捷方式：%v", err)
+	}
+	// 关键断言：产物落在**注入的**目录里，而不是真桌面。
+	if filepath.Dir(path) != fakeDesktop {
+		t.Errorf("快捷方式没落在注入的桌面里：%s（期望 %s）", path, fakeDesktop)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("注入的桌面里没有产物：%v", err)
 	}
 }
