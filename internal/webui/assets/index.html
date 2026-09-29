@@ -446,6 +446,21 @@
   .form textarea { resize: vertical; }
   .prov-card .path { margin-top: 6px; }
   .prov-card .models { color: var(--ink-2); font-size: 12px; margin-top: 4px; word-break: break-all; }
+  /* ---- ZCode 会话 ---- */
+  /* 左列表右预览：列表行是给扫的，正文块是给读的，两者的行距差别要拉开。 */
+  .zc-row { padding: 8px 10px; border-top: 1px solid var(--g4); cursor: pointer; }
+  .zc-row:hover { background: var(--g3); }
+  .zc-row:first-of-type { border-top: 0; }
+  .zc-title { font-size: 12.5px; color: var(--ink); line-height: 1.5; }
+  .zc-meta { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 3px;
+             word-break: break-all; }
+  .zc-body { max-height: 60vh; overflow: auto; margin-top: 10px; }
+  .zc-msg { padding: 8px 10px; border-radius: var(--r-sm); margin-bottom: 8px; background: var(--g2); }
+  .zc-msg.me { background: var(--g3); }
+  .zc-who { font-size: 11px; color: var(--ink-3); margin-bottom: 4px; }
+  .zc-text { font-size: 12.5px; color: var(--ink); line-height: 1.65; white-space: pre-wrap;
+             word-break: break-word; }
+  .zc-tools { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -471,6 +486,7 @@
       <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
       <div class="nav-item" data-page="sessions"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>会话中心</div>
       <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>体检</div>
+      <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
       <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
     </nav>
     <div class="sidebar-foot">
@@ -657,6 +673,30 @@
            这里整页内嵌：src 懒加载，第一次切到本页才设置，不给启动添负担。 -->
       <iframe id="sessions-frame" title="会话中心"
         style="width:100%;height:calc(100vh - 52px);border:0;border-radius:12px;background:var(--g0)"></iframe>
+    </div>
+    <div data-page="zcode" hidden>
+  <section>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</h2>
+    <p class="sub">
+      把 ZCode 的历史对话<strong>读出来</strong>（只读，ZCode 的数据一个字节都不动），
+      可以在这里翻看内容，也可以导出成 Markdown 存档或喂给别的会话。
+      正文取自 ZCode 的 <code>message</code> / <code>part</code> 两张表；
+      子代理会话排在后面并带标记。
+    </p>
+    <div class="row" style="margin-top:14px">
+      <button id="btn-zc-load">读取列表</button>
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="zc-reasoning">
+        <span>导出时带思考过程</span>
+      </label>
+      <span class="hint" id="zc-note" style="margin:0"></span>
+    </div>
+    <div class="grid2" style="margin-top:12px; align-items:start">
+      <div id="zc-list"></div>
+      <div id="zc-view"></div>
+    </div>
+  </section>
+
     </div>
     <div data-page="recycle" hidden>
   <section>
@@ -1226,6 +1266,117 @@
   document.getElementById("btn-prov-reset").addEventListener("click", resetProviderForm);
   loadProviders(false);
 
+  // ---------- ZCode 会话（只读） ----------
+  // 读的是 ZCode 的库，导出的是 Markdown。全程不写 ZCode 的任何数据。
+  var zcLoaded = false;
+
+  function loadZCode(force) {
+    var box = document.getElementById("zc-list");
+    var note = document.getElementById("zc-note");
+    if (zcLoaded && !force) return;
+    note.textContent = "读取中…";
+    api("/api/zcode/list").then(function (r) {
+      zcLoaded = true;
+      renderZCodeList(r);
+      note.textContent = r.available ? "" : (r.note || "本机没有 ZCode");
+    }).catch(function (e) {
+      note.textContent = "读取失败：" + e.message;
+      toast("读取 ZCode 列表失败：" + e.message, "bad");
+    });
+  }
+
+  function renderZCodeList(r) {
+    var box = document.getElementById("zc-list");
+    clear(box);
+    if (!r.available) {
+      box.appendChild(el("p", { class: "hint", text: r.note || "本机没有 ZCode 的会话库。" }));
+      return;
+    }
+    var list = r.sessions || [];
+    if (!list.length) {
+      box.appendChild(el("p", { class: "hint", text: "ZCode 里还没有会话。" }));
+      return;
+    }
+    var card = el("div", { class: "card" });
+    card.appendChild(el("div", { class: "card-head" }, [
+      el("span", { class: "card-title", text: "会话（" + list.length + "）" })
+    ]));
+    list.forEach(function (s) {
+      var row = el("div", { class: "zc-row" }, [
+        el("div", { class: "zc-title", text: s.title }),
+        el("div", { class: "zc-meta", text: (s.when || "") + " · " + (s.directory || "") })
+      ]);
+      row.onclick = function () { showZCode(s); };
+      card.appendChild(row);
+    });
+    box.appendChild(card);
+  }
+
+  function showZCode(s) {
+    var view = document.getElementById("zc-view");
+    clear(view);
+    view.appendChild(el("p", { class: "hint", text: "读取中…" }));
+    api("/api/zcode/show?id=" + encodeURIComponent(s.id)).then(function (r) {
+      renderZCodeView(r.session);
+    }).catch(function (e) {
+      clear(view);
+      view.appendChild(el("p", { class: "hint", text: "读取失败：" + e.message }));
+    });
+  }
+
+  function renderZCodeView(tr) {
+    var view = document.getElementById("zc-view");
+    clear(view);
+    var card = el("div", { class: "card" });
+    card.appendChild(el("div", { class: "card-head" }, [
+      el("span", { class: "card-title", text: tr.title }),
+      el("span", { class: "pill info", text: tr.msgs.length + " 条" })
+    ]));
+    card.appendChild(el("div", { class: "path", text: tr.directory || "" }));
+
+    var actions = el("div", { class: "row", style: "margin-top:10px" }, [
+      el("button", { class: "ghost", onclick: function () { exportZCode(tr.sessionId, false); } }),
+    ]);
+    actions.firstChild.textContent = "导出 Markdown";
+    card.appendChild(actions);
+
+    var body = el("div", { class: "zc-body" });
+    (tr.msgs || []).forEach(function (m) {
+      var name = m.role === "user" ? "我" : "助手";
+      var block = el("div", { class: "zc-msg " + (m.role === "user" ? "me" : "ai") }, [
+        el("div", { class: "zc-who", text: name }),
+        el("div", { class: "zc-text", text: m.text || "（无正文）" })
+      ]);
+      if (m.tools && m.tools.length) {
+        block.appendChild(el("div", { class: "zc-tools", text: "工具：" + m.tools.join("、") }));
+      }
+      body.appendChild(block);
+    });
+    card.appendChild(body);
+    view.appendChild(card);
+  }
+
+  function exportZCode(id, withReasoning) {
+    var note = document.getElementById("zc-note");
+    note.textContent = "导出中…";
+    api("/api/zcode/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: id,
+        withReasoning: withReasoning || document.getElementById("zc-reasoning").checked
+      })
+    }).then(function (r) {
+      note.textContent = "";
+      toast(r.note || ("已导出到 " + r.path), "ok");
+    }).catch(function (e) {
+      note.textContent = "";
+      toast("导出失败：" + e.message, "bad");
+    });
+  }
+
+  document.getElementById("btn-zc-load").addEventListener("click", function () { loadZCode(true); });
+
   // ---------- 二级页面 ----------
   // 侧边栏切换：状态 / 代理日志 / 切换与双开 / 历史搬运 / 体检。
   // 整页 hidden 切换，比一页长滚动清晰——页面之间互不挤压。
@@ -1240,6 +1391,7 @@
     if (page === "log") loadProxyLog(true);
     if (page === "recycle") loadRecycle();
     if (page === "providers") loadProviders(true);
+    if (page === "zcode") loadZCode(false);
     if (page === "sessions") {
       var fr = document.getElementById("sessions-frame");
       if (fr && !fr.src) fr.src = "/sessions?t=" + encodeURIComponent(TOKEN);
