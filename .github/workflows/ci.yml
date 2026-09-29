@@ -64,7 +64,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          for target in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+          # 与 .goreleaser.yml 发布的组合保持一致：CI 验的就该是要发的那几个，
+          # 否则会出现"CI 全绿但发不出来"或"CI 没查却发出去了"。
+          # 平台差异集中在安装探测（Windows 走注册表，其它平台走文件系统），
+          # 三个 OS 都还在，漏掉某个平台很容易到交叉编译时才暴露。
+          for target in windows/amd64 darwin/amd64 darwin/arm64 linux/amd64; do
             os="${target%/*}"
             arch="${target#*/}"
             echo "构建 $target"

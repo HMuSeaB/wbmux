@@ -235,8 +235,12 @@ $ wbmux run intl --dry-run
   环境变量  ACC_PRODUCT_CONFIG_PATH=C:\Users\…\.wbmux\generated\cn-to-intl.json
 ```
 
-交叉编译验证：`windows/amd64`、`windows/386`、`darwin/amd64`、
-`darwin/arm64`、`linux/amd64`、`linux/arm64` 六种目标全部构建通过。
+交叉编译验证：`windows/amd64`、`darwin/amd64`、`darwin/arm64`、
+`linux/amd64` 四种目标全部构建通过。
+
+（2026-09-29 起只发布这四个组合：`windows/arm64` 与 `linux/arm64` 之前也构建
+通过，但前者没有可驱动的 ARM Windows 客户端、后者在 Linux 侧只能配 CodeBuddy
+CLI，故不再发布。理由与"什么时候加回来"写在 `.goreleaser.yml` 的注释里。）
 
 ## 6. 未验证的部分
 
@@ -417,3 +421,67 @@ CLAW_CONTROL_PATH_TEMPLATE = "/v2/enterprises/{enterpriseId}/claw/control"
 （a）代码里 `endpoint` 的来源明确是产品配置字段；
 （b）国际版 `product.json` 显式关闭了小程序相关入口。
 没有真实登录 + 抓包验证。企业管控缺口同理。
+
+## 9. 国内侧凭据信封与签到接口（2026-09-29）
+
+### 信封确实能在本地解开
+
+此前代码里写着"国内 5.6+ 凭据是加密信封，本地无法解密"，界面因此只显示一句
+错误。这个结论**是错的**：密钥在客户端进程里拿不到，但可以让客户端**自己**解。
+
+做法是以 `ELECTRON_RUN_AS_NODE=1` 启动客户端主程序并喂一段内联 JS，从
+`process._linkedBinding('electron_browser_workbuddy_storage').loggerGet()`
+取 `atRestSecretKey`，sha256 派生密钥后用 AES-256-GCM 解开。
+
+实测（本机 Windows，客户端 `D:/Tools/WorkBuddy/WorkBuddy.exe`）：
+
+```
+accessToken 在磁盘上：{"$wbEncrypted":1,"envelope":"…"}，envelope 2516 字符
+解开后：1325 字符的合规 JWT
+耗时：约 0.3 秒（Node 模式跳过 GUI 初始化，不是"200 MB 冷启动好几秒"）
+```
+
+信封为 `suite=1`，字段固定为 `authTag/ciphertext/keyId/nonce/suite`；nonce 12
+字节、authTag 16 字节；AAD = `WB-AAD\0` + `[1]` + `WBEV1` + `sym-v1` + suite +
+keyId + 尾部常量。**最易写反的一处**：派生密钥时哈希的是 `atRestSecretKey` 这个
+**base64 字符串本身**的 UTF-8 字节，不是 base64 解码后的 32 字节——写反只会得到
+"解密失败"，看不出原因。
+
+复现：`WBMUX_LIVE_PROBE=1 go test ./internal/credential/ -run LiveUnseal -v`
+
+### 签到接口的契约
+
+两个接口都是 POST、都不带请求体：
+
+```
+POST {endpoint}/v2/billing/meter/checkin-activity-status   查询（幂等）
+POST {endpoint}/v2/billing/meter/daily-checkin             领取
+```
+
+- 网关会把缺省 User-Agent（`Python-urllib` 之类）当爬虫拒掉，**必须显式带**。
+- 国内三个域名 `copilot.tencent.com` / `www.codebuddy.cn` / `www.workbuddy.cn`
+  指向同一服务，实测**都返回 200**；实现取产品配置里的 `endpoint`。
+- 本机实测读数：`active=true`、连签 14 天、每日 100 积分、本周已签 2 天。
+- **"今天已签"有三种回话形态**，实测确认的是第一种：
+  `HTTP 400 + {"code":10001,"msg":"今天已签到，请明天再来"}`；
+  另有 `HTTP 200 + code 10001` 与 `HTTP 200 + data:null` 两种形态（来自参考实现
+  的契约，本机未逐一复现）。三者都按**正常结果**处理——它靠 `AlreadyCheckedIn`
+  这个字段区分，而不是匹配文案，因为"早晚各跑一次、晚的当补签"整套用法都建立在
+  幂等上。
+
+### 只对国内侧有意义
+
+国际侧同一个 status 接口返回 200 但 `active=false`；成长中心
+`/v2/activity/growth/streak` 在国际侧是 **404**；`copilot.tencent.com` 拿国际
+令牌打是 **401**。所以界面只给国内侧放入口。
+
+### 本节未实测的部分
+
+- **跨平台未验证**。上面整条链路只在 Windows 上跑通。macOS 要走
+  `WorkBuddy.app/Contents/MacOS/<CFBundleExecutable>`，Linux 无桌面端（凭据
+  文件名也不同），代码写了回退但没在真机跑过。
+- **成长中心的写接口（抽奖 / 兑换 / 补登卡）没做，也没有实测**。写路径多且
+  不可逆，参考实现自己也说补登那条路径没在真实响应上验证过。
+- **凭据有效期与流传的说法对不上**：实测国内 `expiresAt` = 2026-11-23（约 55
+  天）、`refreshExpiresAt` = 2026-11-28，而公开教程说"access 7 天 / refresh
+  14 天"。长期不启动客户端会不会失效，**无定论**。

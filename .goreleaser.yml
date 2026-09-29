@@ -23,18 +23,29 @@ builds:
       - windows
       - darwin
       - linux
-    # 只出 amd64 与 arm64。
-    #
-    # 原先还在构建 386，那是历史包袱：32 位 Windows/Linux 已基本绝迹，
-    # 构建它只是往下载列表里塞两个没人会点的文件。用户原话是"感觉比较麻烦"，
-    # 这个观感是合理的——虽然多构建不花额外成本，但会让该下哪个变得不清楚。
-    #
-    # windows/arm64 反而补上了：Go 能构建，且 ARM 版 Windows 在增长。
-    # 需要说明的是**客户端目前没有 ARM Windows 发行版**，所以这一项的实际
-    # 用途是"将来有客户端时不用回头改配置"，现在未必有人会用到。
     goarch:
       - amd64
       - arm64
+    # 只发这四个组合，其余两组合明确排除（2026-09-29 决定）。
+    #
+    # 起因是"release 页面上一排 zip，下载的人得先判断自己是哪个"。要说明的是
+    # **构建本身不花代价**（零依赖 + CGO_ENABLED=0，交叉编译是纯 Go 编译器的事），
+    # 所以砍它的收益是"少让人选错"，不是"省力气"。
+    #
+    # 为什么砍的是这两个而不是笼统地砍 arm64：
+    #   - windows/arm64：客户端没有 ARM Windows 发行版，没有客户端可驱动的
+    #     wbmux 在那儿没有用途（这条沿用最初的调查结论，未重新核实）。
+    #   - linux/arm64：Linux 侧本来就没有桌面客户端，只能配 CodeBuddy CLI，
+    #     ARM 版更边缘。
+    # **darwin/arm64 必须留**——2020 年之后 Mac 全是 Apple Silicon，
+    # 砍它等于放弃 macOS；反倒是 darwin/amd64 才是那个逐渐退场的。
+    #
+    # 什么时候该把这两项加回来：真的收到 Windows ARM / Linux ARM 的用户需求时。
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: linux
+        goarch: arm64
     ldflags:
       - -s -w
       - -X github.com/HMuSeaB/wbmux/internal/version.Version={{.Version}}
@@ -75,18 +86,34 @@ release:
   header: |
     下载对应平台的 zip，解压后把 `wbmux` 放进 `PATH` 即可。零运行时依赖。
 
+    **该下哪个**：Windows 一律 `windows_amd64`；macOS 看芯片（Apple Silicon /
+    M 系列 → `darwin_arm64`，Intel → `darwin_amd64`）；Linux → `linux_amd64`。
+    没有 32 位版，也没有 Windows / Linux 的 arm64 版（原因见
+    [`.goreleaser.yml`](https://github.com/HMuSeaB/wbmux/blob/main/.goreleaser.yml)）。
+
     ```
-    wbmux gui         # 打开图形界面（双击 wbmux.exe 同此）
-    wbmux list        # 看看本机探测到哪些安装
-    wbmux doctor      # 体检：机制是否仍然有效
-    wbmux run intl    # 用国际后端启动
-    wbmux migrate     # 把另一侧的会话/技能/记忆搬过来
-    wbmux sessions    # 会话中心：跨 IDE 历史会话按项目归组（只读）
-    wbmux shortcut    # 在桌面创建启动快捷方式
+    wbmux gui          # 打开图形界面（双击 wbmux.exe 同此）
+    wbmux run intl     # 用国际后端启动
+    wbmux list         # 看看本机探测到哪些安装
+    wbmux doctor       # 体检：机制是否仍然有效
+    wbmux migrate      # 把另一侧的会话/技能/记忆搬过来
+    wbmux sessions     # 会话中心：跨 IDE 历史会话按项目归组（只读）
+    wbmux zcode        # 读 ZCode 的历史对话，可导出 Markdown（只读）
+    wbmux checkin      # 查签到状态；「checkin claim」领今天的积分
+    wbmux shortcut     # 在桌面创建启动快捷方式
     ```
 
     > **图形界面**由内嵌网页提供，只在 `127.0.0.1` 上监听，用系统浏览器
-    > （优先 Edge / Chrome 的 `--app=` 模式）打开。关闭标签页后自动退出。
+    > （优先 Edge / Chrome 的 `--app=` 模式）打开。**默认不自动退出**——
+    > 它同时是注入到国内客户端的那些模型的转发服务，自己退掉会让它们全部
+    > 报 502。想让它空闲就退用 `--idle 30m`；退出口是托盘右键或界面里的
+    > 「关闭界面」。
+
+    > **签到**（新）：只对国内账号有意义，国际侧没开这个活动。领取会**改账号
+    > 状态**，所以不会自动执行——界面进页面只查询、领取要你亲手点按钮；
+    > 命令行默认也只查，要领必须敲 `checkin claim`。它是幂等的：今天签过会
+    > 如实回报「已签过」，不会重复领，也不算失败。国内版 5.6+ 的凭据是加密
+    > 信封，读它需要本机装着国内版客户端（wbmux 会借客户端自己的运行时解）。
 
     > **历史搬运**：搬五类东西——会话、附件、内容与配置、技能、记忆。
     > 默认只读，加 `--yes` 才执行；绝不覆盖目标端已有内容，写索引前会先整份
@@ -104,8 +131,9 @@ release:
     > （看得见、点不动）。Slack / Discord / Telegram 等直连型渠道不受影响。
     > 详见 [README 的「已知限制」](https://github.com/HMuSeaB/wbmux#已知限制)。
 
-    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；未确认
-    > 启动后的客户端真的连上目标后端；未完成一次真实登录。
+    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；签到的凭据
+    > 解密链路只在 Windows 上跑通；未确认启动后的客户端真的连上目标后端；
+    > 未完成一次真实登录。
 
   footer: |
     ---
