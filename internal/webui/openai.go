@@ -410,6 +410,10 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route ups
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		msg := upstreamMessage(body)
+		// 记下"这个模型此刻不能用"——面板据此告诉用户现在能切哪个、
+		// 什么时候恢复（客户端那边的记录只增不减，答不了这个）。
+		// 成功时 observe 会清掉状态，见 quotalive.go。
+		s.observe(route.Model, resp.StatusCode, msg)
 		// 透传上游的真实状态码，而不是一律 502：502 等于告诉客户端
 		// "网关挂了"，客户端会据此触发模型故障转移，把用户的问题
 		// 从"模型名不对"带偏成"后端不稳"。
@@ -420,6 +424,8 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route ups
 		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 		return
 	}
+	// 上游 200：这个模型现在是好的，把之前记下的限流状态清掉。
+	s.observe(route.Model, http.StatusOK, "")
 
 	var sent int64
 	if up.ClientStream {

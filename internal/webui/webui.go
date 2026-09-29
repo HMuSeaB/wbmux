@@ -95,6 +95,12 @@ type Server struct {
 	proxyLog []ProxyLogEntry
 	proxyMu  sync.Mutex
 
+	// rate 是代理观察到"每个模型此刻能不能用"（见 quotalive.go）。
+	//
+	// 它存在的理由是：客户端会话文件里的限流记录只增不减，答不了
+	// "现在恢复了吗"；只有真正跟上游说话的代理知道。
+	rate rateState
+
 	done     chan struct{}
 	doneOnce sync.Once
 
@@ -841,9 +847,8 @@ func (s *Server) handleMigrateSurvey(w http.ResponseWriter, r *http.Request) {
 // 这是界面上「额度与计费」那一栏的第一部分。之所以先做限流而不是先做
 // 消耗统计：限流是**纯文件扫描**，不碰数据库，因此客户端正在跑也照样能看——
 // 而消耗要走数据库桥接，被运行时会被挡住。先给用户一个什么时候都可靠的部分。
-func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, usage.Build(s.probe()))
-}
+// handleUsage 见 quotalive.go——它在 Survey 之外还挂了"代理亲眼见到的
+// 当前限流状态"，那份才是判断"现在能不能用"的依据。
 
 // migrateApplyRequest 是 /api/migrate/apply 的请求体。
 //

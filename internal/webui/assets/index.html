@@ -461,6 +461,30 @@
   .zc-text { font-size: 12.5px; color: var(--ink); line-height: 1.65; white-space: pre-wrap;
              word-break: break-word; }
   .zc-tools { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 6px; }
+  /* ---- 额度面板：「现在能用什么」卡片 ---- */
+  /* 一行一个模型。用 grid 三列（图标 / 名称 / 状态）而不是段落堆叠：
+     状态要能一眼竖着扫下来，段落做不到对齐。 */
+  .q-verdict { display: flex; align-items: baseline; flex-wrap: wrap; margin: 8px 0 2px; }
+  .q-row {
+    display: grid; grid-template-columns: 18px 1fr auto;
+    gap: 10px; align-items: center;
+    padding: 9px 0; border-top: 1px solid var(--g4);
+  }
+  .q-row:first-of-type { border-top: 0; }
+  .q-ico { display: inline-flex; align-items: center; }
+  .q-ico.ok   { color: var(--ok); }
+  .q-ico.warn { color: var(--warn); }
+  .q-ico.bad  { color: var(--bad); }
+  .q-name { font-size: 13px; color: var(--ink); }
+  .q-meta { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+  .q-state { font-size: 12px; color: var(--ink-2); text-align: right; }
+  .q-state.ok   { color: var(--ok); }
+  .q-state.warn { color: var(--warn); }
+  .q-state.bad  { color: var(--bad); }
+  /* 历史瓷砖里的模型行：比 .q-row 紧凑，它是次要信息 */
+  .q-hist { display: flex; align-items: baseline; gap: 7px; font-size: 12px;
+            color: var(--ink-2); margin-top: 3px; }
+
 </style>
 </head>
 <body>
@@ -2032,6 +2056,151 @@
     });
   }
 
+  // quotaNowCard 回答用户唯一真正关心的那个问题：**我现在能不能用**。
+  //
+  // # 为什么要单独做这张卡（2026-09-29 用户反馈"完全看不了"）
+  //
+  // 原来的面板读的是客户端会话文件里的历史错误记录，于是它展示的是
+  // "过去 7 天被限过几次"。用户看到的是"限制已过，可以继续用（09-27 重置）"
+  // ——而此刻他正被 09-29 的 429 挡着。数据和结论都是过期的。
+  //
+  // 现在以 **代理的观察**（proxyQuota）为准：只有代理真的跟上游说过话，
+  // 知道哪个模型此刻被拒、上游说什么时候恢复（成功一次就清掉状态）。
+  // 客户端记录退到下面的"历史"里，不再参与结论。
+  function quotaNowCard() {
+    var live = (usageData.live || {}).intl || {};
+    var proxy = usageData.proxyQuota || [];
+    var byModel = {};
+    proxy.forEach(function (q) { byModel[q.model] = q; });
+
+    // 免费模型清单：**判据是 freeNow（被"限时免费"活动覆盖），不是 rate===0**。
+    //
+    // 实测（2026-09-29）rate 为 0 的其实有 6 个：除了注入的那 3 个聊天模型，
+    // 还有 default-model（路由别名）与 gpt-image / seedance（图像、视频生成）。
+    // 用 rate===0 会把后三个也列进来，而它们既不是注入给客户端用的、也不是
+    // 聊天模型——列表里混进"GPT Image 2.5 Sunburst 可用"这种行只会让人困惑。
+    // freeNow=true 恰好就是注入的那 3 个，与 custommodels 的注入条件同源。
+    var free = [], seen = {};
+    (live.models || []).forEach(function (m) {
+      if (!m.freeNow) return;
+      seen[m.id] = true;
+      // 活动截止日从 promos 里找（模型条目本身没有）。
+      var until = "";
+      (live.promos || []).forEach(function (p) {
+        if ((p.modelIds || []).indexOf(m.id) >= 0 && p.validUntil) {
+          until = String(p.validUntil).slice(0, 10);
+        }
+      });
+      free.push({ id: m.id, until: until, label: m.freeLabel || "限时免费" });
+    });
+    // 兜底：活动的覆盖关系偶尔与模型标记不同步，promos 里点名的也要算上。
+    (live.promos || []).forEach(function (p) {
+      (p.modelIds || []).forEach(function (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        free.push({ id: id, until: String(p.validUntil || "").slice(0, 10),
+          label: p.label || "限时免费" });
+      });
+    });
+    // 免费额度是按模型单独计的，所以同一时刻可能有的能用、有的被限。
+
+    var card = el("div", { class: "card" });
+    card.appendChild(el("div", { class: "card-head" }, [
+      el("span", { class: "card-title", html: ICO("gauge", "ico-sm") + "现在能用什么" }),
+      el("span", { class: "card-sub", text: live.ok ? "实时" : "快照" })
+    ]));
+
+    if (!free.length) {
+      card.appendChild(el("div", { class: "hint",
+        text: "没读到免费模型清单（官方接口没拉通）。点下面的「一键测试」可以现场验一次。" }));
+      return card;
+    }
+
+    // 先算总账，写在最上面——用户第一眼要的是"能用还是不能用"。
+    var usable = 0, blocked = 0, soonest = 0;
+    free.forEach(function (f) {
+      var q = byModel[f.id];
+      if (q && q.state === "exhausted") { blocked++; return; }
+      if (q && q.state === "rate_limited") {
+        blocked++;
+        if (q.untilMs && (!soonest || q.untilMs < soonest)) soonest = q.untilMs;
+        return;
+      }
+      usable++;
+    });
+
+    var verdict, cls;
+    if (!blocked) {
+      verdict = "都能用"; cls = "ok";
+    } else if (usable) {
+      verdict = usable + " 个可用 · " + blocked + " 个被限";
+      cls = "warn";
+    } else {
+      verdict = "全被限住了"; cls = "bad";
+    }
+    var head = el("div", { class: "q-verdict" }, [
+      el("span", { class: "pill " + cls, text: verdict })
+    ]);
+    if (soonest) {
+      head.appendChild(el("span", { class: "hint", style: "margin:0 0 0 8px",
+        text: "最早 " + fmtClock(soonest) + " 恢复（还有 " + countdown(soonest) + "）" }));
+    } else if (blocked) {
+      head.appendChild(el("span", { class: "hint", style: "margin:0 0 0 8px",
+        text: "额度用尽不会自己恢复，要充值" }));
+    }
+    card.appendChild(head);
+
+    // 一行一个模型：图标 / 名字 / 状态。倒计时用人话，原始时刻放 title 里。
+    free.forEach(function (f) {
+      var q = byModel[f.id];
+      var icon = "check", icoCls = "ok", stateText = "可用", title = "";
+      if (q && q.state === "exhausted") {
+        icon = "cross"; icoCls = "bad"; stateText = "额度用尽";
+        title = q.message || "";
+      } else if (q && q.state === "rate_limited") {
+        icon = "clock"; icoCls = "warn";
+        stateText = q.untilMs
+          ? countdown(q.untilMs) + "后可恢复（" + fmtClock(q.untilMs) + "）"
+          : "被限流中，等重置";
+        title = q.message || "";
+      }
+      var meta = [];
+      if (f.until) meta.push("免费至 " + shortDate(f.until));
+      if (f.label && !f.until) meta.push(f.label);
+      card.appendChild(el("div", { class: "q-row", title: title }, [
+        el("span", { class: "q-ico " + icoCls, html: ICO(icon, "ico-sm") }),
+        el("div", {}, [
+          el("div", { class: "q-name", text: prettyModel(f.id), title: f.id }),
+          meta.length ? el("div", { class: "q-meta", text: meta.join(" · ") }) : null
+        ]),
+        el("span", { class: "q-state " + icoCls, text: stateText })
+      ]));
+    });
+
+    if (blocked) {
+      card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+        text: "被限时可以换上面可用的模型继续用；限流是免费的配额，等恢复即可，不影响账号。" }));
+    }
+    return card;
+  }
+
+  // fmtClock 把时间戳变成 "22:18"——精确到分够了，秒是噪音。
+  function fmtClock(ms) {
+    if (!ms) return "";
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, "0") + ":" +
+           String(d.getMinutes()).padStart(2, "0");
+  }
+
+  // shortDate 把 "2026-10-10" 压成 "10-10"——年份在当前年份时是纯噪音，
+  // 而这个面板每一行都有日期，省下 5 个字符差别很直观。
+  function shortDate(iso) {
+    var s = String(iso || "");
+    if (s.length < 10) return s;
+    var now = new Date().getFullYear() + "-";
+    return s.slice(0, 5) === now ? s.slice(5) : s;
+  }
+
   function renderUsage() {
     var box = document.getElementById("usage-body");
     var note = document.getElementById("usage-note");
@@ -2046,6 +2215,24 @@
     note.textContent = "限流 " + limits.length + " · 消耗 " + costs.length +
       (costs.length >= 300 ? "（只取前 300）" : "");
 
+    // ① 先给结论：现在能不能用。（以代理的观察为准，不是客户端的历史记录）
+    box.appendChild(quotaNowCard());
+
+    // ② 历史与账单收进折叠。
+    //
+    // 这些是"过去几天被限过几次、花了多少"，属于**事后账**，答不了"此刻
+    // 能不能用"——以前它们占满首屏，把真正的结论挤没了（用户："完全看不了"）。
+    // 下面三节（状态瓷砖 / 消耗榜 / 模型分布）改写进 histBody，
+    // 之后的倍率、活动、入口链接等仍然写在外层。
+    var mainBox = box;
+    var histBody = el("div", { style: "margin-top:8px" });
+    box.appendChild(el("details", { class: "fold", style: "margin-top:12px" }, [
+      el("summary", { text: "历史限流记录与消耗（" + limits.length + " 条限流 · " +
+        costs.length + " 条消耗）" }),
+      histBody
+    ]));
+    box = histBody;
+
     // --- 状态瓷砖：一眼看清两侧现状 ---
     var tiles = el("div", { class: "tiles" });
     (state ? state.backends : []).forEach(function (b) {
@@ -2056,30 +2243,40 @@
       });
       // 每个被限的模型一行：免费额度按模型单独计，deepseek 和 hy4
       // 可以同时被限着，各有各的重置时间。
+      //
+      // 这里显示的是**历史**（客户端落盘的记录），所以措辞要说清是"记录"，
+      // 不能说成"现在的状态"——以前顶行写"额度用尽"、下面又写"可以继续用"，
+      // 就是因为把历史记录当成了当前结论（2026-09-29 用户反馈看不懂）。
       var mine = (usageData.byModel || []).filter(function (x) { return x.side === b.id; });
       var rows = mine.slice(0, 6).map(function (x) {
+        var cls, icon, txt;
         if (x.kind === "exhausted") {
-          return el("div", { class: "desc",
-            text: "$ " + prettyModel(x.model) + "：额度用尽，充值后恢复" });
+          cls = "bad"; icon = "cross";
+          txt = prettyModel(x.model) + "：额度用尽，需充值（不可自愈）";
+        } else if (x.resetMs && x.resetMs < Date.now()) {
+          cls = "ok"; icon = "check";
+          txt = prettyModel(x.model) + "：上次限流已过期";
+        } else {
+          cls = "warn"; icon = "clock";
+          txt = prettyModel(x.model) + "：" + countdown(x.resetMs) + "后到期";
         }
-        if (x.resetMs && x.resetMs < Date.now()) {
-          return el("div", { class: "desc",
-            text: "√ " + prettyModel(x.model) + "：限制已过，可以继续用（" + x.resetAt + " 重置）" });
-        }
-        var left = countdown(x.resetMs);
-        return el("div", { class: "desc",
-          text: "· " + prettyModel(x.model) + "：还有 " + left + "恢复" +
-                (x.resetAt ? "（" + x.resetAt + "）" : "") });
+        return el("div", { class: "q-hist", title: x.resetAt || "" }, [
+          el("span", { class: "q-ico " + cls, html: ICO(icon, "ico-sm") }),
+          el("span", { text: txt })
+        ]);
       });
       var acc = live[b.id] || {};
       var who = acc.nickname || (acc.uid ? acc.uid.slice(0, 8) + "…" : "");
       tiles.appendChild(el("div", { class: "tile" }, [
         el("div", { class: "desc", text: sideLabel(b.id) +
           (who ? " · " + who + (acc.credKind === "envelope" ? "（信封加密）" : "") : "") }),
-        el("div", { class: "big " + (!e ? "ok" : e.kind === "exhausted" ? "bad" : "warn"),
-          text: !e ? "√ 正常" : e.kind === "exhausted" ? "$ 额度用尽" : "· 频率超限" }),
-        !e ? el("div", { class: "desc", text: "最近 7 天没有限流记录。" }) : rows,
-        el("div", { class: "desc", text: "读到的消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条）" })
+        // 顶行只说"有没有历史记录"，不下"现在能不能用"的结论——
+        // 那是上面那张卡的事（它读代理的实时观察）。
+        el("div", { class: "big " + (!mine.length ? "ok" : "warn"),
+          text: !mine.length ? "近 7 天无限流记录"
+            : "近 7 天 " + mine.length + " 个模型被限过" }),
+        !mine.length ? el("div", { class: "desc", text: "其间一直可用。" }) : rows,
+        el("div", { class: "desc", text: "期间消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条会话）" })
       ]));
     });
     box.appendChild(tiles);
@@ -2127,6 +2324,9 @@
       });
       box.appendChild(chips);
     }
+
+    // 历史部分到此为止，切回外层。
+    box = mainBox;
 
     // --- 实时模型清单与倍率：优先官方接口，读不到退回安装包快照 ---
     var rates = usageData.rates || {};
