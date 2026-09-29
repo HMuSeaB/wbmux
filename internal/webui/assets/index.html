@@ -681,7 +681,8 @@
       把 ZCode 的历史对话<strong>读出来</strong>（只读，ZCode 的数据一个字节都不动），
       可以在这里翻看内容，也可以导出成 Markdown 存档或喂给别的会话。
       正文取自 ZCode 的 <code>message</code> / <code>part</code> 两张表；
-      子代理会话排在后面并带标记。
+      子代理会话排在后面并带标记。也可以<strong>导入到 WorkBuddy</strong>，
+      那样在客户端的会话列表里就能直接看到它。
     </p>
     <div class="row" style="margin-top:14px">
       <button id="btn-zc-load">读取列表</button>
@@ -1336,8 +1337,10 @@
 
     var actions = el("div", { class: "row", style: "margin-top:10px" }, [
       el("button", { class: "ghost", onclick: function () { exportZCode(tr.sessionId, false); } }),
+      el("button", { class: "ghost", onclick: function () { importZCode(tr.sessionId, tr.title); } }),
     ]);
-    actions.firstChild.textContent = "导出 Markdown";
+    actions.children[0].textContent = "导出 Markdown";
+    actions.children[1].textContent = "导入到 WorkBuddy…";
     card.appendChild(actions);
 
     var body = el("div", { class: "zc-body" });
@@ -1376,6 +1379,43 @@
   }
 
   document.getElementById("btn-zc-load").addEventListener("click", function () { loadZCode(true); });
+
+  // 导入到 WorkBuddy：写操作，所以先问一次要导到哪、并让服务端给出说明文案。
+  function importZCode(id, title) {
+    var to = prompt("导入到哪一档？（cn = 国内，intl = 国际）\n\n" +
+      "注意：目标档位的客户端要**完全退出**——它握着会话列表的缓存，\n" +
+      "边跑边写会看不到新条目。", "cn");
+    if (to === null) return;
+    to = String(to).trim().toLowerCase();
+    if (to !== "cn" && to !== "intl") { toast("只能填 cn 或 intl", "bad"); return; }
+
+    var note = document.getElementById("zc-note");
+    note.textContent = "准备导入…";
+    // 第一次不带 confirm：拿服务端写的说明文案来问，避免前端自己编一遍。
+    api("/api/zimport", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, to: to })
+    }).then(function (r) {
+      note.textContent = "";
+      if (!confirm((r.note || "确认导入？") + "\n\n继续？")) return;
+      note.textContent = "导入中…";
+      return api("/api/zimport", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: id, to: to, confirm: true,
+          withReasoning: document.getElementById("zc-reasoning").checked
+        })
+      }).then(function (r2) {
+        note.textContent = "";
+        toast(r2.note || "已导入", "ok");
+      });
+    }).catch(function (e) {
+      note.textContent = "";
+      toast("导入失败：" + e.message, "bad");
+    });
+  }
 
   // ---------- 二级页面 ----------
   // 侧边栏切换：状态 / 代理日志 / 切换与双开 / 历史搬运 / 体检。

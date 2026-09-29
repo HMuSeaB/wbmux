@@ -88,3 +88,73 @@ func TestZCodeEndpoints(t *testing.T) {
 		t.Errorf("读不到时不该回 200：%s", rec.Body.String())
 	}
 }
+
+// TestZImportEndpoint 导入接口的两段式流程：
+// 第一次不带 confirm 只回说明（写作前提要让用户看清），带 confirm 才真写。
+func TestZImportEndpoint(t *testing.T) {
+	home := t.TempDir()
+	probe := &variant.Probe{
+		GOOS:   "windows",
+		Home:   home,
+		Getenv: func(string) string { return "" },
+		Exists: func(p string) bool {
+			if !strings.HasPrefix(p, home) {
+				return false
+			}
+			_, err := os.Stat(p)
+			return err == nil
+		},
+		ReadFile: os.ReadFile,
+	}
+	srv, err := New(Options{Token: "tok", Probe: probe})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// 方法不对 → 405
+	rec := httptest.NewRecorder()
+	srv.handleZImport(rec, httptest.NewRequest(http.MethodGet, "/api/zimport", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET 应得 405，得到 %d", rec.Code)
+	}
+
+	// 缺 id → 400
+	rec = httptest.NewRecorder()
+	srv.handleZImport(rec, httptest.NewRequest(http.MethodPost, "/api/zimport", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("缺 id 应得 400，得到 %d", rec.Code)
+	}
+
+	// 档位写错 → 400（别静默当成 cn）
+	rec = httptest.NewRecorder()
+	srv.handleZImport(rec, httptest.NewRequest(http.MethodPost, "/api/zimport",
+		strings.NewReader(`{"id":"sess_x","to":"mars"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("档位不合法应得 400，得到 %d", rec.Code)
+	}
+
+	// 不带 confirm → 200 + needConfirm + 说清"会写什么"
+	rec = httptest.NewRecorder()
+	srv.handleZImport(rec, httptest.NewRequest(http.MethodPost, "/api/zimport",
+		strings.NewReader(`{"id":"sess_x","to":"cn"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("首次询问应得 200，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("响应不是 JSON：%v", err)
+	}
+	if res["needConfirm"] != true {
+		t.Errorf("首次应要求确认，得到 %v", res)
+	}
+	note, _ := res["note"].(string)
+	for _, want := range []string{"只增不改", "退出"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("说明里应提到 %q：%s", want, note)
+		}
+	}
+	// 关键：这个阶段不该写出任何东西。
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Errorf("仅询问时不该写文件，得到：%v", entries)
+	}
+}

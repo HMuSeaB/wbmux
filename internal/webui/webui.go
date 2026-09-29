@@ -174,6 +174,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/zcode/list", s.guard(s.handleZCodeList))
 	mux.HandleFunc("/api/zcode/show", s.guard(s.handleZCodeShow))
 	mux.HandleFunc("/api/zcode/export", s.guard(s.handleZCodeExport))
+	mux.HandleFunc("/api/zimport", s.guard(s.handleZImport))
 	s.registerOpenAI(mux)
 	mux.HandleFunc("/api/migrate/survey", s.guard(s.handleMigrateSurvey))
 	mux.HandleFunc("/api/migrate/apply", s.guard(s.handleMigrateApply))

@@ -51,6 +51,8 @@ func dispatch(args []string) error {
 		return cmdMigrate(rest)
 	case "zcode":
 		return cmdZCode(rest)
+	case "zimport":
+		return cmdZImport(rest)
 	case "sessions", "sess":
 		return cmdSessions(rest)
 	case "shortcut":
