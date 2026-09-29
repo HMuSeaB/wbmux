@@ -91,25 +91,36 @@ func TestBuildJSONL(t *testing.T) {
 	}
 }
 
-// TestProjectSlugMatchesClient 目录命名要对齐客户端自己的规则。
+// TestProjectSlugMatchesClient 目录命名必须与客户端逐字符一致。
 //
-// 实测样本：C:/Users/36230/Desktop/Competition/竞赛汇总
+// # 这条为什么是"能不能用"的分水岭（2026-09-29 真事故）
 //
-//	→ c-Users-36230-Desktop-Competition-竞赛汇总
+// 第一版规则把"非字母数字"都压成连字符，于是 `WorkBuddy AI` 变成了
+// `WorkBuddy-AI`——文件写进了另一个目录，客户端去 `WorkBuddy AI/` 找，
+// 找不到，表现为**列表里有条目、点开是空的**（用户："导进去了，但是里面
+// 没有记录"）。
 //
-// 中文被保留是关键——压掉了就会写到一个客户端不认的目录里。
+// 下面这组的左侧全部来自本机 workbuddy.db 里真实存在的 cwd，右侧是客户端
+// 实际建出来的目录名（逐条核对过）。
 func TestProjectSlugMatchesClient(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{`C:/Users/36230/Desktop/Competition/竞赛汇总`, "c-Users-36230-Desktop-Competition-竞赛汇总"},
-		{`C:/Users/36230/WorkBuddy AI`, "c-Users-36230-WorkBuddy-AI"},
-		{`D:/4rchive/Code/wbmux`, "d-4rchive-Code-wbmux"},
-		{`/home/me/proj`, "home-me-proj"},
-		{`C:/`, "c"},
+		// 带空格——第一版就是死在这条上。
+		{`C://Users//36230//WorkBuddy AI`, "c-Users-36230-WorkBuddy AI"},
+		// 带中文（中文必须保留）。
+		{`C://Users//36230//Desktop//Competition//竞赛汇总`, "c-Users-36230-Desktop-Competition-竞赛汇总"},
+		// 带全角冒号（同一类：只压分隔符，其余原样）。
+		{`D://4rchive//Code//10：微信开发工具 解压密码：123`, "d-4rchive-Code-10：微信开发工具 解压密码：123"},
+		// 空格 + 中文 + 短横线混合。
+		{`C://Users//36230//WorkBuddy AI\2026-09-25-11-15-46`, "c-Users-36230-WorkBuddy AI-2026-09-25-11-15-46"},
+		{`D://4rchive//Code//DOUZHANZHE-Control`, "d-4rchive-Code-DOUZHANZHE-Control"},
+		{`D://4rchive//Code//cc-switch`, "d-4rchive-Code-cc-switch"},
+		// 正斜杠与反斜杠要得到同一个名字。
+		{`C:/Users/36230/WorkBuddy AI`, "c-Users-36230-WorkBuddy AI"},
 		{``, "unknown-project"},
 	}
 	for _, c := range cases {
 		if got := projectSlug(c.in); got != c.want {
-			t.Errorf("projectSlug(%q) = %q，期望 %q", c.in, got, c.want)
+			t.Errorf("projectSlug(%q)\n  得到 %q\n  期望 %q", c.in, got, c.want)
 		}
 	}
 }
@@ -211,9 +222,16 @@ func TestRowCoversRequiredColumns(t *testing.T) {
 	if *row.Title != "标题" {
 		t.Errorf("标题不对：%q", *row.Title)
 	}
-	// 状态与来源：客户端按这些字段决定怎么渲染（未完成状态会显示得不一样）。
-	if row.Status == nil || *row.Status != "Completed" {
-		t.Errorf("status 应为 Completed，得到 %v", row.Status)
+	// 状态：必须是**小写** completed。客户端自己的 19/20 行是小写，而 status
+	// 会参与 `status IN (...)` 之类的等值比较，大小写敏感。
+	if row.Status == nil || *row.Status != "completed" {
+		t.Errorf("status 应为小写 completed，得到 %v", row.Status)
+	}
+	// transport 必须显式给 'local'：客户端本地列表是
+	//   WHERE transport = 'local' AND deleted_at IS NULL AND (user_id = ? OR user_id = '')
+	// 缺这一列（留 NULL）时行在库里、也能过另外两道，但侧栏永远不显示。
+	if row.Transport == nil || *row.Transport != "local" {
+		t.Errorf("transport 应为 'local'，得到 %v", row.Transport)
 	}
 	// 时间缺失时要有兜底：只有 updated 就两个都用 updated，别留 0。
 	only := &zcode.Transcript{UpdatedMs: 5000}

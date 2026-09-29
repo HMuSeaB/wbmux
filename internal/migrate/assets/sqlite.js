@@ -23,11 +23,16 @@ const fs = require('fs');
 // 与 Go 侧 migrate.Row 的 JSON 标签逐字对应，改一边必须同步另一边。
 // user_id 虽然是空串也要显式写入：该列是 NOT NULL 且无默认值，
 // 漏掉会直接违反约束。
+// transport 必须写 'local'：客户端本地列表的可见性查询是
+//   WHERE transport = 'local' AND deleted_at IS NULL AND (user_id = ? OR user_id = '')
+// 少了它（留 NULL），行在库里、也能过 user_id/deleted_at 两道，但**侧栏永远不显示**
+// ——2026-09-29 实测踩到：导入的会话"进去了但里面没有记录"，根因就是这一列。
 const COLUMNS = [
   'id', 'cwd', 'user_id', 'title', 'custom_title', 'status',
   'created_at', 'updated_at', 'last_activity_at', 'is_playground',
   'source_mode', 'mode', 'model', 'permission_mode',
-  'use_sandbox_cli', 'addon_selection', 'context_window', 'thought_level'
+  'use_sandbox_cli', 'addon_selection', 'context_window', 'thought_level',
+  'transport'
 ];
 
 function emit(obj) {

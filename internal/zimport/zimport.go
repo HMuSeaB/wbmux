@@ -182,7 +182,10 @@ func rowFor(tr *zcode.Transcript, id, project, title string) migrate.Row {
 	if updated == 0 {
 		updated = created
 	}
-	status := "Completed"
+	// 小写 "completed"：客户端自己的 19/20 行都是小写，而 status 会被
+	// 拿去做 `status IN (...)` 之类的等值比较，大小写敏感。
+	status := "completed"
+	transport := "local"
 	sourceMode := "cli"
 	mode := "agent"
 	permission := "default"
@@ -204,6 +207,9 @@ func rowFor(tr *zcode.Transcript, id, project, title string) migrate.Row {
 		SourceMode:     &sourceMode,
 		Mode:           &mode,
 		PermissionMode: &permission,
+		// transport 必须显式给 'local'，否则客户端本地列表的
+		// `WHERE transport = 'local'` 把它挡在外面——表现是"导进去了但侧栏看不见"。
+		Transport: &transport,
 	}
 }
 
@@ -331,26 +337,34 @@ func wbDataDir(probe *variant.Probe, v sessions.Vendor) (string, error) {
 
 // slugPattern 对齐客户端自己的目录命名：把路径里的非字母数字压成一个连字符。
 //
-// 实测的样本：`C:\Users\36230\Desktop\Competition\竞赛汇总`
+// sepPattern 只压**路径分隔符**（`\` `/` `:`），其余字符原样保留。
 //
-//	→ `c-Users-36230-Desktop-Competition-竞赛汇总`
+// # 为什么不能"把非字母数字都压成连字符"（2026-09-29 真事故）
 //
-// 注意**中文字符被保留了**，压掉的只有分隔符。用 slug 规则重建时若把中文
-// 也替换掉，就会写到一个客户端不认的目录里。
-// Go 的 regexp 不认 `\uXXXX` 转义（那是 JS/PCRE 的写法），得用 `\x{...}`。
-// 保留：英数 + CJK 汉字 + CJK 标点 + 全角字符。中文项目名很常见，
-// 被压掉就会写进一个客户端不认的目录。
-var slugPattern = regexp.MustCompile(`[^A-Za-z0-9\x{4e00}-\x{9fff}\x{3000}-\x{303f}\x{ff00}-\x{ffef}]+`)
+// 第一版的规则是 `[^A-Za-z0-9汉字]+ → "-"`，于是：
+//
+//	cwd          = `C:\Users\36230\WorkBuddy AI`（带空格）
+//	我写的目录    = `c-Users-36230-WorkBuddy-AI`
+//	客户端找的是  = `c-Users-36230-WorkBuddy AI`   ← 空格保留
+//
+// 文件写进了另一个目录 → 客户端去 `WorkBuddy AI/` 找，找不到 → 表现为
+// **列表里有条目、点开是空的**。用户的说法是"导进去了，但是里面没有记录"。
+// 这比"根本导不进去"更难查：库里那一行怎么看都是对的。
+//
+// 改成只动分隔符之后，拿本机 workbuddy.db 里 13 条真实 cwd 逐条核对
+// 客户端实际建出的目录名，全部命中。
+var sepPattern = regexp.MustCompile(`[\\/:]+`)
 
 func projectSlug(p string) string {
 	s := strings.TrimSpace(p)
-	s = strings.ReplaceAll(s, "\\", "/")
-	s = strings.Trim(s, "/")
-	// 盘符 `C:` → `c`（实测客户端就是小写盘符打头）。
-	if len(s) > 1 && s[1] == ':' {
-		s = strings.ToLower(s[:1]) + s[2:]
+	// 先把反斜杠归一成正斜杠，这样 `C:\a\b` 与 `C:/a/b` 得到同一个名字。
+	s = strings.ReplaceAll(s, `\`, "/")
+	s = sepPattern.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	// 盘符小写（实测客户端就是 `c-...` 打头）。
+	if len(s) > 1 && s[0] >= 'A' && s[0] <= 'Z' {
+		s = strings.ToLower(s[:1]) + s[1:]
 	}
-	s = slugPattern.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
 		s = "unknown-project"

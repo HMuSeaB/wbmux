@@ -55,6 +55,9 @@ type Row struct {
 	AddonSelection *string `json:"addon_selection"`
 	ContextWindow  *int    `json:"context_window"`
 	ThoughtLevel   *string `json:"thought_level"`
+	// Transport 决定这行是"本地会话"还是"云端任务"。客户端本地列表只认
+	// 'local'（见 assets/sqlite.js 的 COLUMNS 注释）；留空＝侧栏看不见。
+	Transport *string `json:"transport"`
 }
 
 // runtimePaths 是执行数据库读写所需的一组路径。
