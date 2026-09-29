@@ -124,6 +124,19 @@ type sqliteSpec struct {
 	// Live 为 true 时 query 模式跳过 immutable，读"含 WAL 的实时快照"。
 	// 默认（缺省/false）维持 immutable——与既有 Query 行为一致。
 	Live bool `json:"live,omitempty"`
+	// Statements 与 Tables 只给 update 模式用（工作区维护）。
+	//
+	// Tables 是**白名单**：update 模式只允许改这些表。把关放在脚本里而不是
+	// 只靠调用方自觉——这个口子改的是用户的会话索引，写坏了就是"历史会话
+	// 全消失"。
+	Statements []Statement `json:"statements,omitempty"`
+	Tables     []string    `json:"tables,omitempty"`
+}
+
+// Statement 是一条参数化的改写语句。值一律走 Params，不接受字面量拼接。
+type Statement struct {
+	SQL    string `json:"sql"`
+	Params []any  `json:"params,omitempty"`
 }
 
 // sqliteResult 是脚本的输出。
@@ -132,6 +145,7 @@ type sqliteResult struct {
 	Rows     []Row    `json:"rows"`
 	Inserted []string `json:"inserted"`
 	Skipped  []string `json:"skipped"`
+	Changed  []int    `json:"changed"`
 	// Result 是 query 模式查到的行，每行是一个"列名 → 值"的字典。
 	// 之所以用字典而不是结构体：调用方要读的表各不相同，
 	// 写死结构体会漏字段，漏了还不容易发现。
@@ -363,6 +377,39 @@ func queryDB(probe *variant.Probe, id variant.ID, dbPath string, live bool, sql 
 		return nil, errors.New(res.Error)
 	}
 	return res.Result, nil
+}
+
+// Update 执行一批参数化的改写语句，返回每条影响的行数。
+//
+// 只允许 UPDATE、只允许动 tables 白名单里的表，值必须走 Params——
+// 三条约束都在 scripts/assets/sqlite.js 里强制，不依赖调用方自觉。
+// 整批一个事务，中途失败整体回滚。
+//
+// 调用方必须自己保证：客户端已退出、已备份数据库。这两件事这个函数管不了。
+func Update(probe *variant.Probe, id variant.ID, tables []string, stmts []Statement) ([]int, error) {
+	rt, err := detectRuntime(probe, id)
+	if err != nil {
+		return nil, err
+	}
+	dbPath := filepath.Join(probe.DataDir(id), "workbuddy.db")
+	if !fileExists(dbPath) {
+		return nil, fmt.Errorf("%s 侧还没有数据库：%s", id, dbPath)
+	}
+	if len(stmts) == 0 {
+		return nil, nil
+	}
+	res, err := runSQLite(rt, sqliteSpec{
+		Mode:          "update",
+		DBPath:        dbPath,
+		LibPath:       rt.libPath,
+		NativeBinding: rt.nativeBinding,
+		Statements:    stmts,
+		Tables:        tables,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Changed, nil
 }
 
 // writeRows 写入会话索引行。已存在的 id 一律跳过，绝不覆盖。

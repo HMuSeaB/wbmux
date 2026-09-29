@@ -160,6 +160,58 @@ function main() {
       }
     }
 
+    // update：跑一批**参数化**的改写语句，用于工作区维护（改 cwd / path）。
+    //
+    // **只放行 UPDATE**，且必须满足三条：
+    //   1) 以 update 开头——不是别的语句；
+    //   2) 只操作调用方显式点名的表（spec.tables 白名单）；
+    //   3) 值全部走占位符，不接受字面量拼接。
+    //
+    // 为什么这么严：这个口子改的是**用户的会话索引**，写坏了就是"历史会话
+    // 全消失"。query 模式那句"只放行 SELECT"的理由在这里反过来——那次是怕
+    // 读错，这次是怕写坏。调用方（tools/wsctl）传的语句是代码里写死的，
+    // 但把关不能依赖调用方自觉。
+    //
+    // 整批一个事务：中途失败整体回滚。改了一半的索引比没改更糟——会出现
+    // 一批指向旧路径、一批指向新路径的会话。
+    if (spec.mode === 'update') {
+      const stmts = spec.statements || [];
+      if (!Array.isArray(stmts) || stmts.length === 0) {
+        return fail('update 模式缺少 statements');
+      }
+      const allowed = new Set(spec.tables || []);
+      if (allowed.size === 0) return fail('update 模式必须给出 tables 白名单');
+
+      const changed = [];
+      const run = db.transaction(() => {
+        for (const st of stmts) {
+          const sql = String(st.sql || '').trim();
+          const stripped = sql
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/--[^\n]*/g, ' ')
+            .trim();
+          if (!/^update\b/i.test(stripped)) {
+            throw new Error('update 模式只允许 UPDATE，收到：' + stripped.slice(0, 40));
+          }
+          if (/;\s*\S/.test(stripped.replace(/;\s*$/, ''))) {
+            throw new Error('update 模式一次只能跑一条语句');
+          }
+          const m = /^update\s+([A-Za-z_][A-Za-z0-9_]*)/i.exec(stripped);
+          if (!m || !allowed.has(m[1].toLowerCase())) {
+            throw new Error('表 ' + (m ? m[1] : '?') + ' 不在允许改写的名单里');
+          }
+          const info = db.prepare(sql).run(...(st.params || []));
+          changed.push(info.changes);
+        }
+      });
+      try {
+        run();
+      } catch (e) {
+        return fail('改写失败（已整体回滚）：' + e.message);
+      }
+      return emit({ changed: changed });
+    }
+
     return fail('未知 mode：' + spec.mode);
   } finally {
     try {
