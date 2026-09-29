@@ -1,13 +1,18 @@
 package webui
 
 import (
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
@@ -114,6 +119,168 @@ func looksExhausted(msg string) bool {
 type rateState struct {
 	mu    sync.Mutex
 	items map[string]ProxyQuota
+	// seen 是"代理亲眼看它成功过"的模型集合。
+	//
+	// 用它把"确认可用"与"从没验证过"分开：界面上前者显示"可用"、
+	// 后者显示"未验证"。没有它的话，一个从没发过请求的模型也会被写成
+	// "可用"——那是无根据的断言，用户一试就 429。
+	seen map[string]bool
+	// seeded 表示"已尝试从日志恢复过"，只做一次。
+	seeded bool
+}
+
+// quotaSeed 是从日志里恢复出来的两组信息。
+type quotaSeed struct {
+	// Limited 是"最后一条事件是被 429 拒绝"的模型。
+	Limited []ProxyQuota
+	// OK 是"最后一条事件是成功"的模型。
+	OK []string
+}
+
+// 日志里两行关键格式（见 proxylog.go / openai.go）：
+//
+//	2026-09-29 19:57:13  被国际后端拒绝 model=deepseek-v4.1-flash 上游 HTTP 429: <上游原话>
+//	2026-09-29 20:20:54  转发完成 model=hy4-preview-f 经国际后端 …
+var logModelRe = regexp.MustCompile(`model=([^\s]+)`)
+var logHTTPRe = regexp.MustCompile(`上游 HTTP (\d{3}):\s*(.*)$`)
+
+// seedFromLog 从 gui.log 的尾部恢复限流状态。
+//
+// # 为什么必须做（2026-09-29 用户反馈"重启后没显示那个限流了"）
+//
+// 状态本来只在内存里，**进程一重启就全没了**——而那时模型其实还被限着。
+// 更糟的是界面把"没有观察数据"渲染成了"都能用"，等于给出一个反着的结论：
+// 用户以为能用了，一发请求又 429。
+//
+// 日志是持久化的，而且写的正是同一批事实（谁被拒了、上游说什么时候恢复），
+// 所以启动时拿它恢复既准又不用新开存储。只读尾部若干 KB：日志可能有几 MB。
+//
+// 幂等，由 rateState.seeded 保证只跑一次。
+func (s *Server) seedFromLog() {
+	s.rate.mu.Lock()
+	defer s.rate.mu.Unlock()
+	if s.rate.seeded {
+		return
+	}
+	s.rate.seeded = true
+
+	seed := parseQuotaLog(s.logPath(), time.Now().UnixMilli())
+	for _, q := range seed.Limited {
+		if s.rate.items == nil {
+			s.rate.items = map[string]ProxyQuota{}
+		}
+		s.rate.items[q.Model] = q
+	}
+	for _, m := range seed.OK {
+		if s.rate.seen == nil {
+			s.rate.seen = map[string]bool{}
+		}
+		s.rate.seen[m] = true
+	}
+}
+
+// logPath 返回 gui.log 的位置。logPathFn 是测试接缝。
+func (s *Server) logPath() string {
+	if s.logPathFn != nil {
+		return s.logPathFn()
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "gui.log")
+}
+
+// logTailBytes 是从日志尾部读多少字节。
+//
+// 512 KB 够覆盖"最近几千条事件"，而日志本身可能长到几十 MB——全读会拖慢启动。
+const logTailBytes = 512 << 10
+
+// parseQuotaLog 从日志尾部算出"每个模型此刻的状态"。
+//
+// now 传进来是为了可测：解析结果里"已过期的限流"要被丢掉，而那是相对当前
+// 时刻判断的。
+func parseQuotaLog(path string, now int64) quotaSeed {
+	if path == "" {
+		return quotaSeed{}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return quotaSeed{}
+	}
+	defer func() { _ = f.Close() }()
+
+	// 只在**真的从中间截断**时才丢掉第一行（那半条日志解析出来是错的）。
+	// 无条件丢会把正常的小日志的第一条真记录吃掉——写错过一次。
+	truncated := false
+	if st, err := f.Stat(); err == nil && st.Size() > logTailBytes {
+		_, _ = f.Seek(st.Size()-logTailBytes, io.SeekStart)
+		truncated = true
+	}
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return quotaSeed{}
+	}
+	lines := strings.Split(string(raw), "\n")
+	if truncated && len(lines) > 0 {
+		lines = lines[1:]
+	}
+
+	// 按时间顺序扫描，后来的事件覆盖先前的：最后一条才代表"此刻"。
+	state := map[string]ProxyQuota{}
+	ok := map[string]bool{}
+	for _, line := range lines {
+		m := logModelRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		model := m[1]
+
+		// 成功 → 这个模型此刻是好的，清掉记录并记进"确认可用"
+		// （与 observe 的口径一致）。
+		if strings.Contains(line, "转发完成") {
+			delete(state, model)
+			ok[model] = true
+			continue
+		}
+		// 只认"被上游拒绝且是 429"。转发失败（网络）不是配额状态，
+		// 「收到请求」是在途，都不能改判断。
+		if !strings.Contains(line, "拒绝") {
+			continue
+		}
+		h := logHTTPRe.FindStringSubmatch(line)
+		if h == nil || h[1] != "429" {
+			continue
+		}
+		msg := h[2]
+		q := ProxyQuota{Model: model, Message: cutStr(compactError(msg), 300)}
+		if looksExhausted(msg) {
+			q.State = "exhausted"
+		} else {
+			q.State = "rate_limited"
+			q.UntilMs, q.UntilText = parseResetAt(msg)
+		}
+		q.SeenMs = now
+		state[model] = q
+	}
+
+	var out quotaSeed
+	for _, q := range state {
+		// 恢复时刻已过 → 这次限流结束了，不该再报。日志里没有"恢复"事件
+		// （恢复是时间到了自然发生），所以只能靠时刻判断。
+		if q.State == "rate_limited" && q.UntilMs > 0 && q.UntilMs <= now {
+			continue
+		}
+		out.Limited = append(out.Limited, q)
+	}
+	for m := range ok {
+		// 被限的模型不该同时出现在"确认可用"里（后发生的限流已把它移出
+		// ok 的不是——ok 只由"转发完成"写入，而 429 之后不会有完成记录）。
+		if _, limited := state[m]; !limited {
+			out.OK = append(out.OK, m)
+		}
+	}
+	return out
 }
 
 // observe 记下代理刚看到的结局，并返回是否改变了对该模型的判断。
@@ -125,6 +292,9 @@ func (s *Server) observe(model string, status int, msg string) {
 	if model == "" {
 		return
 	}
+	// 先补上"重启前"的状态，否则下面那句"成功就删记录"会把日志里恢复出来的
+	// 限流痕迹抹掉，而那个模型其实还被限着。
+	s.seedFromLog()
 	s.rate.mu.Lock()
 	defer s.rate.mu.Unlock()
 	if s.rate.items == nil {
@@ -133,6 +303,10 @@ func (s *Server) observe(model string, status int, msg string) {
 
 	if status == http.StatusOK {
 		delete(s.rate.items, model)
+		if s.rate.seen == nil {
+			s.rate.seen = map[string]bool{}
+		}
+		s.rate.seen[model] = true
 		return
 	}
 	// 只有 429 才是"限流"；其它错误（400 模型名不对、500 上游故障）
@@ -152,8 +326,22 @@ func (s *Server) observe(model string, status int, msg string) {
 	s.rate.items[model] = q
 }
 
+// quotaOKSnapshot 返回"代理确认可用"的模型（排序后）。
+func (s *Server) quotaOKSnapshot() []string {
+	s.seedFromLog()
+	s.rate.mu.Lock()
+	defer s.rate.mu.Unlock()
+	out := make([]string, 0, len(s.rate.seen))
+	for m := range s.rate.seen {
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // quotaSnapshot 返回当前状态（按模型名排序，界面好对照）。
 func (s *Server) quotaSnapshot() []ProxyQuota {
+	s.seedFromLog()
 	s.rate.mu.Lock()
 	defer s.rate.mu.Unlock()
 	out := make([]ProxyQuota, 0, len(s.rate.items))
@@ -186,6 +374,9 @@ func lessQuota(a, b ProxyQuota) bool {
 // 是两回事，不该混进同一个包（usage 包里没有、也不该有 HTTP 上游的概念）。
 type usageResponse struct {
 	usage.Survey
+	// ProxyOK 是代理**亲眼见它成功过**的模型。界面用它把"确认可用"与
+	// "从没验证过"分开——后者显示"未验证"，而不是无根据地写"可用"。
+	ProxyOK []string `json:"proxyOk"`
 	// ProxyQuota 是代理观察到的当前限流状态（按模型）。
 	//
 	// **可用性以它为准**：Survey 里的 byModel/limits 是客户端落盘的历史记录，
@@ -202,5 +393,6 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, usageResponse{
 		Survey:     usage.Build(s.probe()),
 		ProxyQuota: s.quotaSnapshot(),
+		ProxyOK:    s.quotaOKSnapshot(),
 	})
 }

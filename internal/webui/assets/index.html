@@ -475,12 +475,14 @@
   .q-ico.ok   { color: var(--ok); }
   .q-ico.warn { color: var(--warn); }
   .q-ico.bad  { color: var(--bad); }
+  .q-ico.dim  { color: var(--ink-3); }
   .q-name { font-size: 13px; color: var(--ink); }
   .q-meta { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
   .q-state { font-size: 12px; color: var(--ink-2); text-align: right; }
   .q-state.ok   { color: var(--ok); }
   .q-state.warn { color: var(--warn); }
   .q-state.bad  { color: var(--bad); }
+  .q-state.dim  { color: var(--ink-3); }
   /* 历史瓷砖里的模型行：比 .q-row 紧凑，它是次要信息 */
   .q-hist { display: flex; align-items: baseline; gap: 7px; font-size: 12px;
             color: var(--ink-2); margin-top: 3px; }
@@ -2072,6 +2074,10 @@
     var proxy = usageData.proxyQuota || [];
     var byModel = {};
     proxy.forEach(function (q) { byModel[q.model] = q; });
+    // proxyOk 是"代理亲眼看它成功过"的模型。缺了它就只能把"从没发过请求"
+    // 也写成"可用"——那是没有根据的断言，用户一试就 429。
+    var okSet = {};
+    (usageData.proxyOk || []).forEach(function (m) { okSet[m] = true; });
 
     // 免费模型清单：**判据是 freeNow（被"限时免费"活动覆盖），不是 rate===0**。
     //
@@ -2117,7 +2123,7 @@
     }
 
     // 先算总账，写在最上面——用户第一眼要的是"能用还是不能用"。
-    var usable = 0, blocked = 0, soonest = 0;
+    var usable = 0, blocked = 0, unknown = 0, soonest = 0;
     free.forEach(function (f) {
       var q = byModel[f.id];
       if (q && q.state === "exhausted") { blocked++; return; }
@@ -2126,17 +2132,22 @@
         if (q.untilMs && (!soonest || q.untilMs < soonest)) soonest = q.untilMs;
         return;
       }
-      usable++;
+      if (okSet[f.id]) { usable++; return; }
+      unknown++;   // 代理还没见它成功过，不好说可用
     });
 
     var verdict, cls;
-    if (!blocked) {
-      verdict = "都能用"; cls = "ok";
-    } else if (usable) {
-      verdict = usable + " 个可用 · " + blocked + " 个被限";
-      cls = "warn";
+    if (blocked) {
+      cls = usable || unknown ? "warn" : "bad";
+      verdict = (usable ? usable + " 个可用 · " : "") +
+        (unknown ? unknown + " 个未验证 · " : "") + blocked + " 个被限";
+    } else if (unknown) {
+      cls = "info";
+      verdict = usable ? usable + " 个可用 · " + unknown + " 个未验证"
+                       : unknown + " 个待验证";
     } else {
-      verdict = "全被限住了"; cls = "bad";
+      cls = "ok";
+      verdict = "都能用";
     }
     var head = el("div", { class: "q-verdict" }, [
       el("span", { class: "pill " + cls, text: verdict })
@@ -2153,7 +2164,7 @@
     // 一行一个模型：图标 / 名字 / 状态。倒计时用人话，原始时刻放 title 里。
     free.forEach(function (f) {
       var q = byModel[f.id];
-      var icon = "check", icoCls = "ok", stateText = "可用", title = "";
+      var icon, icoCls, stateText, title = "";
       if (q && q.state === "exhausted") {
         icon = "cross"; icoCls = "bad"; stateText = "额度用尽";
         title = q.message || "";
@@ -2163,6 +2174,11 @@
           ? countdown(q.untilMs) + "后可恢复（" + fmtClock(q.untilMs) + "）"
           : "被限流中，等重置";
         title = q.message || "";
+      } else if (okSet[f.id]) {
+        icon = "check"; icoCls = "ok"; stateText = "可用";
+      } else {
+        // 没观察过就如实说"未验证"——写"可用"是无根据的断言。
+        icon = "pulse"; icoCls = "dim"; stateText = "未验证";
       }
       var meta = [];
       if (f.until) meta.push("免费至 " + shortDate(f.until));
@@ -2179,7 +2195,12 @@
 
     if (blocked) {
       card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
-        text: "被限时可以换上面可用的模型继续用；限流是免费的配额，等恢复即可，不影响账号。" }));
+        text: "「被限」是免费额度用完了，等它恢复即可（不影响账号），期间换上面可用的模型。" +
+          (unknown ? "「未验证」表示这些模型最近没被用过，点「一键测试」可以现场验一次。" : "") }));
+    } else if (unknown) {
+      card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+        text: "「未验证」表示本机代理最近没见它们成功过（刚重启也会这样）；" +
+          "点「一键测试」可以现场验一次。" }));
     }
     return card;
   }

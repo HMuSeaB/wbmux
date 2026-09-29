@@ -111,6 +111,9 @@ type Server struct {
 	logFn          func(format string, args ...any)
 	upstreamBaseFn func() string
 	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
+	// logPathFn 覆盖"日志文件在哪"。quotalive.go 启动时会从日志尾部恢复
+	// 限流状态（进程重启后内存里那份就没了，而模型可能还被限着）。
+	logPathFn func() string
 }
 
 // upstreamBase 返回国际后端地址。测试要能指到本地假上游，
