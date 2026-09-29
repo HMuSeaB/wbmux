@@ -272,14 +272,17 @@ func helperReason(code string) string {
 var execHelper = execHelperReal
 
 // findExe 是定位客户端主程序的实现，测试里替换它即可脱离真实安装。
+//
+// exe 非空表示用户用 --exe / 设置文件钉死了位置：那时它是权威的，
+// 探测不能悄悄换一个（Detect 已经把这条规矩实现好了）。
 var findExe = findExeReal
 
 // findExeReal 复用安装探测，而不是自己再写一套"主程序在哪"。
 //
 // 探测顺序（数据目录线索 → 注册表 → 常见位置 → PATH）已经在 variant 里
 // 调过很多轮，重写一份迟早与它分叉。
-func findExeReal(p *variant.Probe, id variant.ID) (string, error) {
-	inst := p.Detect(id, "")
+func findExeReal(p *variant.Probe, id variant.ID, exe string) (string, error) {
+	inst := p.Detect(id, exe)
 	if !inst.Found || inst.Executable == "" {
 		return "", fmt.Errorf("没找到%s客户端主程序，无法解开凭据信封%s",
 			displayName(id), problemsSuffix(inst.Problems))
@@ -312,7 +315,18 @@ func problemsSuffix(problems []string) string {
 // 解开一次要启动一个约 200 MB 的客户端进程。用量面板是 60 秒一轮的读操作，
 // 每次都现解的话，光是进程启动就够把界面拖卡。客户端刷新令牌时会重写文件，
 // 指纹（路径 + 修改时间 + 大小）随之变化，缓存自动失效并重解一次。
+//
+// 客户端位置靠自动探测。用户用 --exe 钉过位置的用 ResolveWith。
 func Resolve(p *variant.Probe, id variant.ID) (Credential, error) {
+	return ResolveWith(p, id, "")
+}
+
+// ResolveWith 与 Resolve 相同，但允许显式指定客户端主程序。
+//
+// exe 来自用户的 --exe / 设置文件。为它单开一个入口而不是加个"全局提示"：
+// 显式路径必须是权威的，探测绝不能悄悄换成另一处安装——那会连到非预期的
+// 后端（variant.Detect 对这条有完整说明）。
+func ResolveWith(p *variant.Probe, id variant.ID, exe string) (Credential, error) {
 	path := File(p, id)
 	if path == "" {
 		return Credential{}, fmt.Errorf("无法确定凭据文件路径")
@@ -340,22 +354,22 @@ func Resolve(p *variant.Probe, id variant.ID) (Credential, error) {
 		return hit, nil
 	}
 
-	token, exe, err := Unseal(p, id, path)
+	token, usedExe, err := Unseal(p, id, path, exe)
 	if err != nil {
 		return c, err
 	}
 	c.Token = token
 	c.Unsealed = true
-	c.UnsealedBy = exe
+	c.UnsealedBy = usedExe
 	cacheStore(id, fingerprint, c)
 	return c, nil
 }
 
-// Unseal 借客户端运行时解开 path 里的 accessToken，返回明文令牌。
+// Unseal 借客户端运行时解开 path 里的 accessToken，返回明文令牌与被借用的主程序。
 //
 // 单独导出是为了让"诊断"类功能（doctor）能在不进入缓存的前提下试一次，
 // 从而把真实原因回给用户。
-func Unseal(p *variant.Probe, id variant.ID, path string) (token, exe string, err error) {
+func Unseal(p *variant.Probe, id variant.ID, path, exe string) (token, usedExe string, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", fmt.Errorf("读取凭据文件失败: %w", err)
@@ -370,7 +384,7 @@ func Unseal(p *variant.Probe, id variant.ID, path string) (token, exe string, er
 		return "", "", fmt.Errorf("凭据文件里没有 accessToken")
 	}
 
-	exe, err = findExe(p, id)
+	usedExe, err = findExe(p, id, exe)
 	if err != nil {
 		return "", "", err
 	}
@@ -384,24 +398,24 @@ func Unseal(p *variant.Probe, id variant.ID, path string) (token, exe string, er
 		return "", "", fmt.Errorf("准备解密请求失败: %w", err)
 	}
 
-	out, err := execHelper(exe, payload)
+	out, err := execHelper(usedExe, payload)
 	if err != nil {
-		return "", exe, fmt.Errorf("借客户端运行时解密失败: %w", err)
+		return "", usedExe, fmt.Errorf("借客户端运行时解密失败: %w", err)
 	}
 
 	var resp helperResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
 		// 不回显 out：那是客户端进程的原始输出，可能包含敏感内容。
-		return "", exe, fmt.Errorf("无法解析客户端运行时的回话: %w", err)
+		return "", usedExe, fmt.Errorf("无法解析客户端运行时的回话: %w", err)
 	}
 	if !resp.OK {
-		return "", exe, errors.New(helperReason(resp.Reason))
+		return "", usedExe, errors.New(helperReason(resp.Reason))
 	}
 	token = strings.TrimSpace(resp.AccessToken)
 	if token == "" {
-		return "", exe, fmt.Errorf("客户端运行时回报成功但没给出令牌")
+		return "", usedExe, fmt.Errorf("客户端运行时回报成功但没给出令牌")
 	}
-	return token, exe, nil
+	return token, usedExe, nil
 }
 
 // execHelperReal 启动客户端主程序，以 Node 模式执行 helper JS。

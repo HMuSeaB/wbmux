@@ -53,6 +53,8 @@ func dispatch(args []string) error {
 		return cmdZCode(rest)
 	case "zimport":
 		return cmdZImport(rest)
+	case "checkin":
+		return cmdCheckin(rest)
 	case "sessions", "sess":
 		return cmdSessions(rest)
 	case "shortcut":
@@ -132,6 +134,7 @@ func printHelp(u *ui) {
   list             列出本机探测到的安装与可用后端
   export <后端>    只生成合并配置，不启动
   migrate          把一侧的会话/技能/记忆搬到另一侧
+  checkin          查签到状态；「checkin claim」领今天的积分
   config           查看或修改设置
   version          打印版本
   help             打印本帮助

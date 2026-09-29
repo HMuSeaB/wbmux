@@ -54,7 +54,7 @@ func newEnv(t *testing.T) *variant.Probe {
 
 	prev := findExe
 	t.Cleanup(func() { findExe = prev })
-	findExe = func(*variant.Probe, variant.ID) (string, error) { return fakeExe, nil }
+	findExe = func(*variant.Probe, variant.ID, string) (string, error) { return fakeExe, nil }
 
 	ClearCache()
 	t.Cleanup(ClearCache)
@@ -371,6 +371,39 @@ func TestResolveRejectsGarbageHelperOutput(t *testing.T) {
 	// 关键：原始输出不得被回显（那是外部进程的输出，可能含敏感内容）。
 	if strings.Contains(err.Error(), "这不是 JSON") {
 		t.Fatalf("不该回显 helper 原文: %v", err)
+	}
+}
+
+// TestResolveWithHonorsExplicitClientPath 确认 --exe 钉的位置被原样传下去。
+//
+// 这条重要的原因是：显式路径必须是权威的，绝不能被自动探测顶掉——
+// 探测到另一处安装会启动一个"看起来对、其实连的是另一个后端"的客户端。
+func TestResolveWithHonorsExplicitClientPath(t *testing.T) {
+	p := newEnv(t)
+	writeAuth(t, p, variant.CN, sealedDoc)
+
+	const pinned = `D:\pinned\WorkBuddy.exe`
+	var gotExe string
+	prev := findExe
+	t.Cleanup(func() { findExe = prev })
+	findExe = func(_ *variant.Probe, _ variant.ID, exe string) (string, error) {
+		gotExe = exe
+		if exe == "" {
+			return fakeExe, nil
+		}
+		return exe, nil
+	}
+	stubHelper(t, `{"ok":true,"accessToken":"tok-from-pinned"}`, nil)
+
+	c, err := ResolveWith(p, variant.CN, pinned)
+	if err != nil {
+		t.Fatalf("ResolveWith: %v", err)
+	}
+	if gotExe != pinned {
+		t.Fatalf("显式路径应被原样传下去，得到 %q", gotExe)
+	}
+	if c.UnsealedBy != pinned {
+		t.Fatalf("应用钉住的那个主程序，得到 %q", c.UnsealedBy)
 	}
 }
 

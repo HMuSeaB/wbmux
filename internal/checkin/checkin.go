@@ -127,8 +127,9 @@ type Result struct {
 	Credit int `json:"credit"`
 	// Message 是后端给的原话（已签过时就是"今天已签到，请明天再来"）。
 	Message string `json:"message,omitempty"`
-	// Status 是领取之后重新查到的状态快照，尽力而为：
-	// 查不到为 nil，不影响"领到了"这个结论。
+	// Status 是领取之后查到的状态快照，尽力而为：
+	// 查不到为 nil，不影响"领到了 / 已签过"这个结论。
+	// 两条分支都补（含"已签过"那条）——连签天数是使用者最想知道的那个数。
 	Status *Status `json:"status,omitempty"`
 }
 
@@ -208,7 +209,7 @@ func Claim(d Deps, id variant.ID) (Result, error) {
 		// 对使用者来说它不是错误。
 		var biz *BizError
 		if asBizError(err, &biz) && biz.Code == alreadyCheckedInCode {
-			return Result{AlreadyCheckedIn: true, Message: biz.Message}, nil
+			return attachStatus(d, id, Result{AlreadyCheckedIn: true, Message: biz.Message}), nil
 		}
 		return Result{}, err
 	}
@@ -229,11 +230,18 @@ func Claim(d Deps, id variant.ID) (Result, error) {
 		return Result{}, fmt.Errorf("领取回话里既没有 credit 也不是空（接口可能变了）：%s", summarize(env.Data))
 	}
 
-	// 领完顺手查一次，好让界面直接显示新的连签天数。查不到不影响结论。
+	return attachStatus(d, id, res), nil
+}
+
+// attachStatus 尽力补一份状态快照。
+//
+// "已签过"这条分支同样要补：对使用者最有用的信息恰恰是"现在连签几天了"，
+// 而那只能从状态接口拿。查不到不影响"领到了 / 已签过"这个结论。
+func attachStatus(d Deps, id variant.ID, res Result) Result {
 	if st, err := Query(d, id); err == nil {
 		res.Status = &st
 	}
-	return res, nil
+	return res
 }
 
 // creditOf 从回话里取本次领到的积分。

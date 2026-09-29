@@ -231,6 +231,33 @@ func TestClaimTreatsAlreadyCheckedInAsSuccess(t *testing.T) {
 	}
 }
 
+func TestClaimAttachesStatusOnAlreadyCheckedInBranch(t *testing.T) {
+	// "已签过"这条分支最该带出的是连签天数——那正是使用者要看的数，
+	// 而它只能从状态接口拿。这里确认这条分支也会去查一次。
+	d, _ := newDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "daily-checkin") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":10001,"msg":"今天已签到，请明天再来"}`)
+			return
+		}
+		_, _ = io.WriteString(w, statusBody)
+	})
+
+	res, err := Claim(d, variant.CN)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if !res.AlreadyCheckedIn {
+		t.Fatalf("应标成已签过: %+v", res)
+	}
+	if res.Status == nil {
+		t.Fatal("已签过分支也应带回状态（连签天数是最该显示的）")
+	}
+	if res.Status.StreakDays != 14 {
+		t.Fatalf("状态不对: %+v", res.Status)
+	}
+}
+
 func TestClaimRejectsUnknownShapeInsteadOfClaimingSuccess(t *testing.T) {
 	// HTTP 200、业务码正常，但没有 credit 也不是空 data。
 	// 这既不是成功也不是"已签"，必须报错——猜成"已签"的话用户会以为签了、
