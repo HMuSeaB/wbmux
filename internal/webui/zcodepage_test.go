@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HMuSeaB/wbmux/internal/variant"
+	"github.com/HMuSeaB/wbmux/internal/variant/varianttest"
 )
 
 // TestZCodeEndpoints 覆盖三个 ZCode 接口的正常与异常路径。
@@ -18,22 +18,9 @@ import (
 // 一来测试不该依赖本机装没装 ZCode，二来真实目录下跑会去读用户的真数据，
 // 那既慢又没必要（读正文的逻辑在 internal/zcode 里另有单测）。
 func TestZCodeEndpoints(t *testing.T) {
-	// 探针要按 internal/migrate 里那套完整构造：Detect 会用到 ReadFile，
-	// 少给一个就空指针（我第一次就是只给了 Home / Getenv）。
+	// 用统一构造器，别再手抄字段（少一个就会在别的包深处空指针）。
 	home := t.TempDir()
-	probe := &variant.Probe{
-		GOOS:   "windows",
-		Home:   home,
-		Getenv: func(string) string { return "" },
-		Exists: func(p string) bool {
-			if !strings.HasPrefix(p, home) {
-				return false
-			}
-			_, err := os.Stat(p)
-			return err == nil
-		},
-		ReadFile: os.ReadFile,
-	}
+	probe := varianttest.Probe(home)
 
 	srv, err := New(Options{Token: "tok", Probe: probe})
 	if err != nil {
@@ -93,19 +80,7 @@ func TestZCodeEndpoints(t *testing.T) {
 // 第一次不带 confirm 只回说明（写作前提要让用户看清），带 confirm 才真写。
 func TestZImportEndpoint(t *testing.T) {
 	home := t.TempDir()
-	probe := &variant.Probe{
-		GOOS:   "windows",
-		Home:   home,
-		Getenv: func(string) string { return "" },
-		Exists: func(p string) bool {
-			if !strings.HasPrefix(p, home) {
-				return false
-			}
-			_, err := os.Stat(p)
-			return err == nil
-		},
-		ReadFile: os.ReadFile,
-	}
+	probe := varianttest.Probe(home)
 	srv, err := New(Options{Token: "tok", Probe: probe})
 	if err != nil {
 		t.Fatalf("New: %v", err)

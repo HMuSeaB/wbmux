@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/HMuSeaB/wbmux/internal/sessions"
-	"github.com/HMuSeaB/wbmux/internal/variant"
+	"github.com/HMuSeaB/wbmux/internal/variant/varianttest"
 	"github.com/HMuSeaB/wbmux/internal/zcode"
 )
 
@@ -168,8 +168,9 @@ func TestImportRefusesRunningClient(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	probe := &variant.Probe{GOOS: "windows", Home: home,
-		Getenv: func(string) string { return "" }, ReadFile: os.ReadFile}
+	// 用统一的构造器：字段一定齐全（手抄版本漏过 Exists，
+	// 结果本地全绿、CI 的 macOS/Windows 上崩在 windowsDriveRoots）。
+	probe := varianttest.Probe(home)
 
 	// 造一份最小的 ZCode 库，让 Load 不至于因为"读不到"而先失败。
 	zdir := filepath.Join(home, ".zcode", "cli", "db")
