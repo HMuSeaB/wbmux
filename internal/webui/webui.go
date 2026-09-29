@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/checkin"
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
@@ -78,6 +79,13 @@ type Options struct {
 	// 「502 | Trace Id」，原因全在服务端。没有这个出口，排查只能靠
 	// 重新插桩——2026-09-27 那次"注入的模型一用就 502"正是如此。
 	Logf func(format string, args ...any)
+
+	// HostExe 是用户钉住的客户端主程序（设置文件里的 hostExe）。
+	//
+	// 存在的理由：国内版的凭据是加密信封，解开它要启动客户端主程序。
+	// 用户钉了位置就必须用他钉的那个——否则会出现"界面读的是这份账号、
+	// 解开的却是另一处安装的凭据"这种谁也看不出来的错配。
+	HostExe string
 }
 
 // Server 是内嵌界面的本地服务端。
@@ -114,6 +122,11 @@ type Server struct {
 	// logPathFn 覆盖"日志文件在哪"。quotalive.go 启动时会从日志尾部恢复
 	// 限流状态（进程重启后内存里那份就没了，而模型可能还被限着）。
 	logPathFn func() string
+	// checkinDepsFn 覆盖签到的依赖（接口地址与凭据）。
+	//
+	// 没有这个接缝，唯一能验证这条链路的办法就是拿**真账号去签一次**——
+	// 那是个写操作，不能出现在测试里。
+	checkinDepsFn func() checkin.Deps
 }
 
 // upstreamBase 返回国际后端地址。测试要能指到本地假上游，
@@ -198,6 +211,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
 	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))
+	mux.HandleFunc("/api/checkin", s.guard(s.handleCheckin))
+	mux.HandleFunc("/api/checkin/claim", s.guard(s.handleCheckinClaim))
 
 	s.http = &http.Server{
 		Handler:           mux,

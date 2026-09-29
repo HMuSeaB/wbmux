@@ -209,6 +209,8 @@ func cmdGUI(args []string) error {
 		IdleTimeout: idleTimeout,
 		Headless:    headless,
 		Logf:        guiLog,
+		// 用户钉过客户端位置时一路带下去：解开国内侧凭据信封要用同一处安装。
+		HostExe: cfg.HostExe,
 	}
 	srv, err := webui.New(opts)
 	if err != nil {
