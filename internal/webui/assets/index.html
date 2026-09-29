@@ -2288,9 +2288,13 @@
       });
       var acc = live[b.id] || {};
       var who = acc.nickname || (acc.uid ? acc.uid.slice(0, 8) + "…" : "");
+      // 凭据形态如实说：解开了就要说"解开了"，否则用户以为国内侧还是残的；
+      // 没解开才提示去装/修客户端。含糊地都说"信封"会让人以为功能没生效。
+      var credNote = acc.credKind === "unsealed" ? "（凭据信封已解开）"
+                   : acc.credKind === "envelope" ? "（凭据信封未解开）" : "";
       tiles.appendChild(el("div", { class: "tile" }, [
-        el("div", { class: "desc", text: sideLabel(b.id) +
-          (who ? " · " + who + (acc.credKind === "envelope" ? "（信封加密）" : "") : "") }),
+        el("div", { class: "desc", title: acc.unsealedBy || "",
+          text: sideLabel(b.id) + (who ? " · " + who + credNote : "") }),
         // 顶行只说"有没有历史记录"，不下"现在能不能用"的结论——
         // 那是上面那张卡的事（它读代理的实时观察）。
         el("div", { class: "big " + (!mine.length ? "ok" : "warn"),
@@ -2457,7 +2461,7 @@
             "模型清单  GET  /v1/models\n" +
             "聊天      POST /v1/chat/completions（OpenAI 格式，自动补 system）" }));
     box.appendChild(el("div", { class: "hint",
-      text: "仅国际侧；免费模型：deepseek-v4.1-flash / hy4-preview / hy3（限时）。国内凭据是信封，代理无解。" }));
+      text: "仅国际侧；免费模型：deepseek-v4.1-flash / hy4-preview / hy3（限时）。这个代理只连国际后端，国内侧的模型不经这里。" }));
 
     // --- 限流历史：一行一条，色标区分类型 ---
     if (limits.length) {

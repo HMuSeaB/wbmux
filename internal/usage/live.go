@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -25,14 +23,15 @@ import (
 //
 //   - 凭证：%LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/
 //     workbuddy-desktop.info（国内）/ workbuddy-desktop-ai.info（国际），
-//     根下 auth.accessToken + account.uid。
+//     根下 auth.accessToken + account.uid。**取凭据一律走 internal/credential**，
+//     它会顺带处理国内侧的加密信封（2026-09-29 起）。
 //   - 请求：Authorization: Bearer <accessToken> + X-User-Id: <uid>。
-//   - 端点：GET  {endpoint}/v2/enterprises/personal/models —— 实时产品配置
+//   - 端点：GET  {endpoint}/v3/config —— 实时产品配置
 //     （models[].credits 倍率、modelPromotions 限时免费活动）；
 //     POST {endpoint}/billing/meter/get-user-resource-summary —— 积分包余量。
 //
-// 只发只读请求。daily-checkin（签到）是改状态的操作，**绝不自动调用**；
-// 优惠码兑换在官方网页上，这里只展示活动信息。
+// **本包只发只读请求**。签到（daily-checkin 等改状态的操作）刻意不在这里，
+// 见 internal/checkin —— 混在一起的话，一个"刷新面板"的动作就可能把状态改了。
 
 // LiveModel 是官方接口返回的实时模型条目。
 type LiveModel struct {
@@ -78,7 +77,7 @@ type LivePackage struct {
 }
 
 // LiveAccount 是一侧的实时账号数据。OK 为 false 时 Err 说明原因
-// （最常见：国内版凭据是加密信封，本地解不开，调不了官方接口）。
+// （最常见：该侧没登录，或客户端装的位置没探测到）。
 type LiveAccount struct {
 	OK       bool          `json:"ok"`
 	Err      string        `json:"err,omitempty"`
@@ -89,10 +88,14 @@ type LiveAccount struct {
 	Nickname string `json:"nickname,omitempty"`
 	// UID 是账号标识，界面只展示前 8 位。
 	UID string `json:"uid,omitempty"`
-	// CredKind 是凭据形态：plaintext=明文（可调官方接口），
-	// envelope=加密信封（只能看快照）。用户问"国内版到底行不行"时，
-	// 这一个字段就是答案的界面化。
+	// CredKind 是凭据形态，取值见 credKindOf：plaintext=明文、
+	// unsealed=信封但已借客户端解开、envelope=信封且没解开。
+	//
+	// 用户问"国内版到底行不行"时，这一个字段就是答案的界面化。
 	CredKind string `json:"credKind,omitempty"`
+	// UnsealedBy 是解开信封时借用的客户端主程序，供界面如实说明
+	// "数据是从哪来的"。为空表示没走解密。
+	UnsealedBy string `json:"unsealedBy,omitempty"`
 }
 
 // liveEndpoint 与两侧产品配置的 endpoint 字段一致（产品身份字段，不改）。
@@ -101,78 +104,27 @@ var liveEndpoint = map[variant.ID]string{
 	variant.Intl: "https://www.workbuddy.ai",
 }
 
-// liveAuthFile 返回一侧客户端认证文件的路径。
-// 布局来自官方客户端（CodeBuddyExtension），按操作系统分目录。
-func liveAuthFile(probe *variant.Probe, id variant.ID) string {
-	dir := map[string]string{
-		"windows": filepath.Join("AppData", "Local", "CodeBuddyExtension", "Data", "Public", "auth"),
-		"darwin":  filepath.Join("Library", "Application Support", "CodeBuddyExtension", "Data", "Public", "auth"),
-		"linux":   filepath.Join(".local", "share", "CodeBuddyExtension", "Data", "Public", "auth"),
-	}[runtime.GOOS]
-	name := map[variant.ID]string{
-		variant.CN:   "workbuddy-desktop.info",
-		variant.Intl: "workbuddy-desktop-ai.info",
-	}[id]
-	return filepath.Join(probe.Home, dir, name)
+// credKindOf 把凭据形态压成一个界面能直接用的取值。
+//
+// "信封且没解开"与"信封但解开了"必须分开报：前者的对策是去装/修客户端，
+// 后者是正常可用状态。含糊地都说成"信封"会让用户以为功能没生效。
+func credKindOf(c credential.Credential) string {
+	switch {
+	case c.Unsealed:
+		return "unsealed"
+	case c.Sealed:
+		return "envelope"
+	default:
+		return "plaintext"
+	}
 }
 
-// liveCredentials 是认证文件里要用的两部分。Token 为空表示不可用。
-type liveCredentials struct {
-	Token string
-	UID   string
-	// Nickname 是登录昵称明文；信封侧为空。
-	Nickname string
-	// Envelope 为 true 表示 accessToken 是加密信封（WorkBuddy 5.6+），
-	// 客户端用 keyblob 自行解密，第三方拿不到明文就调不了接口。
-	Envelope bool
-}
-
-// readLiveCredentials 读认证文件并取出 token/uid。
-// accessToken 可能是明文字符串，也可能是 {$wbEncrypted:..., envelope:...}
-// 加密信封对象——信封要如实上报，绝不能拿空串当 Bearer 发出去。
-func readLiveCredentials(path string) (liveCredentials, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return liveCredentials{}, err
-	}
-	var root struct {
-		Auth struct {
-			AccessToken json.RawMessage `json:"accessToken"`
-		} `json:"auth"`
-		Account struct {
-			UID      json.RawMessage `json:"uid"`
-			Nickname json.RawMessage `json:"nickname"`
-		} `json:"account"`
-	}
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return liveCredentials{}, err
-	}
-	c := liveCredentials{}
-	if err := json.Unmarshal(root.Account.UID, &c.UID); err != nil {
-		c.UID = ""
-	}
-	// 昵称与 token 同样可能是信封：是字符串才收，对象（信封）不碰。
-	if err := json.Unmarshal(root.Account.Nickname, &c.Nickname); err != nil {
-		c.Nickname = ""
-	}
-	var token string
-	if err := json.Unmarshal(root.Auth.AccessToken, &token); err == nil {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			return c, fmt.Errorf("accessToken 为空")
-		}
-		c.Token = token
-		return c, nil
-	}
-	// 不是字符串——看一眼是不是信封对象（只看键名，不看内容）
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(root.Auth.AccessToken, &obj); err == nil {
-		if _, ok := obj["$wbEncrypted"]; ok {
-			c.Envelope = true
-			return c, fmt.Errorf("凭据是 WorkBuddy 加密信封（5.6+），本地无法解密调用官方接口")
-		}
-	}
-	return c, fmt.Errorf("accessToken 既不是明文也不是已知信封结构")
+// readCredential 取一侧可用的明文凭据。
+//
+// 这里只是把 credential 包接进来，不自己再写一遍解析：凭据文件的布局与
+// 信封的解法都由它对客户端负责，两处各写一份迟早分叉。
+func readCredential(probe *variant.Probe, id variant.ID) (credential.Credential, error) {
+	return credential.Resolve(probe, id)
 }
 
 // ProxyCredentials 是本地 API 代理层需要的最小凭据集（token+uid）。
@@ -181,20 +133,19 @@ type ProxyCredentials struct {
 	UID   string
 }
 
-// IntlProxyCredentials 读国际侧凭据（代理层用）。信封/缺失都报错——
-// 代理只服务明文凭据的国际侧，国内信封无解。
+// IntlProxyCredentials 读国际侧凭据（代理层用）。
+//
+// 国际侧一直是明文，所以这条链路很轻：读文件 + 解析 + 校验非空。
+// 国内侧的信封不走这里——代理只服务国际后端。
 func IntlProxyCredentials(probe *variant.Probe) (ProxyCredentials, error) {
-	cred, err := readLiveCredentials(liveAuthFile(probe, variant.Intl))
+	c, err := readCredential(probe, variant.Intl)
 	if err != nil {
 		return ProxyCredentials{}, err
 	}
-	if cred.Envelope {
-		return ProxyCredentials{}, fmt.Errorf("凭据是加密信封（WorkBuddy 5.6+），本地无法使用")
-	}
-	if cred.Token == "" {
+	if c.Token == "" {
 		return ProxyCredentials{}, fmt.Errorf("accessToken 为空")
 	}
-	return ProxyCredentials{Token: cred.Token, UID: cred.UID}, nil
+	return ProxyCredentials{Token: c.Token, UID: c.UID}, nil
 }
 
 // IntlEndpoint 返回国际后端地址（与产品配置 endpoint 一致）。
@@ -236,23 +187,21 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 // 不让单侧的失败拖垮整个面板。
 func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 	acc := &LiveAccount{}
-	cred, err := readLiveCredentials(liveAuthFile(probe, id))
+	cred, err := readCredential(probe, id)
 	acc.UID = cred.UID
 	acc.Nickname = cred.Nickname
+	acc.CredKind = credKindOf(cred)
+	acc.UnsealedBy = cred.UnsealedBy
 	if err != nil {
-		if cred.Envelope {
-			acc.Err = err.Error() // 信封场景的报错本身已是完整说明，别再加前缀
-		} else {
-			acc.Err = "读认证文件失败：" + err.Error()
-		}
+		// 这里如实回 credKindOf 的判定：还是信封就是 envelope，
+		// 界面据此提示"要装/修客户端"，而不是笼统一句读不到。
+		acc.Err = err.Error()
 		return acc
 	}
-	if cred.Envelope {
-		acc.Err = "凭据是加密信封（WorkBuddy 5.6+），本地无法解密；实时倍率/余额请看客户端或官方账单页"
-		acc.CredKind = "envelope"
+	if cred.Token == "" {
+		acc.Err = "凭据里没有可用的令牌"
 		return acc
 	}
-	acc.CredKind = "plaintext"
 	endpoint := liveEndpoint[id]
 
 	models, promos, err := fetchLiveModels(endpoint, cred, id)
@@ -334,7 +283,7 @@ func liveCommonHeaders(id variant.ID) map[string]string {
 // 首选 GET /v3/config——渲染层模型选择器用的就是这份：26 个模型
 // （含 DeepSeek 系）、中文描述、上下文窗口、限时免费活动全在里面。
 // 失败时回退到 /v2/enterprises/personal/models（少 DeepSeek 层）。
-func fetchLiveModels(endpoint string, cred liveCredentials, id variant.ID) ([]LiveModel, []LivePromo, error) {
+func fetchLiveModels(endpoint string, cred credential.Credential, id variant.ID) ([]LiveModel, []LivePromo, error) {
 	hdr := liveCommonHeaders(id)
 	raw, err := liveJSON(endpoint, "/v3/config", "GET", cred.Token, cred.UID, nil, hdr)
 	if err != nil {
@@ -502,7 +451,7 @@ func sortLiveModels(models []LiveModel) {
 
 // fetchLivePackages 拉积分包余量。字段来自实测响应：
 // Packages[].Cycle{Total,Remain,Used,Frozen}Capacity + CapacityUnit。
-func fetchLivePackages(endpoint string, cred liveCredentials) ([]LivePackage, error) {
+func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePackage, error) {
 	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-summary", "POST", cred.Token, cred.UID, strings.NewReader("{}"), nil)
 	if err != nil {
 		return nil, err

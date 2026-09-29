@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -66,7 +67,7 @@ func pickProbeModel(models []LiveModel) string {
 
 // sendProbeMessage 发一条最小聊天消息并解析流式响应。
 // 返回：服务端回显的模型、回复文本、token 用量、报的积分消耗。
-func sendProbeMessage(endpoint string, cred liveCredentials, id variant.ID, model string) (served, reply string, promptTok, completionTok int, credit float64, err error) {
+func sendProbeMessage(endpoint string, cred credential.Credential, id variant.ID, model string) (served, reply string, promptTok, completionTok int, credit float64, err error) {
 	body := map[string]any{
 		"model":  model,
 		"stream": true, // 实测非流式被拒（code 11101）
@@ -186,13 +187,9 @@ func maxInt(a, b int) int {
 // 复查账单。任何一步失败都如实写进结果，绝不让一侧的失败影响另一侧。
 func SendChatProbe(probe *variant.Probe, id variant.ID) *ChatProbeResult {
 	res := &ChatProbeResult{Side: string(id)}
-	cred, err := readLiveCredentials(liveAuthFile(probe, id))
+	cred, err := readCredential(probe, id)
 	if err != nil {
 		res.Err = err.Error()
-		return res
-	}
-	if cred.Envelope {
-		res.Err = "凭据是加密信封（WorkBuddy 5.6+），无法用本地凭据发起测试；请在客户端里发一条消息后看面板归属"
 		return res
 	}
 	endpoint := liveEndpoint[id]
