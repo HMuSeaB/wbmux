@@ -423,6 +423,13 @@ func SurveyCosts(probe *variant.Probe) ([]SessionCost, []string) {
 	var warns []string
 
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		// 库不存在是**正常状态**（那一侧从没登录过），不是错误。
+		//
+		// 之前不判断、直接查，于是"某一侧没登录"会变成面板底部一条常驻的
+		// 红色警告，看起来像坏了。要先确认库在，再决定要不要报警告。
+		if !migrate.HasDB(probe, id) {
+			continue
+		}
 		rows, err := migrate.Query(probe, id, costQuery)
 		if err != nil {
 			warns = append(warns, warn(id, "读额度表失败："+err.Error()))

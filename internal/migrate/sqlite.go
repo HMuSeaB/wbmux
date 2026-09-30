@@ -288,6 +288,17 @@ func readRows(rt runtimePaths, dbPath string) ([]Row, error) {
 	return res.Rows, nil
 }
 
+// HasDB 判断某一侧有没有建好数据库。
+//
+// 存在的理由：调用方常需要**先问一句"那儿有库吗"，再决定要不要发查询**。
+// 库不存在是正常状态（那一侧从没登录过），不该跟"查询失败"混为一谈——
+// 混在一起就会让"某侧没登录"变成界面上一条常驻的红色警告。
+//
+// 只做文件存在性判断，不打开连接：调用方本来也只是想避免那个必然失败的查询。
+func HasDB(probe *variant.Probe, id variant.ID) bool {
+	return fileExists(filepath.Join(probe.DataDir(id), "workbuddy.db"))
+}
+
 // Query 在指定档位的数据库上跑一条**只读**查询。
 //
 // 存在的理由：搬运只需要 sessions 表，但有些信息在别的表里——
