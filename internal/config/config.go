@@ -25,6 +25,14 @@ type Config struct {
 	// ExtraEndpoints 会被追加进生成配置的 officialEndpoints。
 	ExtraEndpoints []string `json:"extraEndpoints,omitempty"`
 
+	// DisableAutoUpdate 控制生成配置里 `updates.startupForceAutoUpdate` 的取值。
+	//
+	// 用指针是为了区分"没设过"与"明确设成 false"：默认（nil）按**开启**处理
+	// ——即默认禁用客户端自动更新。理由是 wbmux 靠客户端未公开的配置行为工作，
+	// "客户端被悄悄升到新版本"正是机制失效的主要来源；用户要的是稳定可用，
+	// 而不是最新。想恢复官方行为，把它显式设为 false 即可。
+	DisableAutoUpdate *bool `json:"disableAutoUpdate,omitempty"`
+
 	// GUIToken 是图形界面的访问令牌，持久化保存。
 	//
 	// # 为什么不做成"每次启动随机"

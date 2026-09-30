@@ -174,6 +174,27 @@ var noiseRules = []noiseRule{
 	{Kind: "go build 残渣", Re: regexp.MustCompile(`[\\/]go-build\d+[\\/]`)},
 	{Kind: "go build 残渣", Re: regexp.MustCompile(`[\\/]go-build\d+$`)},
 
+	// Go 的**构建缓存**（GOCACHE）被淘汰时丢进回收站的条目。
+	//
+	// 2026-09-30 实测：这是本机最大的一头，**8794 条 / 498 MB**，
+	// 而当时规则表一条都没命中它。用户的感受正是"回收站还有东西没清理干净"。
+	//
+	// 形态：`<GOCACHE>\<2位十六进制>\<64位十六进制>-{a,d}`
+	//   -a 是 action 记录（约 175 字节），-d 是数据（几百 KB 到十几 MB）
+	// 默认 GOCACHE 在 `%LOCALAPPDATA%\go-build`，本机 1.6 GB。
+	//
+	// Go 自己会按容量淘汰缓存，但**淘汰是移进回收站而不是直接删**——
+	// 于是每跑一次构建就可能多几条，长期累积成上万条。条目数正是拖慢
+	// 资源管理器的那个量，体积倒是次要。
+	//
+	// 判据收紧到"go-build 下、两级十六进制名"，避免误伤普通目录：
+	//   第 1 段是恰好 2 位十六进制（GOCACHE 的分片目录）
+	//   第 2 段是至少 40 位十六进制（实测 64 位）加 -a 或 -d 后缀
+	// 比 `go-build` 出现即匹配要保守得多——`go-build123456` 那种临时目录
+	// 由上面两条规则管，两者不重叠。
+	{Kind: "Go 构建缓存淘汰", Re: regexp.MustCompile(
+		`[\\/]go-build[\\/][0-9a-f]{2}[\\/][0-9a-f]{40,}-[ad]$`)},
+
 	// 工具自身的安全删除中转与临时目录。
 	{Kind: "工具临时目录", Re: regexp.MustCompile(`codebuddy-safe-delete`)},
 

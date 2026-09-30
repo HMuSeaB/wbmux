@@ -325,3 +325,78 @@ func excerpt(s string) string {
 	}
 	return s
 }
+
+// TestDisableAutoUpdateOnlyTouchesTheSwitch 钉住"关自动更新时只翻开关、不动更新通道"。
+//
+// 这两件事必须分开（理由写在 Patch 的注释里）：
+//
+//	updates.url —— "去哪儿更新"。改了会让国内版去拉国际版安装包（反之亦然），
+//	               所以**永远不能动**。
+//	startupForceAutoUpdate —— "启动时要不要自动更新"。这是**唯一**被有意放开的
+//	               例外：wbmux 靠客户端未公开的配置行为工作，客户端被悄悄升级
+//	               正是机制失效的主要来源。
+//
+// 用 Patch 直接改文档对象（与同文件其它用例一致），不落盘。
+func TestDisableAutoUpdateOnlyTouchesTheSwitch(t *testing.T) {
+	const (
+		keepURL = "https://keep-me.example"
+		wantKey = "updates.startupForceAutoUpdate"
+	)
+	intl, _ := variant.Get(variant.Intl)
+
+	cases := []struct {
+		name      string
+		opts      Options
+		wantValue any
+		wantRec   bool
+	}{
+		{"不开这个选项时不改宿主原值", Options{}, true, false},
+		{"开了就翻成 false", Options{DisableAutoUpdate: true}, false, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			doc := loadSample(t)
+			// 造出与真实宿主一致的结构：updates 是嵌套对象。
+			doc["updates"] = map[string]any{
+				"apiVersion":             "v2",
+				"url":                    keepURL,
+				"startupForceAutoUpdate": true,
+			}
+
+			changes, err := Patch(doc, intl, c.opts)
+			if err != nil {
+				t.Fatalf("Patch 失败: %v", err)
+			}
+
+			updates, ok := doc["updates"].(map[string]any)
+			if !ok {
+				t.Fatalf("updates 应仍是对象，实际 %T", doc["updates"])
+			}
+			if got := updates["startupForceAutoUpdate"]; got != c.wantValue {
+				t.Errorf("startupForceAutoUpdate = %v，期望 %v", got, c.wantValue)
+			}
+			// 最要紧的一条：更新通道与同块里的无关字段都必须原样保留。
+			if got := updates["url"]; got != keepURL {
+				t.Errorf("updates.url 被改动了: %v", got)
+			}
+			if got := updates["apiVersion"]; got != "v2" {
+				t.Errorf("updates 里的无关字段被改动了: %v", got)
+			}
+
+			found := false
+			for _, ch := range changes {
+				if ch.Field == wantKey {
+					found = true
+					if ch.To != "false" {
+						t.Errorf("变更记录的 To 应为 false，实际 %q", ch.To)
+					}
+				}
+			}
+			if found != c.wantRec {
+				t.Errorf("变更记录出现情况不对：want=%v got=%v（changes=%v）",
+					c.wantRec, found, changes)
+			}
+		})
+	}
+}

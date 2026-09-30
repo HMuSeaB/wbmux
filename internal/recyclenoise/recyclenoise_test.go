@@ -109,6 +109,24 @@ func TestClassify(t *testing.T) {
 		{"go build 里的文件",
 			`C:\Users\36230\AppData\Local\go-tmp\go-build465982355\b001\exe\a.out.exe`, 11000000, "go build 残渣"},
 
+		// Go 构建缓存（GOCACHE）淘汰的条目。2026-09-30 实测它是本机最大的一头：
+		// 8794 条 / 498 MB，而当时一条规则都没命中它——用户说的"回收站还有东西
+		// 没清理干净"就是指这个。
+		//
+		// 形态是 `<GOCACHE>\<2位十六进制>\<64位十六进制>-{a,d}`，-a 是 action
+		// 记录、-d 是数据。Go 自己按容量淘汰缓存时是**移进回收站**而不是直接删。
+		{"Go 缓存淘汰 action 记录",
+			`C:\Users\36230\AppData\Local\go-build\ff\fff31923861dfbeba1293322160f78282a7975db4e38de1282b2158c9025ce68-a`,
+			175, "Go 构建缓存淘汰"},
+		{"Go 缓存淘汰 数据块",
+			`C:\Users\36230\AppData\Local\go-build\ff\ffe754bc5a4cd8fc873493e7fcacb52cd7523ca59841ecb6710e5e91fc6664d3-d`,
+			13700000, "Go 构建缓存淘汰"},
+		// 大小不设上限：实测有 13.7 MB 的 -d 条目，它们正是占体积的那批。
+		{"Go 缓存淘汰 大块也要认",
+			`C:\Users\36230\AppData\Local\go-build\a1\` +
+				`1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-d`,
+			13700000, "Go 构建缓存淘汰"},
+
 		// go test 的临时树（t.TempDir 会铺出多级子目录）。
 		{"go test 顶层",
 			`C:\Users\36230\AppData\Local\Temp\TestURLContainsToken790468319`, 0, "go test 临时目录"},
@@ -188,6 +206,28 @@ func TestClassify(t *testing.T) {
 		// 名字里有 pip 但不在临时目录、也不是 pip 的临时目录格式。
 		{"文档里的 pip 笔记",
 			`C:\Users\36230\Documents\pip-notes.md`, 2048, ""},
+
+		// ---------- 反例：Go 缓存那条规则**不许**命中这些 ----------
+		//
+		// 那条规则用了 40+ 位十六进制的宽模式，最容易误伤，所以逐条钉住边界。
+		// 判断原则：只有"go-build 下、恰好两级十六进制名、末段是长哈希 + -a/-d"
+		// 才算；任何一条不满足都交还给用户。
+		{"反例：普通 go-buildN 临时目录（归上一条规则，不是缓存）",
+			`C:\Users\36230\AppData\Local\go-tmp\go-build4146152272\b001`, 0, "go build 残渣"},
+		{"反例：分片段不是 2 位十六进制",
+			`C:\Users\36230\AppData\Local\go-build\zzz\` +
+				`1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-a`, 100, ""},
+		{"反例：哈希太短（不足 40 位）",
+			`C:\Users\36230\AppData\Local\go-build\ff\abc-a`, 100, ""},
+		{"反例：后缀不是 -a/-d",
+			`C:\Users\36230\AppData\Local\go-build\ff\` +
+				`1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-x`, 100, ""},
+		{"反例：只是哈希结尾，但不在 go-build 下",
+			`C:\Users\36230\Documents\` +
+				`1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-a`, 100, ""},
+		{"反例：go-build 下但只有一级（缺分片目录）",
+			`C:\Users\36230\AppData\Local\go-build\` +
+				`1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-a`, 100, ""},
 	}
 
 	for _, c := range cases {

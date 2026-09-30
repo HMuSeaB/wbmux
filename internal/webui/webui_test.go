@@ -282,13 +282,24 @@ func TestPreviewDescribesRewritesAndLeavesRestAlone(t *testing.T) {
 	}
 
 	joined := strings.Join(pv.Changes, "\n")
-	for _, want := range []string{"endpoint", "dataFolderName", "officialEndpoints", "isOversea"} {
+	for _, want := range []string{
+		"endpoint", "dataFolderName", "officialEndpoints", "isOversea",
+		// 禁用客户端自动更新是生成的配置里**有意**加的一项，预览必须如实列出——
+		// 用户得知道 wbmux 改了客户端的一个更新行为。
+		"updates.startupForceAutoUpdate",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("改写清单里缺少 %s：\n%s", want, joined)
 		}
 	}
 	// 这几项绝不能动：改了会让客户端自己的更新与产品标识错乱。
-	for _, forbidden := range []string{"productName", "updates", "smhHost", "productFeatures"} {
+	//
+	// 注意 `updates` 本身不是禁项——`updates.startupForceAutoUpdate`（启动时
+	// 是否强制自动更新）是**唯一**有意放开的例外，见 product.Options。
+	// 禁的是**更新通道**：`updates.url` 一旦被改，国内版就会去拉国际版安装包。
+	for _, forbidden := range []string{
+		"productName", "updates.url", "updateUrl", "smhHost", "productFeatures",
+	} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("改写清单里不该出现 %s：\n%s", forbidden, joined)
 		}

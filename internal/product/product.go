@@ -44,6 +44,20 @@ type Options struct {
 	// ExtraEndpoints 会被追加进 officialEndpoints（去重后）。
 	// 用于企业自建域等场景。
 	ExtraEndpoints []string
+
+	// DisableAutoUpdate 关掉客户端的"启动时强制自动更新"。
+	//
+	// 为什么要有这个：该开关的默认值来自产品配置的
+	// `updates.startupForceAutoUpdate`（实测国内版为 true）。关掉它不会
+	// 阻止"手动检查更新"，只是不再在启动时自动拉起安装包——对于
+	// wbmux 这种靠未公开配置行为工作的工具，"客户端被悄悄升到新版本"
+	// 恰恰是机制失效的主要来源。
+	//
+	// 客户端实际取值链（从 app.asar 读到）：
+	//   enabled = 用户设置 ?? envProduct.updates.startupForceAutoUpdate
+	// 用户手动设过就以用户的为准，所以我们只在**默认值**这一层动手，
+	// 不覆盖用户的选择（界面上那个开关仍然有效）。
+	DisableAutoUpdate bool
 }
 
 // Load 读取并解析一个 product.json。
@@ -136,11 +150,27 @@ func Patch(doc Document, target variant.Backend, opts Options) ([]Change, error)
 	setIn(attrs, &changes, "authentication.attributes.iOADomain", toAnySlice(target.Domains.IOA))
 	setIn(attrs, &changes, "authentication.attributes.cloudHostedDomain", toAnySlice(target.Domains.CloudHosted))
 
+	// 关掉"启动时强制自动更新"。
+	//
+	// 这是对下面"刻意不触碰 updates"那一条的**有意例外**，所以写清楚区别：
+	// 不动的是 `updates.url` / `updateUrl`（那是"去哪儿更新"，改了会让国内版
+	// 去拉国际版安装包）以及检查更新的通道；这里只翻一个**行为开关**的默认值，
+	// 让它别在启动时自动拉起升级。
+	if opts.DisableAutoUpdate {
+		updates, err := ensureMap(doc, "updates")
+		if err != nil {
+			return nil, err
+		}
+		setIn(updates, &changes, "updates.startupForceAutoUpdate", false)
+	}
+
 	// 刻意不触碰的字段，在此显式记录以免日后被误加：
 	//   productName / applicationName / win32ExecutableName / urlProtocol
 	//     —— 属于宿主自身的身份标识，改动可能影响单实例互斥、协议注册与任务栏归组。
-	//   updates / updateUrl
+	//   updates.url / updateUrl
 	//     —— 保持宿主自己的更新通道，避免国内版去拉国际版安装包（反之亦然）。
+	//        注意：`updates.startupForceAutoUpdate`（启动时是否强制自动更新）
+	//        是**唯一**的例外，见上面 DisableAutoUpdate 的说明。
 	//   smhHost
 	//     —— 区域安全上报地址。宿主缺失时保持缺失，不主动把流量导向其它区域。
 	//   models / prompts / agents / tools / productFeatures / config

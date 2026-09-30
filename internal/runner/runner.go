@@ -139,6 +139,12 @@ func prepareOverride(target variant.Backend, probe *variant.Probe, opts Options)
 
 	patchOpts := product.Options{
 		ExtraEndpoints: append(append([]string{}, cfg.ExtraEndpoints...), opts.ExtraEndpoints...),
+		// 默认禁用客户端"启动时强制自动更新"。
+		//
+		// 语义是"没设过就当开启禁用"（见 config.DisableAutoUpdate）。为什么默认
+		// 是这个方向：wbmux 依赖客户端未公开的配置行为，客户端一升级就可能失效，
+		// 而用户要的是稳定可用。想跟随官方更新的话，把它显式设成 false。
+		DisableAutoUpdate: cfg.DisableAutoUpdate == nil || *cfg.DisableAutoUpdate,
 	}
 	changes, err := product.Generate(hostInst.ProductJSON, outPath, target, patchOpts)
 	if err != nil {
