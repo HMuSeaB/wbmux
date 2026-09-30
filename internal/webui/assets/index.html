@@ -808,23 +808,41 @@
       连签会累计积分，断一天就归零。这一页读的是<strong>国内版账号</strong>——
       签到目前只在国内侧开放，国际侧接口在、活动没开。
     </p>
+    <p class="sub">
+      <strong>打开这一页会自动签到</strong>：先查状态，只有今天还没签才领。
+      已签过就只记下状态、不再重复领（接口是幂等的，重复领也不会多拿）。
+    </p>
     <div class="row" style="margin-top:14px">
       <button id="btn-checkin-refresh">刷新状态</button>
       <button class="primary" id="btn-checkin-claim" disabled>领取今日积分</button>
-      <span class="hint" id="checkin-note" style="margin:0"></span>
+      <label class="hint" style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="chk-checkin-auto" style="margin:0">
+        打开界面时自动签到
+      </label>
     </div>
+    <div id="checkin-auto-note" style="margin-top:10px"></div>
     <div id="checkin-body" style="margin-top:14px"></div>
   </section>
   <section>
-    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>这里不会替你自动领</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>自动签到的边界</h2>
     <p class="sub">
-      领取是<strong>改账号状态</strong>的动作，而界面随时可能被打开、被刷新、被后台标签页
-      自动重载——把写操作挂在上面，等于让状态在你没看见的时候被改掉。所以这里只有两个
-      按钮：一个只读的查询，一个要你亲手点的领取。
+      自动签到会<strong>改账号状态</strong>（领积分、改连签天数），是 wbmux 里少数几个
+      会写远端的地方，所以它的行为被限制得很死：
     </p>
     <p class="sub">
-      想要每天定时领，用命令行 <code>wbmux checkin claim</code>，交给系统任务计划程序
-      或 cron。它是幂等的：已经签过就如实回报"已签过"，不会重复领，也不会报错。
+      <strong>只在「今天还没签」时才领。</strong>已签过、没开活动、或者状态根本查不到
+      （没登录 / 断网），都<strong>一个请求都不发</strong>——宁可什么都不做，也不在
+      看不清状态的时候乱改账号。判断放在服务端做，不靠页面自己算。
+    </p>
+    <p class="sub">
+      <strong>每天会自己刷新。</strong>「今天签了没」由后端按自然日判定，跨过午夜就
+      自动变成"没签"，第二天打开界面会重新领——不需要你做任何事，也不需要 wbmux
+      常驻后台。
+    </p>
+    <p class="sub">
+      不想要自动的，把上面的勾去掉。关掉之后连一次查询都不会发。
+      想在固定时刻领（比如每天 9 点），用命令行 <code>wbmux checkin claim</code>
+      交给系统任务计划程序，它同样是幂等的：签过就如实回报，不会重复领也不会报错。
     </p>
   </section>
     </div>
@@ -1758,7 +1776,65 @@
     else claim.title = "";
   }
 
+  // 进页面时**先自动签到**，再按结果渲染。
+  //
+  // 为什么整页只调一个接口而不是"先查再决定要不要领"：那个判断放在服务端
+  // （checkin.AutoClaim）——页面随时可能被刷新、被后台标签页重载，判断放前端
+  // 就会出现同一时刻多次请求。这里只管调一次、把结果如实显示出来。
+  //
+  // 手动重查走 loadCheckinStatus（只读），能清楚区分"我点的是刷新"与
+  // "页面自己在自动签"——两者性质不同，不该共用一个入口。
   function loadCheckin() {
+    var box = document.getElementById("checkin-body");
+    if (!box) return;
+    loadAutoCheckinToggle();
+    clear(box);
+    box.appendChild(el("div", { class: "hint" },
+      [el("span", { class: "spinner" }), "正在检查今天的签到…"]));
+    checkinBusy(true);
+
+    api("/api/checkin/auto", { method: "POST" })
+      .then(function (data) {
+        // 自动签到的回话形状与 /api/checkin 一致（都带 status/label），
+        // 额外多了 skipped / note 说明"这次做了什么"。
+        checkinLast = { side: data.side, label: data.label, status: data.status };
+        renderAutoNote(data);
+        if (data.status) {
+          renderCheckin(checkinLast);
+        } else {
+          clear(box);
+          box.appendChild(el("div", { class: "note warn",
+            text: data.note || "没读到签到状态。" }));
+          checkinLast = null;
+          refreshCheckinButtons();
+        }
+      })
+      .catch(function (e) {
+        checkinLast = null;
+        clear(box);
+        box.appendChild(el("div", { class: "note bad", text: "自动签到失败：" + e.message }));
+      })
+      .then(function () { checkinBusy(false); });
+  }
+
+  // renderAutoNote 把"这次自动签到做了什么"明说出来。
+  //
+  // 这一步是硬要求：自动签**会改账号状态**，用户有权知道它刚才动没动、动了什么。
+  // 悄悄签掉、只显示一个"已签到"，等于把写操作藏起来。
+  function renderAutoNote(data) {
+    var box = document.getElementById("checkin-auto-note");
+    if (!box) return;
+    clear(box);
+    var note = data && data.note;
+    if (!note) return;
+    var cls = "note ok";
+    if (data.skipped === "unavailable") cls = "note warn";
+    else if (data.skipped === "disabled") cls = "note";
+    box.appendChild(el("div", { class: cls, text: note }));
+  }
+
+  // loadCheckinStatus 是**只读**重查，给「刷新状态」按钮用。
+  function loadCheckinStatus() {
     var box = document.getElementById("checkin-body");
     if (!box) return;
     clear(box);
@@ -1780,13 +1856,18 @@
       .then(function () { checkinBusy(false); });
   }
 
+  function loadAutoCheckinToggle() {
+    var cb = document.getElementById("chk-checkin-auto");
+    if (!cb) return;
+    api("/api/checkin/auto-toggle")
+      .then(function (d) { cb.checked = !!d.enabled; })
+      .catch(function () { cb.checked = true; });  // 读不到就按默认（开）
+  }
+
   function renderCheckin(data) {
     var box = document.getElementById("checkin-body");
     var st = (data && data.status) || {};
     clear(box);
-
-    var note = document.getElementById("checkin-note");
-    if (note) note.textContent = (data.label || "") + (st.active ? "" : " · 未开放");
 
     if (!st.active) {
       box.appendChild(el("div", { class: "note", text: "这一侧没有开签到活动。" }));
@@ -2973,8 +3054,30 @@
 
   // 签到。和回收站同理：切到这一页才去读，读一次要借客户端的运行时解凭据，
   // 没必要在启动时就跑。
-  document.getElementById("btn-checkin-refresh").addEventListener("click", loadCheckin);
+  // 「刷新状态」是**只读**重查，不碰自动签到——用户点它是想看现在什么状态，
+  // 不该顺手再发一次领取。要自动签的那个入口是进页面时的 loadCheckin。
+  document.getElementById("btn-checkin-refresh").addEventListener("click", loadCheckinStatus);
   document.getElementById("btn-checkin-claim").addEventListener("click", claimCheckin);
+  document.getElementById("chk-checkin-auto").addEventListener("change", function () {
+    var box = document.getElementById("checkin-auto-note");
+    var on = this.checked;
+    api("/api/checkin/auto-toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: on })
+    }).then(function () {
+      toast(on ? "已打开自动签到" : "已关闭自动签到", "ok");
+      if (box) {
+        clear(box);
+        box.appendChild(el("div", { class: "note",
+          text: on ? "下次打开这一页会自动签到。" : "已关闭：这一页不会再自动领，只显示状态。" }));
+      }
+    }).catch(function (e) {
+      toast("保存失败：" + e.message, "bad");
+      // 存失败就把勾还原，别让界面显示一个并不生效的状态。
+      document.getElementById("chk-checkin-auto").checked = !on;
+    });
+  });
 
   // 回收站清理。切到这一页时才去读——读回收站要遍历所有条目的元数据，
   // 没必要在启动时就跑。

@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -232,6 +233,88 @@ func Claim(d Deps, id variant.ID) (Result, error) {
 
 	return attachStatus(d, id, res), nil
 }
+
+// AutoResult 是一次自动领取的结果。
+type AutoResult struct {
+	// Status 是决定要不要领之前查到的状态。查不到为 nil。
+	//
+	// 即使没领（已签过、没活动、查不到）也会带上：调用方要显示
+	// "今天签了没、连签几天"，那只能从状态接口拿。
+	Status *Status `json:"status,omitempty"`
+	// Result 是真正发起了领取时的结果；没发起领取时为 nil。
+	Result *Result `json:"result,omitempty"`
+	// Skipped 说明**为什么没领**，取值固定为四种之一：
+	//
+	//	""            真的领了（或已签过，见 Result）
+	//	"already"     今天已经签过，没必要再发一次领取请求
+	//	"inactive"    这一侧没开签到活动（国际侧就是如此）
+	//	"unavailable" 查不到状态（没登录 / 网络不通 / 接口变了）
+	//
+	// 用固定枚举而不是自由文本，是为了让界面与日志都能可靠判断——
+	// 靠匹配中文文案迟早出错。
+	Skipped string `json:"skipped,omitempty"`
+	// Note 是给用户看的一句话说明。
+	Note string `json:"note,omitempty"`
+}
+
+// AutoClaim 是"打开界面就自动签到"用的入口：**先查，未签才领**。
+//
+// # 为什么判断必须放在服务端
+//
+// 界面随时可能被打开、被刷新、被后台标签页重载。如果判断放在前端，同一时刻
+// 两个页面各查一次、都看到"今天没签"、各自发一次领取——虽然接口幂等、不会
+// 多领，但同样会把请求打两遍。判断放在这里，前端只管调一次。
+//
+// # 为什么它比直接调 Claim 更保守
+//
+// Claim 是无条件的"领"，出错就报错。AutoClaim 是先看状态、不该领就不领：
+//   - 今天已签 → 不领（省一次写请求，也避免"每次开界面都写一次账号状态"）
+//   - 没开活动 → 不领（国际侧就是如此，它不会是错误）
+//   - 状态查不到 → **不领**。这一条最关键：查不到可能是没登录、也可能是接口变了，
+//     此时盲发领取请求要么白跑、要么把真实的错误信息淹没在"领取失败"里。
+//     宁可什么都不做，把状态显示清楚。
+func AutoClaim(d Deps, id variant.ID) (AutoResult, error) {
+	st, err := Query(d, id)
+	if err != nil {
+		// 查不到状态**不是错误**：没登录、断网、后端抖动都会走到这里。
+		// 如实回报"没查成"，让界面显示出来，而不是抛错让它以为功能坏了。
+		return AutoResult{
+			Skipped: "unavailable",
+			Note:    "没读到签到状态，本次没有自动领取：" + err.Error(),
+		}, nil
+	}
+	res := AutoResult{Status: &st}
+
+	if !st.Active {
+		res.Skipped = "inactive"
+		res.Note = "这一侧没有开签到活动，不需要领。"
+		return res, nil
+	}
+	if st.TodayCheckedIn {
+		res.Skipped = "already"
+		res.Note = "今天已经签过了，连签 " + itoa(st.StreakDays) + " 天。"
+		return res, nil
+	}
+
+	// 到这儿才是真的该领。中间任何一步出错都如实报出来——这是唯一会改
+	// 账号状态的分支，失败了不该被吞掉。
+	claimed, err := Claim(d, id)
+	if err != nil {
+		return AutoResult{Status: &st}, err
+	}
+	res.Result = &claimed
+	if claimed.AlreadyCheckedIn {
+		// 查的时候还没签、领的时候已经签了：说明这一刻有人（或另一个页面）
+		// 先领了。结果是对的，只是要如实说清没多领。
+		res.Skipped = "already"
+		res.Note = "刚好已经签过了，本次未重复领取。"
+	} else {
+		res.Note = "已自动签到，本次 +" + itoa(claimed.Credit) + " 积分。"
+	}
+	return res, nil
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // attachStatus 尽力补一份状态快照。
 //

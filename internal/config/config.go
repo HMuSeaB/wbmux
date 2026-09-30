@@ -33,6 +33,16 @@ type Config struct {
 	// 而不是最新。想恢复官方行为，把它显式设为 false 即可。
 	DisableAutoUpdate *bool `json:"disableAutoUpdate,omitempty"`
 
+	// AutoCheckin 控制"打开界面时自动签到"。
+	//
+	// 用指针的理由与 DisableAutoUpdate 相同：区分"没设过"与"明确设成 false"。
+	// 默认（nil）按**开启**处理——这是用户明确要的行为。
+	//
+	// 为什么值得单独留一个开关：自动签到会**改账号状态**（领积分、改连签天数）。
+	// 这是 wbmux 里少数几个会写远端的地方，把"能不能自动做"交给用户决定比
+	// 替他决定合适。
+	AutoCheckin *bool `json:"autoCheckin,omitempty"`
+
 	// GUIToken 是图形界面的访问令牌，持久化保存。
 	//
 	// # 为什么不做成"每次启动随机"

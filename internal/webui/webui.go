@@ -213,6 +213,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))
 	mux.HandleFunc("/api/checkin", s.guard(s.handleCheckin))
 	mux.HandleFunc("/api/checkin/claim", s.guard(s.handleCheckinClaim))
+	mux.HandleFunc("/api/checkin/auto", s.guard(s.handleCheckinAuto))
+	mux.HandleFunc("/api/checkin/auto-toggle", s.guard(s.handleAutoCheckinToggle))
 	mux.HandleFunc("/api/workspace", s.guard(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))

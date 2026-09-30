@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/checkin"
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -81,6 +82,125 @@ func (s *Server) handleCheckinClaim(w http.ResponseWriter, r *http.Request) {
 		"label":  sideLabelFor(id),
 		"result": res,
 	})
+}
+
+// handleCheckinAuto 打开界面时的自动签到：**先查，今天没签才领**。
+//
+// # 为什么它跟 /api/checkin/claim 分开
+//
+// 两个入口的语义不同，混在一起会让"谁在什么条件下改了账号状态"变得说不清：
+//
+//	/api/checkin/claim  用户**亲手点了按钮**。无条件领取。
+//	/api/checkin/auto   界面加载时自动跑。只在"活动开着且今天没签"时才领。
+//
+// 分开还有一个实际好处：日志里能一眼看出签到是自动的还是手动的。
+//
+// # 关于"写操作不该挂在页面加载上"这条红线
+//
+// 原本这一页只有"只读查询 + 亲手领取"两个按钮，理由是页面随时会被打开、刷新、
+// 后台重载，挂写操作等于让账号状态在用户没看见的时候被改。用户明确要求
+// "打开 wbmux 就自动签到"之后放宽为：**可以自动领，但要满足两条**——
+//  1. 只在真没签的时候领（判据在服务端，见 checkin.AutoClaim）；
+//  2. 界面上必须**明说这次是自动签的**，而不是悄悄改掉状态。
+//
+// 另外给一个开关（config.AutoCheckin）能整体关掉。
+func (s *Server) handleCheckinAuto(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Host string `json:"host"`
+	}
+	// 允许空请求体：界面按默认档位跑时不带参数。
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "请求体无法解析")
+			return
+		}
+	}
+	id := checkinTarget(req.Host)
+
+	// 开关关掉时直接回一句，**不查也不领**——关掉就该零副作用，连一次网络
+	// 往返都不该有（查询虽然只读，但会解凭据、会启动客户端进程）。
+	if !s.autoCheckinEnabled() {
+		writeJSON(w, map[string]any{
+			"side":    string(id),
+			"label":   sideLabelFor(id),
+			"skipped": "disabled",
+			"note":    "自动签到已关闭（在下面「自动签到」里可以打开）。",
+		})
+		return
+	}
+
+	res, err := checkin.AutoClaim(s.checkinDeps(), id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	// 只有真的领了才落日志。每次开界面都记一行"已签过"会把日志淹掉。
+	if res.Result != nil && !res.Result.AlreadyCheckedIn {
+		s.logf("自动签到：%s 领取成功，本次 %d 积分", id, res.Result.Credit)
+	} else if res.Result != nil {
+		s.logf("自动签到：%s 刚好已签过，未重复领取", id)
+	}
+	writeJSON(w, map[string]any{
+		"side":    string(id),
+		"label":   sideLabelFor(id),
+		"status":  res.Status,
+		"result":  res.Result,
+		"skipped": res.Skipped,
+		"note":    res.Note,
+	})
+}
+
+// handleAutoCheckinToggle 读/写"自动签到"开关。写操作只改本地配置。
+//
+// 与领取不同：它改的是 wbmux 自己的配置文件，不碰账号，所以不需要"点两下"。
+func (s *Server) handleAutoCheckinToggle(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.Load()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// 只读。
+	case http.MethodPost:
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "请求体无法解析")
+			return
+		}
+		on := req.Enabled
+		cfg.AutoCheckin = &on
+		if err := config.Save(cfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
+			return
+		}
+		s.logf("自动签到：已%s", map[bool]string{true: "打开", false: "关闭"}[on])
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET 或 POST")
+		return
+	}
+	writeJSON(w, map[string]any{"enabled": autoCheckinOn(cfg)})
+}
+
+// autoCheckinEnabled 是界面路径上的判据：读配置，默认开。
+func (s *Server) autoCheckinEnabled() bool {
+	cfg, err := config.Load()
+	if err != nil {
+		// 配置读不出来时按**关闭**处理。这个方向是刻意的：读不出配置说明
+		// 环境有问题，此时不该还去改账号状态。
+		return false
+	}
+	return autoCheckinOn(cfg)
+}
+
+func autoCheckinOn(cfg config.Config) bool {
+	return cfg.AutoCheckin == nil || *cfg.AutoCheckin
 }
 
 // checkinTarget 把界面传来的档位名转成 id。

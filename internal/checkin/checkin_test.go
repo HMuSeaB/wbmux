@@ -19,6 +19,17 @@ const statusBody = `{"code":0,"msg":"OK","requestId":"x","data":{
   "next_streak_day":0,"streak_bonus_days":0,"streak_bonus_credit":0,
   "checkin_dates":["2026-09-29","2026-09-28"],"week_checkin_days":2}}`
 
+// notCheckedInBody 是"今天还没签"的状态回话。
+//
+// 实测形态（2026-10-01 00:14，跨天之后）：today_checked_in 变 false、
+// checkin_dates 里还留着昨天。**服务端按自然日自己重置**，这就是
+// "第二天刷新掉状态"的实现——不需要 wbmux 做任何事。
+const notCheckedInBody = `{"code":0,"msg":"OK","requestId":"x","data":{
+  "active":true,"today_checked_in":false,"streak_days":1,
+  "daily_credit":100,"today_credit":100,"is_streak_day":false,
+  "next_streak_day":0,"streak_bonus_days":0,"streak_bonus_credit":0,
+  "checkin_dates":["2026-09-30"],"week_checkin_days":1}}`
+
 // newDeps 把请求指到假服务器，并给一份假凭据。
 //
 // 刻意不传 Probe：带了它就会去碰真实文件系统。凭据走 Cred 注入。
@@ -352,5 +363,134 @@ func TestSummarizeTruncatesAndFlattens(t *testing.T) {
 	}
 	if summarize(nil) != "（空正文）" {
 		t.Fatalf("空正文应有明确表示: %q", summarize(nil))
+	}
+}
+
+// ---------- 自动签到（打开界面时跑的那条路）----------
+
+// TestAutoClaimSkipsWhenAlreadyCheckedIn 钉住"已签过就一个领取请求都不发"。
+//
+// 这是自动签到与手动的最大区别：手动点按钮是无条件领（接口幂等，多打一次无害），
+// 自动签在打开页面时就跑，同一个页面被刷新几次就打几次。所以**必须在服务端**
+// 先看状态、不该领就早退——不能指望前端只调一次。
+func TestAutoClaimSkipsWhenAlreadyCheckedIn(t *testing.T) {
+	var claimHits int
+	d, _ := newDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/billing/meter/daily-checkin":
+			claimHits++
+			_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"credit":100}}`)
+		default:
+			_, _ = io.WriteString(w, statusBody)
+		}
+	})
+
+	res, err := AutoClaim(d, variant.CN)
+	if err != nil {
+		t.Fatalf("AutoClaim: %v", err)
+	}
+	if claimHits != 0 {
+		t.Fatalf("今天已签，不该发领取请求，实际发了 %d 次", claimHits)
+	}
+	if res.Skipped != "already" {
+		t.Fatalf("Skipped 应为 already，实际 %q", res.Skipped)
+	}
+	if res.Result != nil {
+		t.Fatal("跳过时不该带 Result")
+	}
+	if res.Status == nil || !res.Status.TodayCheckedIn {
+		t.Fatalf("应带回状态且标明今天已签，实际 %+v", res.Status)
+	}
+	if res.Note == "" {
+		t.Fatal("跳过时也要有给用户看的说明——不然界面上只会显示'已签到'，看不出为什么没领")
+	}
+}
+
+// TestAutoClaimClaimsWhenNotCheckedIn 是正向路径：今天没签就真的领。
+func TestAutoClaimClaimsWhenNotCheckedIn(t *testing.T) {
+	var claimHits int
+	d, _ := newDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/billing/meter/daily-checkin":
+			claimHits++
+			_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"credit":100}}`)
+		default:
+			_, _ = io.WriteString(w, notCheckedInBody)
+		}
+	})
+
+	res, err := AutoClaim(d, variant.CN)
+	if err != nil {
+		t.Fatalf("AutoClaim: %v", err)
+	}
+	if claimHits != 1 {
+		t.Fatalf("今天没签应当领一次，实际发了 %d 次", claimHits)
+	}
+	if res.Result == nil || res.Result.Credit != 100 {
+		t.Fatalf("应领到 100 积分，实际 %+v", res.Result)
+	}
+	if res.Skipped != "" {
+		t.Fatalf("真的领了就不该有 Skipped，实际 %q", res.Skipped)
+	}
+}
+
+// TestAutoClaimSkipsWhenInactive 钉住国际侧那条路：没开活动 → 不领、也不算错。
+//
+// 国际侧的状态接口会回 data:null（见 TestQueryTreatsNullDataAsInactive）。
+// 那是**正常**结果，自动签不该把它当失败，更不该盲发一次领取。
+func TestAutoClaimSkipsWhenInactive(t *testing.T) {
+	var claimHits int
+	d, _ := newDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/billing/meter/daily-checkin" {
+			claimHits++
+		}
+		_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":null}`)
+	})
+
+	res, err := AutoClaim(d, variant.Intl)
+	if err != nil {
+		t.Fatalf("没开活动不该报错，实际 %v", err)
+	}
+	if claimHits != 0 {
+		t.Fatalf("没开活动不该发领取请求，实际 %d 次", claimHits)
+	}
+	if res.Skipped != "inactive" {
+		t.Fatalf("Skipped 应为 inactive，实际 %q", res.Skipped)
+	}
+}
+
+// TestAutoClaimDoesNotClaimWhenStatusUnavailable 是这条链上最要紧的一条。
+//
+// 查不到状态可能是没登录、断网、或者接口变了。此时**绝不能盲发领取**：
+// 要么白跑一趟，要么把真正的错误信息淹没在"领取失败"里。
+// 所以它必须是"什么都不做 + 如实说明"，而不是抛错、也不是猜一个结果。
+func TestAutoClaimDoesNotClaimWhenStatusUnavailable(t *testing.T) {
+	var claimHits int
+	d, _ := newDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/billing/meter/daily-checkin" {
+			claimHits++
+			_, _ = io.WriteString(w, `{"code":0,"msg":"OK","data":{"credit":100}}`)
+			return
+		}
+		// 状态接口 401：登录态失效。
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"code":401,"msg":"unauthorized"}`)
+	})
+
+	res, err := AutoClaim(d, variant.CN)
+	if err != nil {
+		t.Fatalf("查不到状态不该报错（界面会显示出来），实际 %v", err)
+	}
+	if claimHits != 0 {
+		t.Fatalf("状态都读不到，绝不能盲发领取；实际发了 %d 次", claimHits)
+	}
+	if res.Skipped != "unavailable" {
+		t.Fatalf("Skipped 应为 unavailable，实际 %q", res.Skipped)
+	}
+	if res.Status != nil {
+		t.Fatal("没查到状态就不该带 Status")
+	}
+	if res.Note == "" {
+		t.Fatal("应说明为什么没自动领")
 	}
 }
