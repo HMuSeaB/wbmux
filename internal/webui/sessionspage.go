@@ -24,9 +24,13 @@ import (
 // "执行清理"的按钮。要不要动、怎么动（归档还是删），是下一期的事，
 // 而且必须等规则跑稳之后。
 
-// scanMu 串行化扫描：会话中心冷启动要十几秒（三起 Electron 子进程 +
-// 遍历 1.4G 的 Codex 目录），两个标签页同时点刷新就是双倍浪费，
-// 还可能把 better-sqlite3 的子进程挤到超时。
+// scanMu 串行化扫描：一次重扫要起几个 Electron 子进程去读各家的会话库，
+// 两个标签页同时点刷新就是双倍浪费，还可能把子进程挤到超时。
+//
+// 耗时实测（2026-10-01，本机）：**强制重扫约 0.22 秒**，缓存路径 7 毫秒
+// （126 个会话 / 45 个项目）。所以它**不是**慢的来源——当初这里写"十几秒"
+// 是凭印象，后来误导过一次排查（用户报"重新扫描很慢"，我照着这句注释去查
+// IO，实际是前端的一个 TypeError 让请求根本没发出去）。
 var scanMu sync.Mutex
 
 // handleSessionsPage 服务会话中心页面。
@@ -57,7 +61,7 @@ func (s *Server) handleSessionsPage(w http.ResponseWriter, r *http.Request) {
 // handleSessionsAPI 返回会话索引。
 //
 // 参数：refresh=1 强制重扫；days / keep 调候选规则（默认 30 / 1）。
-// 缓存命中的话毫秒级返回；冷扫描可能要十几秒，前端要给加载态。
+// 缓存命中毫秒级；强制重扫约 0.2 秒（见 scanMu 处的实测）。
 func (s *Server) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")

@@ -63,7 +63,12 @@
   .vb.claude  { color: #c2885a; border-color: #5a3f2a; }
   .candmark { color: var(--bad); font-weight: 600; }
   .archived { color: var(--ink-3); }
-  #empty { color: var(--ink-3); padding: 30px; text-align: center; }
+  /* 空状态提示：用 **class** 不用 id。
+     它会被 innerHTML 反复重建（"没有匹配的项目" / "选一个项目" /
+     "该项目没有匹配的会话" 三处共用），复用同一个 id 会诱使别处
+     去 getElementById 它——而那个节点运行时可能并不存在，
+     2026-10-01 的"重新扫描无响应"就是这么来的。 */
+  .empty { color: var(--ink-3); padding: 30px; text-align: center; }
   .hint { color: var(--ink-3); font-size: 12px; padding: 0 18px; }
 </style>
 </head>
@@ -86,7 +91,7 @@
 <div class="warnbar" id="warn" style="display:none"></div>
 <main>
   <div id="projects"></div>
-  <div id="detail"><div id="empty">加载中…</div></div>
+  <div id="detail"><div class="empty">加载中…</div></div>
 </main>
 <script>
 "use strict";
@@ -152,11 +157,22 @@ function fmtBytes(n) {
 function load(refresh) {
   var btn = document.getElementById(refresh ? "refresh" : "reload");
   btn.disabled = true;
-  document.getElementById("empty").textContent = refresh ? "扫描中…第一次要十几秒" : "加载中…";
+
+  // 状态写在 #gen 上，**不能写 #empty**。
+  //
+  // #empty 不是固定元素：renderProjects / renderDetail 每次都用 innerHTML
+  // 重建它（"没有匹配的项目" / "选一个项目" / "加载中…" 三种文案共用这一个 id）。
+  // 扫过一次之后它就不存在了，`getElementById("empty").textContent = …`
+  // 会抛 TypeError —— 而那一行在 fetch **之前**，于是：
+  //   ① 请求根本发不出去；② 后面的 .finally 也没挂上，按钮永久禁用。
+  // 表现就是"点了重新扫描，一直转、永远不回来"。2026-10-01 实测复现。
+  var gen = document.getElementById("gen");
+  if (gen) gen.textContent = refresh ? "扫描中…" : "加载中…";
+
   var url = API + "&days=" + document.getElementById("days").value +
             "&keep=" + document.getElementById("keep").value + (refresh ? "&refresh=1" : "");
   fetchJSON(url).then(render).catch(function (e) {
-    document.getElementById("empty").textContent = "加载失败：" + e.message;
+    if (gen) gen.textContent = "加载失败：" + e.message;
   }).finally(function () { btn.disabled = false; });
 }
 
@@ -217,7 +233,7 @@ function renderProjects() {
       (p.onlyStale ? '<span class="stale">⚠ 全部超期（保底 ' + state.idx.keepPerProject + " 条仍在）</span>" : "") +
       "</div></div>";
   }).join("");
-  box.innerHTML = html || '<div id="empty">没有匹配的项目</div>';
+  box.innerHTML = html || '<div class="empty">没有匹配的项目</div>';
   Array.prototype.forEach.call(box.querySelectorAll(".proj"), function (el) {
     el.onclick = function () { state.sel = el.getAttribute("data-p"); renderProjects(); renderDetail(); };
   });
@@ -235,7 +251,7 @@ function renderDetail() {
     if (q && s.title.toLowerCase().indexOf(q) < 0) return false;
     return true;
   });
-  if (!state.sel) { box.innerHTML = '<div id="empty">← 选一个项目</div>'; return; }
+  if (!state.sel) { box.innerHTML = '<div class="empty">← 选一个项目</div>'; return; }
   box.innerHTML = "<table><thead><tr>" +
     "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th>" +
     "</tr></thead><tbody>" + rows.map(function (s) {
@@ -248,7 +264,7 @@ function renderDetail() {
         "<td>" + (s.candidate ? '<span class="candmark">候选 #' + s.rank + "</span>" : "#" + s.rank) + "</td>" +
         '<td class="path">' + esc(s.source.path) + "</td></tr>";
     }).join("") + "</tbody></table>" +
-    (rows.length ? "" : '<div id="empty">该项目没有匹配的会话</div>');
+    (rows.length ? "" : '<div class="empty">该项目没有匹配的会话</div>');
 }
 
 document.getElementById("refresh").onclick = function () { load(true); };
