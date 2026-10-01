@@ -176,3 +176,124 @@ func TestSummarizeMentionsBothEnds(t *testing.T) {
 		}
 	}
 }
+
+// TestJudgeSession 钉住"哪些索引条目算坏的"。
+//
+// 这块最要紧的一条是**不许误伤**：删索引意味着用户再也看不到那个会话，
+// 而正文文件还躺在磁盘上没人去找。所以每条反例都要显式测。
+func TestJudgeSession(t *testing.T) {
+	cases := []struct {
+		name       string
+		facts      sessionFacts
+		wantAction string
+		wantReason string // 为空表示"不该有问题"
+	}{
+		{
+			name: "正常会话：什么都不做",
+			facts: sessionFacts{
+				cwd: `D:/4rchive/Code/wbmux`, status: "completed",
+				transport: "local", hasBody: true,
+			},
+			wantAction: "",
+		},
+		{
+			name: "实测那条云端残留：cwd 空 + 无正文 + cloud",
+			facts: sessionFacts{
+				cwd: "", status: "completed", transport: "cloud",
+				deletedAt: -1, hasBody: false,
+			},
+			wantAction: "delete",
+			wantReason: "cwd 为空且磁盘上没有正文文件",
+		},
+		{
+			name: "实测那条大写 status",
+			facts: sessionFacts{
+				cwd: `C:/Users/36230/WorkBuddy AI`, status: "Completed",
+				transport: "local", hasBody: true,
+			},
+			wantAction: "fix",
+			wantReason: `status="Completed"`,
+		},
+
+		// ---------- 反例：不许误伤 ----------
+
+		{
+			// 只 cwd 空但有正文：那是"归属丢了"，该走 set/move 修，
+			// 删掉的话会话就真没了。
+			name: "cwd 空但有正文文件 → 不删",
+			facts: sessionFacts{
+				cwd: "", status: "completed", transport: "local", hasBody: true,
+			},
+			wantAction: "",
+		},
+		{
+			// 实测那两条：正数时间戳 + 删除时间与最后活动时间一致 = 正常删除。
+			// 客户端自己会隐藏，轮不到我们动。
+			name: "deleted_at 是合法正数（用户正常删的）→ 不动",
+			facts: sessionFacts{
+				cwd: `C:/Users/36230/WorkBuddy AI`, status: "completed",
+				transport: "local", deletedAt: 1785335121258, hasBody: true,
+			},
+			wantAction: "",
+		},
+		{
+			name: "正常的小写 status（working 也要认）",
+			facts: sessionFacts{
+				cwd: `D:/4rchive/Code/slate`, status: "working",
+				transport: "local", hasBody: true,
+			},
+			wantAction: "",
+		},
+		{
+			name: "status 为空不当异常（老数据可能没这个字段）",
+			facts: sessionFacts{
+				cwd: `D:/4rchive/Code/slate`, status: "",
+				transport: "local", hasBody: true,
+			},
+			wantAction: "",
+		},
+		{
+			// deleted_at=0 是"未删除"的正常写法，不是脏值。
+			name: "deleted_at=0（未删除）不算脏值",
+			facts: sessionFacts{
+				cwd: `D:/4rchive/Code/slate`, status: "completed",
+				transport: "local", deletedAt: 0, hasBody: true,
+			},
+			wantAction: "",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			reasons, action := judgeSession(c.facts)
+			if action != c.wantAction {
+				t.Errorf("action = %q，期望 %q（reasons=%v）", action, c.wantAction, reasons)
+			}
+			if c.wantReason == "" {
+				if len(reasons) != 0 {
+					t.Errorf("不该有问题，实际 %v", reasons)
+				}
+				return
+			}
+			joined := strings.Join(reasons, "；")
+			if !strings.Contains(joined, c.wantReason) {
+				t.Errorf("原因里应含 %q，实际 %q", c.wantReason, joined)
+			}
+		})
+	}
+}
+
+// TestJudgeSessionDeleteWinsOverFix 确认"要删的条目不会被降级成修正"。
+//
+// 优先级有意义：云端残留那条同时命中了判据一与判据二（deleted_at=-1）。
+// 若 fix 抢先，我们会去"修一个没有正文的条目"，改完它还在侧栏上——
+// 点开照样是空白。
+func TestJudgeSessionDeleteWinsOverFix(t *testing.T) {
+	_, action := judgeSession(sessionFacts{
+		cwd: "", status: "Completed", transport: "cloud",
+		deletedAt: -1, hasBody: false,
+	})
+	if action != "delete" {
+		t.Fatalf("action = %q，期望 delete（delete 应当优先于 fix）", action)
+	}
+}
