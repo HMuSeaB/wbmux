@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // stringsJoinLines 拼出 jsonl 测试样本：每行一条 JSON，尾带换行。
@@ -233,12 +235,21 @@ func TestScanClaude(t *testing.T) {
 
 // ---------- 清理计划 ----------
 
-// mkSession 造一条会话，只填 BuildCleanPlan 会用到的字段。
+// mkSession 造一条会话，只填清理计划会用到的字段。
+//
+// 注意它**不设 Vendor**：BuildCleanPlan 只看 path 与 candidate，
+// 而 BuildRowPlan 要看 Vendor 决定删几张表。所以用 mkSessionV 那条。
 func mkSession(id, path string, cand bool, size int64) Session {
 	return Session{
 		ID: id, Candidate: cand, SizeBytes: size,
 		Source: Source{Path: path},
 	}
+}
+
+func mkSessionV(id string, v Vendor, path string, cand bool, size int64) Session {
+	s := mkSession(id, path, cand, size)
+	s.Vendor = v
+	return s
 }
 
 // TestCleanPlanRefusesSharedPaths 是这块**最要紧**的一条。
@@ -402,5 +413,244 @@ func TestCleanRefineVendors(t *testing.T) {
 	}
 	if out.TotalBytes != 10 {
 		t.Fatalf("字节合计应跟着收窄，实际 %d", out.TotalBytes)
+	}
+}
+
+// ---------- 删库行 ----------
+
+// TestBuildRowPlanPicksOnlyDBBacked 确认只挑"在数据库里"的候选。
+//
+// 与 BuildCleanPlan 互补：那个挑独占文件、这个挑共用数据库，不能重叠。
+// 重叠了就会出现"同一会话被两条路径都删一次"。
+func TestBuildRowPlanPicksOnlyDBBacked(t *testing.T) {
+	idx := &Index{Sessions: []Session{
+		mkSession("a", `/x/.codex/rollout-1.jsonl`, true, 100), // 独占文件 → 归 clean
+		mkSession("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 库行 → 归这里
+		mkSession("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 同库、非候选
+		mkSession("d", `/x/.workbuddy/workbuddy.db`, false, 0),
+	}}
+	plan := BuildRowPlan(idx)
+	if len(plan.Targets) != 1 || plan.Targets[0].ID != "b" {
+		t.Fatalf("只该挑出 b，实际 %+v", plan.Targets)
+	}
+
+	// 反向确认：clean 那边不该碰这个库。
+	cleanPlan := BuildCleanPlan(idx)
+	if len(cleanPlan.Targets) != 1 || cleanPlan.Targets[0].Path != `/x/.codex/rollout-1.jsonl` {
+		t.Fatalf("clean 该只挑独占文件，实际 %+v", cleanPlan.Targets)
+	}
+}
+
+// TestRowPlanZCodeCoversAllTables 钉住 ZCode 要删的 6 张表。
+//
+// 只删 session 行、留下 message/part，那些正文就成了永远读不到的孤儿
+// ——占着空间、谁也找不到。所以表的清单必须完整且顺序正确（先子后主）。
+func TestRowPlanZCodeCoversAllTables(t *testing.T) {
+	idx := &Index{Sessions: []Session{
+		mkSessionV("sess_x", VendorZCode, `/x/.zcode/cli/db/db.sqlite`, true, 0),
+		mkSessionV("y", VendorZCode, `/x/.zcode/cli/db/db.sqlite`, false, 0),
+	}}
+	plan := BuildRowPlan(idx)
+	if len(plan.Targets) != 1 {
+		t.Fatalf("该挑出 1 条，实际 %d", len(plan.Targets))
+	}
+	got := plan.Targets[0].Tables
+	if len(got) != 6 {
+		t.Fatalf("ZCode 该删 6 张表，实际 %d：%+v", len(got), got)
+	}
+	// 最后一张必须是主表：先删子表，中途失败才不会留下孤儿正文。
+	if got[len(got)-1].Name != "session" {
+		t.Fatalf("主表该最后删，实际最后是 %s", got[len(got)-1].Name)
+	}
+	names := map[string]bool{}
+	for _, tb := range got {
+		names[tb.Name] = true
+	}
+	for _, want := range []string{"part", "message", "todo", "session_entry", "session_input", "session"} {
+		if !names[want] {
+			t.Errorf("漏了表 %s", want)
+		}
+	}
+}
+
+// TestCleanRowsDoesNotDeleteRowWhenBodyFails 是**最要紧**的一条。
+//
+// 顺序是"先移正文、再删库行"。如果正文没处理掉就把行删了，那个文件会变成
+// 谁也认不出的孤儿——用户看不到它，工具也找不到它。所以正文失败时必须
+// **跳过删行**，并如实记下来。
+func TestCleanRowsDoesNotDeleteRowWhenBodyFails(t *testing.T) {
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "projects", "some-slug")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := filepath.Join(proj, "abc.jsonl")
+	if err := os.WriteFile(body, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted := false
+	res, err := CleanRows(&RowPlan{Targets: []rowTarget{{
+		ID: "abc", Vendor: VendorWBCN, DBPath: filepath.Join(dir, "workbuddy.db"),
+		Tables: []rowTable{{"sessions", "id"}},
+	}}}, RowCleanDeps{
+		DataDirOf: func(Vendor) string { return dir },
+		Trash:     func(string) error { return os.ErrPermission }, // 故意失败
+		DeleteRows: func(string, []string, []SQLStatement) ([]int, error) {
+			deleted = true
+			return []int{1}, nil
+		},
+	}, CleanOptions{})
+
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if deleted {
+		t.Fatal("正文没处理掉就删了库行 —— 会留下谁也认不出的孤儿文件")
+	}
+	if len(res.Failed) != 1 {
+		t.Fatalf("该记一条失败，实际 %v", res.Failed)
+	}
+	if !strings.Contains(res.Failed[0], "库行未删") {
+		t.Fatalf("失败信息该说明库行没删，实际 %q", res.Failed[0])
+	}
+	// 文件必须还在（失败就不该假装删掉）。
+	if _, err := os.Stat(body); err != nil {
+		t.Fatal("正文文件不该动")
+	}
+}
+
+// TestCleanRowsDryRunTouchesNothing 确认预演不删任何东西。
+func TestCleanRowsDryRunTouchesNothing(t *testing.T) {
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "projects", "s")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := filepath.Join(proj, "abc.jsonl")
+	if err := os.WriteFile(body, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	touched := false
+	res, err := CleanRows(&RowPlan{Targets: []rowTarget{{
+		ID: "abc", Vendor: VendorWBCN, DBPath: filepath.Join(dir, "wb.db"),
+		Tables: []rowTable{{"sessions", "id"}},
+	}}}, RowCleanDeps{
+		DataDirOf:  func(Vendor) string { return dir },
+		Trash:      func(string) error { touched = true; return nil },
+		DeleteRows: func(string, []string, []SQLStatement) ([]int, error) { touched = true; return nil, nil },
+	}, CleanOptions{DryRun: true})
+
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if touched {
+		t.Fatal("预演动了东西")
+	}
+	if res.FreedBytes != 5 {
+		t.Fatalf("预演该算出会释放 5 字节，实际 %d", res.FreedBytes)
+	}
+	if _, err := os.Stat(body); err != nil {
+		t.Fatal("预演把文件删了")
+	}
+}
+
+// TestFindBodyFilesIgnoresSlug 确认找正文靠 id 而不是猜目录名。
+//
+// 目录名是 cwd 推导的 slug，规则耦合在客户端里——拼错了会"以为没文件、
+// 于是不删"，留下孤儿。所以必须遍历找 <id>.jsonl。
+func TestFindBodyFilesIgnoresSlug(t *testing.T) {
+	dir := t.TempDir()
+	// 故意用一个"猜不出来"的目录名
+	weird := filepath.Join(dir, "projects", "c--Users-x-Ω-测试")
+	if err := os.MkdirAll(weird, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(weird, "abc.jsonl")
+	if err := os.WriteFile(want, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 干扰项：别的 id
+	if err := os.WriteFile(filepath.Join(weird, "other.jsonl"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := FindBodyFiles(dir, "abc")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("该找到 1 个，实际 %v", got)
+	}
+}
+
+// TestCleanRowsDeletesAllTables 确认多表都真的走到。
+func TestCleanRowsDeletesAllTables(t *testing.T) {
+	var gotTables []string
+	var stmts []SQLStatement
+	_, err := CleanRows(&RowPlan{Targets: []rowTarget{{
+		ID: "sess_x", Vendor: VendorZCode, DBPath: "/x/db.sqlite",
+		Tables: []rowTable{
+			{"part", "session_id"}, {"message", "session_id"}, {"session", "id"},
+		},
+	}}}, RowCleanDeps{
+		DataDirOf: func(Vendor) string { return "" }, // ZCode 没有独立正文文件
+		DeleteRows: func(_ string, tables []string, s []SQLStatement) ([]int, error) {
+			gotTables = tables
+			stmts = s
+			return []int{1, 2, 3}, nil
+		},
+	}, CleanOptions{})
+
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if len(gotTables) != 3 {
+		t.Fatalf("该删 3 张表，实际 %v", gotTables)
+	}
+	// 每条都必须是参数化的等值删除（sqlite.js 那边也会再拦一次）。
+	for _, s := range stmts {
+		if !strings.Contains(s.SQL, "= ?") || len(s.Params) != 1 {
+			t.Fatalf("语句该是等值 + 占位符：%q %v", s.SQL, s.Params)
+		}
+	}
+}
+
+// TestCodexRootsFollowProbeHome 钉住"Codex 的目录从 probe 取"。
+//
+// 这不是吹毛求疵：曾经 codexRoots 直接调 os.UserHomeDir()，真实运行时
+// 两者恰好相同，看不出问题；但单元测试的 probe.Home 指向临时目录，
+// 于是测试造出来的会话**一个都扫不到**，却"通过"了一条什么都不做的路径。
+//
+// 这类"测试里才暴露的错"最容易漏，所以用一条断言把它钉死：
+// 换个 home，roots 必须跟着变。
+func TestCodexRootsFollowProbeHome(t *testing.T) {
+	p1 := variant.DefaultProbe()
+	p2 := variant.DefaultProbe()
+	p2.Home = filepath.Join("X:", "some", "other", "home")
+
+	r1 := codexRoots(p1)
+	r2 := codexRoots(p2)
+
+	if len(r1) == 0 || len(r2) == 0 {
+		t.Fatal("roots 不该为空")
+	}
+	if r1[0] == r2[0] {
+		t.Fatalf("换了 probe.Home 之后 roots 没变（%s）——说明它没走 probe，"+
+			"而是直接读了进程环境。测试会因此扫不到自己造的数据。", r1[0])
+	}
+	// 顺带确认拼的是 .codex 下的两个已知目录。
+	for _, want := range []string{"sessions", "archived_sessions"} {
+		found := false
+		for _, r := range r2 {
+			if strings.Contains(r, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("roots 里该有 %s 那个目录，实际 %v", want, r2)
+		}
+	}
+	// session_index.jsonl 同理。
+	if codexIndexPath(p1) == codexIndexPath(p2) {
+		t.Fatal("codexIndexPath 也没走 probe")
 	}
 }

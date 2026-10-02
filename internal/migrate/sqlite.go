@@ -423,6 +423,40 @@ func Update(probe *variant.Probe, id variant.ID, tables []string, stmts []Statem
 	return res.Changed, nil
 }
 
+// DeleteRows 按 id 删某个库里的行。**不可逆的写操作。**
+//
+// 与 Update 的区别：
+//   - 支持**任意** dbPath（Update 写死了 workbuddy.db），因为要删的不只是
+//     WB 的库，还有 ZCode 的 db.sqlite；
+//   - 跑的是 delete 模式，脚本那边只放行 DELETE FROM + 表白名单 + 等值 WHERE。
+//
+// 调用方负责先备份。这个函数不做备份——它只做"删"这一件事，
+// 备份与确认是调用链上游的职责（分开了才好各自测）。
+func DeleteRows(probe *variant.Probe, id variant.ID, dbPath string, tables []string, stmts []Statement) ([]int, error) {
+	if len(stmts) == 0 {
+		return nil, nil
+	}
+	rt, err := detectRuntime(probe, id)
+	if err != nil {
+		return nil, err
+	}
+	if !fileExists(dbPath) {
+		return nil, fmt.Errorf("数据库不存在：%s", dbPath)
+	}
+	res, err := runSQLite(rt, sqliteSpec{
+		Mode:          "delete",
+		DBPath:        dbPath,
+		LibPath:       rt.libPath,
+		NativeBinding: rt.nativeBinding,
+		Statements:    stmts,
+		Tables:        tables,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Changed, nil
+}
+
 // writeRows 写入会话索引行。已存在的 id 一律跳过，绝不覆盖。
 //
 // 传进来的 rows 的 UserID 必须已经被调用方改写成空串：客户端的

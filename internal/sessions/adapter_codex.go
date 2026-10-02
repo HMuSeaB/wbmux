@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // Codex 的会话是纯文件：~/.codex/sessions/年/月/日/rollout-*.jsonl，
@@ -40,17 +42,25 @@ type codexIndexEntry struct {
 // 分层）与归档的 archived_sessions/（平铺）。归档会话同样是历史——真机
 // 实测 archived_sessions/ 里有 7 个 rollout 文件、格式与在役完全相同
 // （2026-09-28），只扫 sessions/ 会整块漏掉。
-func defaultCodexRoots() []string {
-	home, _ := os.UserHomeDir()
+// codexRoots 返回 Codex 的两个会话根。
+//
+// **必须从 probe 取 home，不能自己调 os.UserHomeDir()。**
+// 后者读的是进程环境，而 probe.Home 是"这台机器上该用哪个 home"的权威答案
+// ——测试里它指向临时目录。曾经这里直接读 os.UserHomeDir()，结果是：
+// 单元测试造出来的会话一个都扫不到（扫的是真实的 ~/.codex），
+// 测试于是"通过"了一个什么都不做也能通过的路径。
+//
+// 这个错只在测试里暴露，是因为真实运行时两者恰好相同。
+func codexRoots(p *variant.Probe) []string {
+	home := p.Home
 	return []string{
 		filepath.Join(home, ".codex", "sessions"),
 		filepath.Join(home, ".codex", "archived_sessions"),
 	}
 }
 
-func defaultCodexIndex() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "session_index.jsonl")
+func codexIndexPath(p *variant.Probe) string {
+	return filepath.Join(p.Home, ".codex", "session_index.jsonl")
 }
 
 // scanCodex 扫 Codex 会话目录。roots / indexPath 抽出来是为了单测

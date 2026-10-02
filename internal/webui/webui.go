@@ -209,6 +209,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
 	mux.HandleFunc("/api/sessions", s.guard(s.handleSessionsAPI))
 	mux.HandleFunc("/api/sessions/clean", s.guard(s.handleSessionsClean))
+	mux.HandleFunc("/api/sessions/clean/rows", s.guard(s.handleSessionsCleanRows))
+	mux.HandleFunc("/api/sessions/export", s.guard(s.handleSessionsExport))
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
 	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))

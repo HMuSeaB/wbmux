@@ -29,6 +29,13 @@ func cmdSessions(args []string) error {
 	days := f.String("days", "30")
 	keep := f.String("keep", "1")
 	noOpen := f.Bool("no-open", false)
+	// --export 把会话导出成可浏览的 HTML。
+	//
+	// 为什么挂在 sessions 下而不是新开一条命令：它就是"会话中心"的另一半
+	// ——界面里看是一等公民，导出来带着走是二等需求，同一个入口更省心。
+	exportDir := f.String("export", "")
+	exportVendor := f.String("vendor", "")
+	exportOne := f.String("id", "")
 	help := f.Bool("help", false)
 
 	if err := f.Parse(args); err != nil {
@@ -54,6 +61,16 @@ func cmdSessions(args []string) error {
 	probe := variant.DefaultProbe()
 	if *web {
 		return runSessionsWeb(u, probe, keepDays, keepN, *noOpen)
+	}
+	if *exportDir != "" {
+		return runSessionsExport(u, probe, sessions.ExportOptions{
+			Dir:     *exportDir,
+			Vendor:  sessions.Vendor(*exportVendor),
+			OnlyID:  *exportOne,
+			Days:    keepDays,
+			Keep:    keepN,
+			Refresh: *refresh,
+		})
 	}
 
 	u.kv("候选规则", fmt.Sprintf("超过 %d 天 且 项目内名次 > %d（保底最新 %d 条）", keepDays, keepN, keepN))
@@ -117,6 +134,44 @@ func cmdSessions(args []string) error {
 		u.ok("没有候选——所有超期会话都在各自项目的保底名次之内。")
 	}
 	u.hint("打开图形界面：wbmux sessions --web；刷新扫描：--refresh；调规则：--days 30 --keep 1")
+	return nil
+}
+
+// runSessionsExport 把会话导出成可浏览的 HTML。
+//
+// 它是**只读**的：只读会话文件、只往导出目录写。所以不做"客户端在跑就拒绝"
+// 那道闸——那道闸是给改数据的操作准备的。
+func runSessionsExport(u *ui, probe *variant.Probe, opts sessions.ExportOptions) error {
+	u.kv("导出到", opts.Dir)
+	if opts.Vendor != "" {
+		u.kv("只导出", string(opts.Vendor))
+	}
+	if opts.OnlyID != "" {
+		u.kv("只导出会话", opts.OnlyID)
+	}
+	u.info("正在扫描会话…")
+
+	rep, err := sessions.ExportSessions(probe, opts)
+	if err != nil {
+		return err
+	}
+
+	for _, s := range rep.Skipped {
+		u.warn(s)
+	}
+	for _, f := range rep.Failed {
+		u.warn(f)
+	}
+
+	if rep.Exported == 0 {
+		u.warn("没有可导出的会话。")
+		u.hint("用 wbmux sessions 看有哪些源与会话；目前只有 Codex 支持导出。")
+		return nil
+	}
+
+	u.ok(fmt.Sprintf("导出 %d 个会话，用时 %s", rep.Exported, rep.Elapsed.Round(time.Millisecond)))
+	u.kv("打开", rep.Index)
+	u.hint("直接双击上面的 index.html 即可在浏览器里翻；每个会话是一个单独的页面。")
 	return nil
 }
 
@@ -234,11 +289,20 @@ func printSessionsHelp(u *ui) {
 
 选项：
   --web          起本地界面并打开会话页（默认是控制台摘要）
+  --export DIR   把会话导出成可浏览的 HTML 到 DIR（只读，直接双击 index.html 看）
+  --vendor NAME  --export 时只导某一家：codex（目前只支持它）
+  --id ID        --export 时只导某一个会话
   --refresh      无视缓存强制重扫
   --days N       候选规则的保留期，默认 30 天
   --keep K       每个项目保底保留的最新会话数，默认 1
   --no-open      --web 时不自动开浏览器
   --color auto|always|never
   -h, --help     本帮助
+
+示例：
+  wbmux sessions                                  看概览
+  wbmux sessions --web                            开界面翻
+  wbmux sessions --export "D:/会话归档"            全量导出成 HTML
+  wbmux sessions --export ./out --vendor codex    只导 Codex
 `)
 }

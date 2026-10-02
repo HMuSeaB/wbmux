@@ -212,6 +212,74 @@ function main() {
       return emit({ changed: changed });
     }
 
+    // delete：按 id 删会话行（含它挂着的子表）。
+    //
+    // # 为什么单独一个模式而不是复用 update
+    //
+    // update 模式只放行 UPDATE，这是**有意的**。删行是不可逆的，混进那个口子
+    // 就等于"改 cwd 的工具顺带能删会话"。分成两个模式之后，调用方想删就必须
+    // 显式写 mode:'delete'，代码评审时一眼能看见。
+    //
+    // # 比 update 更严的三条
+    //
+    //   1) 只放行 DELETE，且表必须在白名单里；
+    //   2) **必须带 WHERE 且 WHERE 里必须有占位符** —— 不带 WHERE 的 DELETE
+    //      是"清空整张表"，那永远不是本工具想干的事；
+    //   3) 只允许按 `id = ?` 或 `session_id = ?` 这种**等值**条件删，
+    //      不接受范围、LIKE、IN —— 它们的"删多少"要靠推理，等值条件是数得清的。
+    //
+    // 整批一个事务：中途失败整体回滚。
+    if (spec.mode === 'delete') {
+      const stmts = spec.statements || [];
+      if (!Array.isArray(stmts) || stmts.length === 0) {
+        return fail('delete 模式缺少 statements');
+      }
+      const allowed = new Set(spec.tables || []);
+      if (allowed.size === 0) return fail('delete 模式必须给出 tables 白名单');
+
+      const changed = [];
+      const run = db.transaction(() => {
+        for (const st of stmts) {
+          const sql = String(st.sql || '').trim();
+          const stripped = sql
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/--[^\n]*/g, ' ')
+            .trim();
+          if (!/^delete\s+from\b/i.test(stripped)) {
+            throw new Error('delete 模式只允许 DELETE FROM，收到：' + stripped.slice(0, 40));
+          }
+          if (/;\s*\S/.test(stripped.replace(/;\s*$/, ''))) {
+            throw new Error('delete 模式一次只能跑一条语句');
+          }
+          const m = /^delete\s+from\s+([A-Za-z_][A-Za-z0-9_]*)/i.exec(stripped);
+          if (!m || !allowed.has(m[1].toLowerCase())) {
+            throw new Error('表 ' + (m ? m[1] : '?') + ' 不在允许删除的名单里');
+          }
+          // 必须有 WHERE，且必须是等值条件 + 占位符。
+          if (!/\bwhere\b/i.test(stripped)) {
+            throw new Error('delete 必须带 WHERE —— 不带 WHERE 是清空整张表');
+          }
+          if (!/\bwhere\b[\s\S]*?\w+\s*=\s*\?/i.test(stripped)) {
+            throw new Error('delete 的 WHERE 必须是"字段 = ?"这种等值条件（不接受范围/LIKE/IN）');
+          }
+          const info = db.prepare(sql).run(...(st.params || []));
+          if (info.changes === 0) {
+            // 一条都没删到：多半是参数传错了。不当作错误，但要记下来，
+            // 免得调用方以为"删成功"。
+            changed.push(0);
+          } else {
+            changed.push(info.changes);
+          }
+        }
+      });
+      try {
+        run();
+      } catch (e) {
+        return fail('删除失败（已整体回滚）：' + e.message);
+      }
+      return emit({ changed: changed });
+    }
+
     return fail('未知 mode：' + spec.mode);
   } finally {
     try {

@@ -54,6 +54,21 @@
   #cleanbar .ok { color: var(--ok); }
   #cleanbar .bad { color: var(--bad); }
   #cleanbar .warn { color: var(--warn); }
+  /* 行内的"导出"小按钮。比表格字小一号，不抢注意力。 */
+  button.mini { background: var(--g3); color: var(--ink-2); border: 1px solid var(--g5);
+                border-radius: 5px; padding: 2px 9px; font-size: 11.5px; cursor: pointer; }
+  button.mini:hover { background: var(--g4); color: var(--ink); }
+  button.mini:disabled { opacity: .5; cursor: wait; }
+  .nope { color: var(--ink-3); font-size: 11.5px; }
+  #expbar { margin-top: 12px; padding: 10px 12px; border-radius: 7px;
+            background: var(--g1); border: 1px solid var(--g5); font-size: 12.5px; }
+  #expbar .row { display: flex; gap: 8px; margin-top: 9px; }
+  #expbar button { background: var(--g3); color: var(--ink); border: 1px solid var(--g5);
+                   border-radius: 6px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+  #expbar button:hover { background: var(--g4); }
+  #expbar .ok { color: var(--ok); }
+  #expbar .bad { color: var(--bad); }
+
   /* 加载态的小转圈。之前只有 index.html 里有，这里补一份。 */
   .spinner { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
              border: 2px solid var(--g5); border-top-color: var(--brand);
@@ -281,8 +296,13 @@ function renderDetail() {
   });
   if (!state.sel) { box.innerHTML = '<div class="empty">← 选一个项目</div>'; return; }
   box.innerHTML = "<table><thead><tr>" +
-    "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th>" +
-    "</tr></thead><tbody>" + rows.map(function (s) {
+    "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th><th></th>" +
+    "</tr></thead><tbody>" + rows.map(function (s, i) {
+      // 只有能导出的源给按钮。不能导的给一句说明，而不是一个点了报错的按钮。
+      var can = s.vendor === "codex";
+      var act = can
+        ? '<button class="mini" data-i="' + i + '">导出</button>'
+        : '<span class="nope" title="这个源的正文不在独立文件里，暂不支持导出">—</span>';
       return "<tr" + (s.candidate ? ' class="cand"' : "") + ">" +
         '<td><span class="vb ' + esc(s.vendor) + '">' + esc(s.vendor) + "</span></td>" +
         '<td class="title">' + esc(s.title) + (s.archived ? ' <span class="archived">（已归档）</span>' : "") + "</td>" +
@@ -290,9 +310,88 @@ function renderDetail() {
         "<td>" + fmtBytes(s.sizeBytes) + "</td>" +
         "<td>" + esc(s.kind || "") + "</td>" +
         "<td>" + (s.candidate ? '<span class="candmark">候选 #' + s.rank + "</span>" : "#" + s.rank) + "</td>" +
-        '<td class="path">' + esc(s.source.path) + "</td></tr>";
+        '<td class="path">' + esc(s.source.path) + "</td>" +
+        "<td>" + act + "</td></tr>";
     }).join("") + "</tbody></table>" +
-    (rows.length ? "" : '<div class="empty">该项目没有匹配的会话</div>');
+    (rows.length ? "" : '<div class="empty">该项目没有匹配的会话</div>') +
+    '<div id="expbar" style="display:none"></div>';
+
+  // 记下当前表格里"能导出"的 id，供"导出整个项目"用。
+  window.__expIds = rows.filter(function (s) { return s.vendor === "codex"; })
+                       .map(function (s) { return s.id; });
+
+  // 绑"导出"。用 data-i 回指 rows 里的下标，避免把 id 拼进 HTML 属性
+  // ——会话标题里可能有引号，拼进去会把属性截断。
+  Array.prototype.forEach.call(box.querySelectorAll("button.mini"), function (b) {
+    b.onclick = function () { doExport(rows[Number(b.getAttribute("data-i"))], b); };
+  });
+}
+
+// doExport 导出单个会话。
+//
+// **只读操作**，所以不做"两步确认"——它不改用户任何东西，最坏结果是多出
+// 一个 HTML 文件。但要让用户知道存哪了，否则导完找不着。
+function doExport(s, btn) {
+  var bar = document.getElementById("expbar");
+  if (!bar) return;
+  btn.disabled = true;
+  bar.style.display = "";
+  bar.innerHTML = "<span class='spinner'></span> 正在导出「" + esc((s.title || "").slice(0, 30)) + "」…";
+
+  fetchJSON("/api/sessions/export?t=" + encodeURIComponent(TOKEN) +
+            "&days=" + document.getElementById("days").value +
+            "&keep=" + document.getElementById("keep").value, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: s.id })
+  }).then(function (v) {
+    var lines = [];
+    if (v.exported > 0) {
+      lines.push("<span class='ok'>已导出</span> → " + esc(v.index || v.dir));
+      lines.push("<div class='hint' style='padding:4px 0 0'>双击那个 index.html 就能在浏览器里看，" +
+                 "图片是内嵌的，不用另外找。</div>");
+    } else {
+      lines.push("<span class='warn'>没导出任何东西</span>");
+      (v.failed || []).forEach(function (f) { lines.push("<div class='bad'>" + esc(f) + "</div>"); });
+      (v.skipped || []).forEach(function (f) { lines.push("<div class='warn'>" + esc(f) + "</div>"); });
+      if (!v.failed || !v.failed.length) {
+        lines.push("<div class='hint' style='padding:0'>这个源暂不支持导出：它的正文不在独立文件里。</div>");
+      }
+    }
+    lines.push("<div class='row'><button id='exp-close'>知道了</button>");
+    lines.push("<button id='exp-open'>导出整个项目</button></div>");
+    bar.innerHTML = lines.join("");
+    document.getElementById("exp-close").onclick = function () { bar.style.display = "none"; };
+    document.getElementById("exp-open").onclick = function () { doExportProject(); };
+  }).catch(function (e) {
+    bar.innerHTML = "<span class='bad'>导出失败：" + esc(e.message) + "</span>";
+  }).finally(function () { btn.disabled = false; });
+}
+
+// doExportProject 导出当前选中的整个项目。
+//
+// 不给"导出全部"按钮：63 个会话 256 MB，一次点下去要等半天且没说清导到哪。
+// 用户在某个项目上想"这本都带走"，够用了。
+function doExportProject() {
+  var bar = document.getElementById("expbar");
+  var btn = document.getElementById("exp-open");
+  if (btn) btn.disabled = true;
+  bar.innerHTML = "<span class='spinner'></span> 正在导出整个项目…";
+  fetchJSON("/api/sessions/export?t=" + encodeURIComponent(TOKEN) +
+            "&days=" + document.getElementById("days").value +
+            "&keep=" + document.getElementById("keep").value, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // 传项目路径里的 id 列表太啰嗦；这里靠后端按项目筛不划算，
+    // 所以走"逐个导"——前端把当前表格里的 id 全发过去。
+    body: JSON.stringify({ ids: window.__expIds || [] })
+  }).then(function (v) {
+    bar.innerHTML = "<span class='ok'>已导出 " + (v.exported || 0) + " 个</span> → " +
+      esc(v.index || v.dir) + "<div class='row'><button id='exp-close2'>知道了</button></div>";
+    document.getElementById("exp-close2").onclick = function () { bar.style.display = "none"; };
+  }).catch(function (e) {
+    bar.innerHTML = "<span class='bad'>导出失败：" + esc(e.message) + "</span>";
+  });
 }
 
 document.getElementById("refresh").onclick = function () { load(true); };
