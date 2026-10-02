@@ -230,3 +230,177 @@ func TestScanClaude(t *testing.T) {
 		t.Errorf("标题取错：%v", titles)
 	}
 }
+
+// ---------- 清理计划 ----------
+
+// mkSession 造一条会话，只填 BuildCleanPlan 会用到的字段。
+func mkSession(id, path string, cand bool, size int64) Session {
+	return Session{
+		ID: id, Candidate: cand, SizeBytes: size,
+		Source: Source{Path: path},
+	}
+}
+
+// TestCleanPlanRefusesSharedPaths 是这块**最要紧**的一条。
+//
+// 同一张表里混着两种位置：独占文件（Codex 的 rollout）与共用数据库
+// （WB 的 workbuddy.db 里存着 24 条会话）。共用数据库**绝不能按文件删**
+// ——删掉那个 .db 就是删掉库里所有会话，不只是候选那条。
+//
+// 实测数据：workbuddy.db 里 24 条、只有 3 条候选。若按文件删，另外 21 条
+// 会一起没。所以这条判据是硬的安全阀，不是优化。
+func TestCleanPlanRefusesSharedPaths(t *testing.T) {
+	idx := &Index{Sessions: []Session{
+		mkSession("a", `/x/.codex/sessions/rollout-1.jsonl`, true, 100),
+		mkSession("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 候选
+		mkSession("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
+		mkSession("d", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
+		mkSession("e", `/x/.codex/sessions/rollout-2.jsonl`, false, 200),
+	}}
+
+	plan := BuildCleanPlan(idx)
+
+	if len(plan.Targets) != 1 {
+		t.Fatalf("只该有 1 个可删目标，实际 %d：%+v", len(plan.Targets), plan.Targets)
+	}
+	if plan.Targets[0].Path != `/x/.codex/sessions/rollout-1.jsonl` {
+		t.Fatalf("删错目标了：%s", plan.Targets[0].Path)
+	}
+	if plan.TotalBytes != 100 {
+		t.Fatalf("字节合计应为 100，实际 %d", plan.TotalBytes)
+	}
+	// 被拒的那条必须留下说明，不能悄悄跳过——不然用户会问
+	// "候选有 2 条、为什么只清了 1 条"。
+	if len(plan.Refused) != 1 {
+		t.Fatalf("该有 1 条被拒，实际 %d", len(plan.Refused))
+	}
+	if plan.Refused[0].SharedBy != 3 {
+		t.Fatalf("SharedBy 应为 3（该路径被 3 条会话共用），实际 %d", plan.Refused[0].SharedBy)
+	}
+	if plan.Refused[0].Reason == "" {
+		t.Fatal("被拒的理由不能为空——界面要显示给用户看")
+	}
+}
+
+// TestCleanPlanIgnoresNonCandidates 确认非候选一律不动。
+func TestCleanPlanIgnoresNonCandidates(t *testing.T) {
+	idx := &Index{Sessions: []Session{
+		mkSession("a", `/x/rollout-1.jsonl`, false, 100),
+		mkSession("b", `/x/rollout-2.jsonl`, false, 200),
+	}}
+	if plan := BuildCleanPlan(idx); len(plan.Targets) != 0 {
+		t.Fatalf("非候选不该入选，实际 %+v", plan.Targets)
+	}
+}
+
+// TestCleanPlanRefusesEmptyPath 挡掉没有位置信息的条目。
+func TestCleanPlanRefusesEmptyPath(t *testing.T) {
+	idx := &Index{Sessions: []Session{mkSession("a", "", true, 100)}}
+	plan := BuildCleanPlan(idx)
+	if len(plan.Targets) != 0 {
+		t.Fatalf("空路径不该入选：%+v", plan.Targets)
+	}
+	if len(plan.Refused) != 1 {
+		t.Fatalf("该有 1 条被拒，实际 %d", len(plan.Refused))
+	}
+}
+
+// TestCleanRefusesOutsideSessionFiles 确认"外形检查"挡得住误传进来的东西。
+//
+// 它防的是调用方传错：比如把某个数据库路径当成会话文件。真删了就是
+// "把一个库删掉"这种级别的后果，所以值得单独钉一条。
+func TestCleanRefusesOutsideSessionFiles(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "workbuddy.db")
+	if err := os.WriteFile(db, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agent := filepath.Join(dir, "agent-abc.jsonl")
+	if err := os.WriteFile(agent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var trashed []string
+	res, err := CleanTargets(&CleanPlan{Targets: []CleanTarget{
+		{Path: db}, {Path: agent},
+	}}, CleanOptions{
+		Trash: func(p string) error { trashed = append(trashed, p); return nil },
+	})
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if res.Moved != 0 || len(trashed) != 0 {
+		t.Fatalf(".db 与 agent- 转录都不该被删，实际动了 %v", trashed)
+	}
+	if len(res.Skipped) != 2 {
+		t.Fatalf("该有 2 条跳过记录，实际 %v", res.Skipped)
+	}
+	// 文件必须还在。
+	if _, err := os.Stat(db); err != nil {
+		t.Fatal("数据库文件被删了")
+	}
+}
+
+// TestCleanDryRunTouchesNothing 确认预演不碰任何文件。
+func TestCleanDryRunTouchesNothing(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "rollout-1.jsonl")
+	if err := os.WriteFile(f, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	res, err := CleanTargets(&CleanPlan{
+		Targets: []CleanTarget{{Path: f}}, TotalBytes: 5,
+	}, CleanOptions{
+		DryRun: true,
+		Trash:  func(string) error { called = true; return nil },
+	})
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if called {
+		t.Fatal("预演不该调用回收站")
+	}
+	if res.Moved != 0 {
+		t.Fatalf("预演不该有移动数，实际 %d", res.Moved)
+	}
+	if _, err := os.Stat(f); err != nil {
+		t.Fatal("预演把文件删了")
+	}
+}
+
+// TestCleanMissingFileIsNotFailure 确认"文件已不在"不算失败。
+//
+// 计划是上次扫描算的，扫描之后文件可能已被清过或用户自己删了。
+// 把它当失败会让整批操作的报告失真。
+func TestCleanMissingFileIsNotFailure(t *testing.T) {
+	res, err := CleanTargets(&CleanPlan{
+		Targets: []CleanTarget{{Path: filepath.Join(t.TempDir(), "nope.jsonl")}},
+	}, CleanOptions{Trash: func(string) error { return nil }})
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("不该记为失败：%v", res.Failed)
+	}
+	if len(res.Skipped) != 1 {
+		t.Fatalf("该记一条跳过，实际 %v", res.Skipped)
+	}
+}
+
+// TestCleanRefineVendors 确认"只清某一家"能生效——用户说过"cc 的先别动"，
+// 虽然规则本来就不会动 cc，但按厂商收窄的能力要真的存在。
+func TestCleanRefineVendors(t *testing.T) {
+	plan := &CleanPlan{Targets: []CleanTarget{
+		{Path: "/a/rollout-1.jsonl", Vendor: VendorCodex, Size: 10},
+		{Path: "/b/rollout-2.jsonl", Vendor: VendorClaude, Size: 20},
+	}}
+	out := plan.RefineVendors([]Vendor{VendorCodex})
+	if len(out.Targets) != 1 || out.Targets[0].Vendor != VendorCodex {
+		t.Fatalf("收窄失败：%+v", out.Targets)
+	}
+	if out.TotalBytes != 10 {
+		t.Fatalf("字节合计应跟着收窄，实际 %d", out.TotalBytes)
+	}
+}

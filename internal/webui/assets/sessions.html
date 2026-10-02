@@ -34,6 +34,32 @@
   .warnbar { margin: 10px 18px 0; padding: 8px 12px; border-radius: 8px;
              background: var(--g2); border: 1px solid var(--g5);
              color: var(--warn); font-size: 12.5px; white-space: pre-line; }
+  /* 清理面板：这是全页唯一会动文件的地方，所以做得比别处"重"——
+     有边框、有标题、按钮分两步，避免误点。 */
+  #cleanbar { margin: 10px 18px 0; padding: 12px 14px; border-radius: 8px;
+              background: var(--g1); border: 1px solid var(--g5); font-size: 12.5px; }
+  #cleanbar h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  #cleanbar .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  #cleanbar button { background: var(--g3); color: var(--ink);
+                     border: 1px solid var(--g5); border-radius: 6px;
+                     padding: 5px 14px; font-size: 12.5px; cursor: pointer; }
+  #cleanbar button:hover { background: var(--g4); }
+  #cleanbar button:disabled { opacity: .5; cursor: not-allowed; }
+  #cleanbar button.danger { border-color: var(--bad); color: var(--bad); }
+  #cleanbar button.danger:hover { background: var(--g3); }
+  #cleanbar .list { max-height: 220px; overflow: auto; margin: 8px 0 0;
+                    padding: 8px 10px; background: var(--g2); border-radius: 6px; }
+  #cleanbar .list div { padding: 1px 0; font-family: var(--mono); font-size: 11.5px;
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #cleanbar .ok { color: var(--ok); }
+  #cleanbar .bad { color: var(--bad); }
+  #cleanbar .warn { color: var(--warn); }
+  /* 加载态的小转圈。之前只有 index.html 里有，这里补一份。 */
+  .spinner { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+             border: 2px solid var(--g5); border-top-color: var(--brand);
+             border-radius: 50%; animation: spin .7s linear infinite;
+             vertical-align: -1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   main { display: flex; gap: 14px; padding: 14px 18px 30px; align-items: flex-start; }
   /* 左：项目列表 */
   #projects { width: 340px; flex: none; }
@@ -83,12 +109,14 @@
   <label class="sub"><input type="checkbox" id="onlyCand"> 只看清理候选</label>
   <button id="refresh">重新扫描</button>
   <button id="reload">套用参数</button>
+  <button id="clean">清理候选…</button>
 </header>
 <div class="hint">
   候选 = 超过保留期 <b>且</b> 在项目内名次高于保底值——每个项目永远至少留最新几条，
-  不会清到零。<b>本页只标记，不执行任何删除。</b>
+  不会清到零。列表本身不删任何东西；要清点右边的按钮，它会先给你看清单。
 </div>
 <div class="warnbar" id="warn" style="display:none"></div>
+<div id="cleanbar" style="display:none"></div>
 <main>
   <div id="projects"></div>
   <div id="detail"><div class="empty">加载中…</div></div>
@@ -269,6 +297,133 @@ function renderDetail() {
 
 document.getElementById("refresh").onclick = function () { load(true); };
 document.getElementById("reload").onclick = function () { load(false); };
+
+// ---------- 清理候选 ----------
+//
+// 这是全页唯一会动文件的地方，所以走**两步**：
+//   ① 点「清理候选…」→ 先请求预演，把清单摆出来（不删任何东西）
+//   ② 看完清单再点「确认移入回收站」→ 才真执行
+//
+// 后端也要求 confirm=true **且** dryRun=false 两个字段同时给，
+// 一个布尔值太容易被顺手传上去。两边都拦，是为了让"误删"不可能靠一次点击发生。
+
+function cleanParams() {
+  return "&days=" + document.getElementById("days").value +
+         "&keep=" + document.getElementById("keep").value;
+}
+
+function renderCleanPlan(v) {
+  var bar = document.getElementById("cleanbar");
+  var out = [];
+  var n = (v.targets || []).length;
+  var mb = (v.totalBytes || 0) / 1048576;
+
+  out.push("<h3>清理候选 · 预演</h3>");
+  if (v.result) {
+    out.push("<div>检查了 " + n + " 个文件，合计 " + mb.toFixed(0) + " MB。");
+    if ((v.result.skipped || []).length) {
+      out.push("<span class='warn'>其中 " + v.result.skipped.length + " 个会被跳过</span>");
+    }
+    out.push("</div>");
+  } else {
+    out.push("<div>可清理 " + n + " 个文件，合计 " + mb.toFixed(0) + " MB。</div>");
+  }
+  out.push("<div class='hint' style='padding:6px 0 0'>预演没有动任何文件。</div>");
+
+  if ((v.refused || []).length) {
+    out.push("<div style='margin-top:8px'><b>有 " + v.refused.length +
+             " 条候选不能按文件清</b>——它们的会话存在数据库里，删文件会连库里别的会话一起没：</div>");
+    v.refused.forEach(function (r) {
+      out.push("<div class='list' style='display:block'>" + esc(r.reason) +
+               "（该位置被 " + r.sharedBy + " 条会话共用）</div>");
+    });
+  }
+
+  if (n) {
+    out.push("<div class='list' id='clean-list'>");
+    v.targets.slice(0, 200).forEach(function (t) {
+      out.push("<div title='" + esc(t.path) + "'>" +
+               (t.size / 1048576).toFixed(1).padStart(7) + " MB  " +
+               esc(t.project || "") + "  " + esc(t.title || "") + "</div>");
+    });
+    out.push("</div>");
+    if (n > 200) {
+      out.push("<div class='hint' style='padding-left:0'>（只列出前 200 个，实际会清 " + n + " 个）</div>");
+    }
+  }
+
+  out.push("<div class='row'>");
+  if (n) {
+    out.push("<button class='danger' id='clean-go'>确认移入回收站</button>");
+  }
+  out.push("<button id='clean-cancel'>取消</button>");
+  out.push("<span id='clean-note' class='hint' style='padding:0'></span>");
+  out.push("</div>");
+
+  bar.innerHTML = out.join("");
+  bar.style.display = "";
+
+  var cancel = document.getElementById("clean-cancel");
+  if (cancel) cancel.onclick = function () { bar.style.display = "none"; };
+  var go = document.getElementById("clean-go");
+  if (go) go.onclick = function () { doClean(go); };
+}
+
+function loadCleanPlan() {
+  var btn = document.getElementById("clean");
+  btn.disabled = true;
+  var bar = document.getElementById("cleanbar");
+  bar.style.display = "";
+  bar.innerHTML = "<h3>清理候选</h3><div class='hint' style='padding:0'>" +
+                  "<span class='spinner'></span> 正在算可清理的清单…</div>";
+  fetchJSON("/api/sessions/clean?t=" + encodeURIComponent(TOKEN) + cleanParams())
+    .then(renderCleanPlan)
+    .catch(function (e) {
+      bar.innerHTML = "<h3>清理候选</h3><div class='bad'>算清单失败：" + esc(e.message) + "</div>";
+    })
+    .finally(function () { btn.disabled = false; });
+}
+
+function doClean(btn) {
+  var note = document.getElementById("clean-note");
+  btn.disabled = true;
+  if (note) note.textContent = "正在移入回收站…";
+  fetchJSON("/api/sessions/clean?t=" + encodeURIComponent(TOKEN) + cleanParams(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // 两个字段都要：后端要求 confirm 为真且 dryRun 明确为假。
+    body: JSON.stringify({ confirm: true, dryRun: false })
+  }).then(function (v) {
+    var r = v.result || {};
+    var bar = document.getElementById("cleanbar");
+    var lines = ["<h3>清理完成</h3>"];
+    lines.push("<div class='ok'>已移入回收站 " + (r.moved || 0) + " 个文件，释放 " +
+               ((r.freedBytes || 0) / 1048576).toFixed(0) + " MB。</div>");
+    if ((r.failed || []).length) {
+      lines.push("<div class='bad'>失败 " + r.failed.length + " 个：</div>");
+      r.failed.forEach(function (f) { lines.push("<div class='list' style='display:block'>" + esc(f) + "</div>"); });
+    }
+    if ((r.skipped || []).length) {
+      lines.push("<div class='warn'>跳过 " + r.skipped.length + " 个（多为已不存在）：</div>");
+      r.skipped.slice(0, 20).forEach(function (f) { lines.push("<div class='list' style='display:block'>" + esc(f) + "</div>"); });
+    }
+    lines.push("<div class='hint' style='padding:6px 0 0'>文件在回收站里，需要时可右键还原。</div>");
+    lines.push("<div class='row'><button id='clean-close'>知道了</button></div>");
+    bar.innerHTML = lines.join("");
+    document.getElementById("clean-close").onclick = function () { bar.style.display = "none"; };
+    // 索引缓存已被后端丢掉，重新拉一次让列表反映现状。
+    load(false);
+  }).catch(function (e) {
+    if (note) note.textContent = "";
+    btn.disabled = false;
+    var bar = document.getElementById("cleanbar");
+    bar.innerHTML = "<h3>清理失败</h3><div class='bad'>" + esc(e.message) +
+                    "</div><div class='row'><button id='clean-close'>知道了</button></div>";
+    document.getElementById("clean-close").onclick = function () { bar.style.display = "none"; };
+  });
+}
+
+document.getElementById("clean").onclick = loadCleanPlan;
 ["q", "vendor", "onlyCand"].forEach(function (id) {
   document.getElementById(id).addEventListener("input", function () {
     state.sel = null; renderProjects(); renderDetail();

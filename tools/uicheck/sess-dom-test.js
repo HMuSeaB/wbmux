@@ -55,7 +55,8 @@ function makeEl(id) {
 // 注意**故意不放 'empty'**：它正是运行时会被 innerHTML 重建掉的那个，
 // 不放进来才能复现"扫过一次之后"的状态——那是出事的那一刻。
 const staticIds = ['days', 'keep', 'q', 'vendor', 'onlyCand', 'warn',
-                   'gen', 'refresh', 'reload', 'projects', 'detail'];
+                   'gen', 'refresh', 'reload', 'projects', 'detail',
+                   'clean', 'cleanbar'];
 
 const els = {};
 staticIds.forEach(id => { els[id] = makeEl(id); });

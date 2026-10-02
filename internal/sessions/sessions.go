@@ -313,9 +313,12 @@ func normalizeProject(raw string) string {
 // ---------- 缓存 ----------
 
 // 缓存文件放 wbmux 自己的数据目录（~/.wbmux），沿 config.Dir 的既有习惯。
-// 扫描要起 Electron 子进程 + 遍历 1.4G 的 Codex 会话目录，第一次十几秒；
-// 缓存让界面第二次起是毫秒级。刷新永远手动（--refresh / 界面按钮），
-// 不做后台自动扫——它读的是别人的活动数据，频繁打扰没有意义。
+//
+// 实测（2026-10-01）：强制重扫约 0.22 秒、缓存命中 7 毫秒。
+// 缓存仍值得留——扫一次要起几个 Electron 子进程读各家的库，属于别人的
+// 活动数据，每次开页都去碰没有必要。
+//
+// 刷新永远手动（--refresh / 界面按钮），不做后台自动扫。
 func cachePath() (string, error) {
 	dir, err := config.Dir()
 	if err != nil {
@@ -344,6 +347,22 @@ func loadCacheSessions() []Session {
 // cachedGeneratedAt 是 loadCacheSessions 读到的原始扫描时间，
 // 让缓存路径的界面仍然显示"数据是那次扫的"，而不是装成刚扫完。
 var cachedGeneratedAt int64
+
+// InvalidateCache 丢掉磁盘上的会话索引缓存。
+//
+// 什么时候需要：**磁盘上的会话文件变了**（比如刚清理过一批）。
+// 不丢的话下次打开会话中心会拿旧缓存，看到刚清掉的那些还在列表里——
+// 用户会以为清理没生效。
+//
+// 删不掉不算错误：缓存本来就是"有就用、没有就重扫"的东西，
+// 最坏情况是多扫一次。
+func InvalidateCache() {
+	path, err := cachePath()
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
+}
 
 func saveCache(idx *Index) {
 	path, err := cachePath()
