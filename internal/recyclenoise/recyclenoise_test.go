@@ -232,9 +232,9 @@ func TestClassify(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := Classify(Entry{Original: c.original, Size: c.size})
+			_, got := Classify(Entry{Original: c.original, Size: c.size})
 			if got != c.wantKind {
-				t.Errorf("类别不对\n  路径 %s\n  期望 %q\n  实际 %q",
+				t.Errorf("类别名不对\n  路径 %s\n  期望 %q\n  实际 %q",
 					c.original, c.wantKind, got)
 			}
 		})
@@ -243,10 +243,13 @@ func TestClassify(t *testing.T) {
 
 func TestSummarize(t *testing.T) {
 	entries := []Entry{
-		{Original: `C:\T\__PSScriptPolicyTest_a.ps1`, Size: 68, Kind: "PowerShell 策略探测"},
-		{Original: `C:\T\__PSScriptPolicyTest_b.ps1`, Size: 68, Kind: "PowerShell 策略探测"},
-		{Original: `C:\T\rj5ot4gb`, Size: 4, Kind: "工具临时目录"},
-		{Original: `C:\D\mine.exe`, Size: 253019040},
+		{Original: `C:\T\__PSScriptPolicyTest_a.ps1`, Size: 68,
+			Category: CategoryNoise, Kind: "PowerShell 策略探测"},
+		{Original: `C:\T\__PSScriptPolicyTest_b.ps1`, Size: 68,
+			Category: CategoryNoise, Kind: "PowerShell 策略探测"},
+		{Original: `C:\T\rj5ot4gb`, Size: 4,
+			Category: CategoryNoise, Kind: "工具临时目录"},
+		{Original: `C:\D\mine.exe`, Size: 253019040, Category: CategoryKeep},
 	}
 
 	s := Summarize(entries)
@@ -278,20 +281,21 @@ func TestSummarize(t *testing.T) {
 	}
 }
 
-func TestSummarizeOtherLimit(t *testing.T) {
+func TestSummarizeKeepLimit(t *testing.T) {
 	var entries []Entry
-	for i := 0; i < otherPreviewLimit+10; i++ {
+	for i := 0; i < samplePerTier+10; i++ {
 		entries = append(entries, Entry{
 			Original: `C:\D\file` + string(rune('a'+i%26)) + `.txt`,
 			Size:     1,
+			Category: CategoryKeep,
 		})
 	}
 	s := Summarize(entries)
-	if len(s.Other) != otherPreviewLimit {
-		t.Errorf("其他条目预览应截断到 %d 条，实际 %d", otherPreviewLimit, len(s.Other))
+	if len(s.Other) != samplePerTier {
+		t.Errorf("保留档预览应截断到 %d 条，实际 %d", samplePerTier, len(s.Other))
 	}
-	if s.OtherTotal != otherPreviewLimit+10 {
-		t.Errorf("其他条目总数应为 %d，实际 %d", otherPreviewLimit+10, s.OtherTotal)
+	if s.OtherTotal != samplePerTier+10 {
+		t.Errorf("保留档总数应为 %d，实际 %d", samplePerTier+10, s.OtherTotal)
 	}
 }
 
@@ -300,7 +304,7 @@ func TestSummarizeOtherLimit(t *testing.T) {
 func TestCleanKeepsUserFiles(t *testing.T) {
 	dir := t.TempDir()
 
-	mk := func(suffix, original string, size int64) Entry {
+	mk := func(suffix, original string, size int64, cat Category) Entry {
 		meta := filepath.Join(dir, "$I"+suffix)
 		body := filepath.Join(dir, "$R"+suffix)
 		if err := os.WriteFile(meta, buildMeta(original, size), 0o600); err != nil {
@@ -311,13 +315,13 @@ func TestCleanKeepsUserFiles(t *testing.T) {
 		}
 		return Entry{
 			Original: original, Size: size,
-			Kind:     Classify(Entry{Original: original, Size: size}),
+			Category: cat,
 			metaPath: meta, bodyPath: body,
 		}
 	}
 
-	noise := mk("NOISE", `C:\Users\36230\AppData\Local\Temp\__PSScriptPolicyTest_a.ps1`, 68)
-	user := mk("USERX", `C:\Users\36230\Downloads\setup.exe`, 999)
+	noise := mk("NOISE", `C:\Users\36230\AppData\Local\Temp\__PSScriptPolicyTest_a.ps1`, 68, CategoryNoise)
+	user := mk("USERX", `C:\Users\36230\Downloads\setup.exe`, 999, CategoryKeep)
 
 	res := Clean([]Entry{noise, user}, CleanOptions{})
 
@@ -393,5 +397,140 @@ func TestRemoveEntryToleratesMissing(t *testing.T) {
 	}
 	if err := removeEntry(e); err != nil {
 		t.Errorf("文件不存在不该报错，实际: %v", err)
+	}
+}
+
+// TestClassifyCategory 单独覆盖处置分级。
+//
+// 为什么单列一个测试：分级是这次新加的，也是"自动清理到底会碰什么"
+// 的唯一依据。原来的 TestClassify 只看类别名，分级错了它也发现不了。
+func TestClassifyCategory(t *testing.T) {
+	cases := []struct {
+		name string
+		orig string
+		size int64
+		want Category
+	}{
+		// 噪声档：工具反复产生的
+		{"go build 残渣", `C:\Users\36230\AppData\Local\go-tmp\go-build1\b001\_pkg_.a`, 1000, CategoryNoise},
+		{"go test 临时树", `C:\Users\36230\AppData\Local\Temp\TestFoo1234567\001\a\b`, 0, CategoryNoise},
+		{"策略探测文件", `C:\Users\36230\AppData\Local\Temp\__PSScriptPolicyTest_a.ps1`, 68, CategoryNoise},
+		{"wbmux sqlite 桥临时件", `C:\Users\36230\.wbmux\tmp\sqlite-3.json`, 100, CategoryNoise},
+
+		// 草稿档：开发痕迹，可删但不自动删
+		{"项目 tmp 下的脚本", `D:\4rchive\Code\wbmux\tmp\render\main.go`, 1300, CategoryScratch},
+		{"项目 dist 下的构建产物", `D:\4rchive\Code\wbmux\dist\wbmux-exp.exe`, 11992000, CategoryScratch},
+		{"项目 tmp 目录本身", `D:\4rchive\Code\wbmux\tmp\exp-test`, 269291000, CategoryScratch},
+		{"临时目录根层散落 txt", `C:\Users\36230\AppData\Local\Temp\st.txt`, 512, CategoryScratch},
+		{"临时目录根层 jsonl", `C:\Users\36230\AppData\Local\Temp\tail1234567\rollout-x.jsonl`, 4400, CategoryScratch},
+
+		// 保留档：不该由工具代劳
+		{"桌面上的文档", `C:\Users\36230\Desktop\浓度.docx`, 38000, CategoryKeep},
+		{"下载目录的安装包", `C:\Users\36230\Downloads\oopz_setup_v1.4.6.1.exe`, 253019040, CategoryKeep},
+		{"wbmux 升级包", `C:\Users\36230\.wbmux\incoming\wbmux_0.9.6_windows_amd64.zip`, 3540000, CategoryKeep},
+		{"安装脚本", `C:\Users\36230\.wbmux\incoming\安装-v0.9.6.bat`, 1800, CategoryKeep},
+		{"源码树里的源文件", `D:\4rchive\Code\wintuner\internal\ctxmenu\scan_test.go`, 600, CategoryKeep},
+		{"别的项目的 exe", `D:\4rchive\Code\wintuner\wintuner.exe`, 6547000, CategoryKeep},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, kind := Classify(Entry{Original: c.orig, Size: c.size})
+			if got != c.want {
+				t.Errorf("分级不对：%s\n  期望 %q\n  实际 %q（类别名 %q）",
+					c.orig, c.want, got, kind)
+			}
+		})
+	}
+}
+
+// TestCleanThroughTiers 是分级清理的核心约定：
+// 自动清理（默认）绝不能碰草稿档与保留档。
+func TestCleanThroughTiers(t *testing.T) {
+	gone := func(e Entry) bool {
+		_, err := os.Stat(e.metaPath)
+		return os.IsNotExist(err)
+	}
+
+	// 三档共用一套文件是错的：前一轮 Clean 之后文件已经不在了，而
+	// removeEntry 对"本来就不存在"是返回成功的（用户可能已手动清过），
+	// 于是计数虚高、断言失去意义。所以每一档用全新的一套。
+	fresh := func(t *testing.T) []Entry {
+		d := t.TempDir()
+		mk := func(suffix, orig string, cat Category) Entry {
+			meta := filepath.Join(d, "$I"+suffix)
+			body := filepath.Join(d, "$R"+suffix)
+			for _, p := range []string{meta, body} {
+				if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return Entry{Original: orig, Category: cat, metaPath: meta, bodyPath: body}
+		}
+		return []Entry{
+			mk("N", `C:\T\__PSScriptPolicyTest_a.ps1`, CategoryNoise),
+			mk("S", `D:\4rchive\Code\wbmux\tmp\x\main.go`, CategoryScratch),
+			mk("K", `C:\Users\36230\Desktop\a.docx`, CategoryKeep),
+		}
+	}
+
+	t.Run("默认只清噪声", func(t *testing.T) {
+		es := fresh(t)
+		res := Clean(es, CleanOptions{})
+		if res.Removed != 1 {
+			t.Errorf("应只清 1 项，实际 %d", res.Removed)
+		}
+		if !gone(es[0]) {
+			t.Error("噪声没被清掉")
+		}
+		if gone(es[1]) {
+			t.Error("默认清理碰了草稿档——自动清理绝不能碰这个")
+		}
+		if gone(es[2]) {
+			t.Error("默认清理碰了保留档")
+		}
+	})
+
+	t.Run("清到草稿档", func(t *testing.T) {
+		es := fresh(t)
+		if res := Clean(es, CleanOptions{Through: CategoryScratch}); res.Removed != 2 {
+			t.Errorf("应清 2 项，实际 %d", res.Removed)
+		}
+		if !gone(es[0]) || !gone(es[1]) {
+			t.Error("噪声与草稿都该被清掉")
+		}
+		if gone(es[2]) {
+			t.Error("清到草稿档不该碰保留档")
+		}
+	})
+
+	t.Run("全清", func(t *testing.T) {
+		es := fresh(t)
+		if res := Clean(es, CleanOptions{All: true}); res.Removed != 3 {
+			t.Errorf("全清应删 3 项，实际 %d", res.Removed)
+		}
+		if !gone(es[2]) {
+			t.Error("All 应清掉保留档")
+		}
+	})
+}
+
+// TestCleanUncategorizedIsKept 确认"没分级"的条目不会被顺手删掉——
+// 老调用方可能构造出没有 Category 的 Entry，宁可漏删不能误删。
+func TestCleanUncategorizedIsKept(t *testing.T) {
+	dir := t.TempDir()
+	meta := filepath.Join(dir, "$IAAA")
+	body := filepath.Join(dir, "$RAAA")
+	for _, p := range []string{meta, body} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := Entry{Original: "x", metaPath: meta, bodyPath: body} // 没有 Category
+	if res := Clean([]Entry{e}, CleanOptions{Through: CategoryScratch}); res.Removed != 0 {
+		t.Errorf("未分级的条目不该被清掉，实际删了 %d 项", res.Removed)
+	}
+	if _, err := os.Stat(meta); err != nil {
+		t.Error("未分级条目被误删了")
 	}
 }

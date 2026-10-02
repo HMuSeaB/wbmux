@@ -81,6 +81,9 @@ func (s *Server) handleRecycleClean(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		All bool `json:"all"`
+		// Through 是"清到哪一档"：noise（默认）/ scratch / keep。
+		// 界面上的三个按钮分别传这三个值。
+		Through string `json:"through"`
 	}
 	// 允许空请求体：界面点"清理噪声"时不带参数，这时 ContentLength 是 0。
 	if r.ContentLength > 0 {
@@ -90,12 +93,22 @@ func (s *Server) handleRecycleClean(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 认不出来的 through 一律退到最保守的那档。别让一个拼错的值
+	// 顺手清到"连用户文件一起删"上去。
+	through := recyclenoise.CategoryNoise
+	switch req.Through {
+	case string(recyclenoise.CategoryScratch):
+		through = recyclenoise.CategoryScratch
+	case string(recyclenoise.CategoryKeep):
+		through = recyclenoise.CategoryKeep
+	}
+
 	entries, err := recyclenoise.Scan()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	res := recyclenoise.Clean(entries, recyclenoise.CleanOptions{All: req.All})
+	res := recyclenoise.Clean(entries, recyclenoise.CleanOptions{All: req.All, Through: through})
 
 	// 清完再扫一次，让界面直接拿到新状态，省一次往返。
 	after, err := recyclenoise.Scan()

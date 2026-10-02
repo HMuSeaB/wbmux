@@ -45,6 +45,54 @@ import (
 
 // ---------- 回收站定位 ----------
 
+// Category 是条目的处置分级。
+//
+// # 为什么要分级
+//
+// 最初只有"噪声 / 非噪声"两档，结果实测下来很难用：214 项里只有 28 项
+// 是工具噪声，其余 186 项全被归进"我没动"，而其中大部分（项目 tmp/dist
+// 下的构建产物、系统临时目录里的散落文件）恰恰是用户想清掉的。
+// 于是"清不全"——不是识别不出来，是**没给出可操作的中间档**。
+//
+// 分级之后每一档的"能不能删"都写死在代码里，界面上按档给按钮，
+// 自动清理只用最上面那一档。
+type Category string
+
+const (
+	// CategoryNoise 是工具自己反复产生的垃圾（被中断的构建、测试临时树、
+	// 每次调用的探测文件…）。**只有这一档会被自动清理碰。**
+	CategoryNoise Category = "noise"
+
+	// CategoryScratch 是开发过程中留下的草稿与构建产物：项目 tmp/dist/build
+	// 目录下的东西、系统临时目录里的散落文件。这些不是"工具垃圾"，
+	// 但确实是干活留下的痕迹，可以删——只是删了不可恢复，所以要用户点。
+	CategoryScratch Category = "scratch"
+
+	// CategoryKeep 是不该由这个工具代劳的：用户从桌面/文档/下载删掉的东西、
+	// wbmux 下载的升级包（删了要重新联网下载）、以及一切认不出来的条目。
+	// **只��用户显式选「全部清空」才会动。**
+	CategoryKeep Category = "keep"
+)
+
+// Severity 返回该分级的危险程度，数字越大越危险。
+// 清理时按"不超过这个危险度"过滤，见 Clean。
+//
+// 导出它是因为命令行入口（tools/recycle-noise）也要按档统计条目数，
+// 不该为了算个数量就把分级逻辑复制一份到别处。
+func (c Category) Severity() int {
+	switch c {
+	case CategoryNoise:
+		return 1
+	case CategoryScratch:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// severity 是内部别名，保持包内读起来短一点。
+func (c Category) severity() int { return c.Severity() }
+
 // Entry 是回收站里的一条记录。
 type Entry struct {
 	// Original 是它被删除前的完整路径。这是判断"谁产生的"唯一可靠依据。
@@ -53,7 +101,10 @@ type Entry struct {
 	Size int64 `json:"size"`
 	// DeletedAt 是删除时间。
 	DeletedAt time.Time `json:"deletedAt"`
-	// Kind 是识别出的噪声类别；不是噪声则为空。
+	// Category 是处置分级，见上面的说明。
+	Category Category `json:"category"`
+	// Kind 是该分级下的具体类别名（"go build 残渣"、"项目开发目录"…），
+	// 用来在界面上说明"是谁在塞"。空串表示没细分。
 	Kind string `json:"kind,omitempty"`
 
 	// metaPath 是 $I 元数据文件，bodyPath 是 $R 内容本体。
@@ -287,8 +338,54 @@ var noiseRules = []noiseRule{
 		Re: regexp.MustCompile(`\.(db|sqlite|sqlite3)-(wal|shm|journal)$`), MaxSize: 64 << 20},
 }
 
-// Classify 判断一条记录是不是工具噪声，是则返回类别名。
-func Classify(e Entry) string {
+// ---------- 开发草稿识别 ----------
+
+// scratchRules 认的是"干活留下的痕迹"，不是工具垃圾。
+//
+// 为什么单独一档：这些不是每次调用都冒出来的东西，而是攒下来的——
+// 项目 tmp/ 里的诊断脚本与截图、系统临时目录里的散落 txt。
+// 实测它们占了回收站的大头（2026-10-02：221 项里 110 项在项目目录，
+// 664 MB），而原来全被归进"非噪声"就再没人管，于是用户看到的是
+// "清了一堆噪声还剩一堆"。
+//
+// 放在 CategoryScratch 而不是 Noise 的理由：它们是**一次性的、可能有用的**
+// （比如某个截图、某次实验的产物），删掉不可恢复。所以自动清理不碰，
+// 只给一个明确的按钮让用户自己决定。
+var scratchRules = []noiseRule{
+	// 项目源码树里的 tmp / dist / build 目录。
+	//
+	// 限定在 <盘>\...\Code\<项目>\ 之下，且目录名必须是这三个之一——
+	// 这是仓库里约定的开发期目录（.gitignore 里就忽略了它们），
+	// 里面的东西随时可以重新生成。
+	// 不要放宽成"任何 tmp/dist"：别处（尤其系统目录）同名目录不是这个意思。
+	{Kind: "项目开发目录",
+		Re:      regexp.MustCompile(`[\\/]Code[\\/][^\\/]+[\\/](tmp|dist|build|out)[\\/]`),
+		MaxSize: 1 << 30},
+
+	// 同上，但目录本身（结尾就是 tmp/dist/build，没有更深一层）。
+	{Kind: "项目开发目录",
+		Re:      regexp.MustCompile(`[\\/]Code[\\/][^\\/]+[\\/](tmp|dist|build|out)$`),
+		MaxSize: 1 << 30},
+
+	// 系统临时目录下的散落数据文件（*.txt / *.json / *.jsonl / *.log…）。
+	//
+	// 允许再往下**一层**子目录：实测真正的形态是
+	// `%TEMP%\tail1234567\rollout-x.jsonl` 这种——脚本先建临时目录再往里写。
+	// 只认根层会漏掉一大半（第一版就是这么写的，测试直接把它抓出来了）。
+	// 不再往下放是有意的：再深就该是别的程序正在用的临时结构了。
+	// 限定扩展名是因为那几种都是"给人看/给脚本读"的中间产物；
+	// 真正的程序缓存一般是 .dat/.bin，不会命中。
+	{Kind: "临时目录散落文件",
+		Re:      regexp.MustCompile(`(?i)[\\/][Tt]emp[\\/][^\\/]+([\\/][^\\/]+)?\.(txt|json|jsonl|log|csv|md)$`),
+		MaxSize: 8 << 20},
+}
+
+// Classify 判断一条记录属于哪一档、该档下的具体类别。
+//
+// 分两轮：先跑 noiseRules（工具反复产生的垃圾，命中即 CategoryNoise），
+// 再跑 scratchRules（开发草稿与构建产物，命中即 CategoryScratch）。
+// 都不命中就是 CategoryKeep —— 宁可留着让人自己看，也不要替他删。
+func Classify(e Entry) (Category, string) {
 	for _, r := range noiseRules {
 		if !r.Re.MatchString(e.Original) {
 			continue
@@ -296,9 +393,18 @@ func Classify(e Entry) string {
 		if r.MaxSize > 0 && e.Size > r.MaxSize {
 			continue
 		}
-		return r.Kind
+		return CategoryNoise, r.Kind
 	}
-	return ""
+	for _, r := range scratchRules {
+		if !r.Re.MatchString(e.Original) {
+			continue
+		}
+		if r.MaxSize > 0 && e.Size > r.MaxSize {
+			continue
+		}
+		return CategoryScratch, r.Kind
+	}
+	return CategoryKeep, ""
 }
 
 // ---------- 扫描 ----------
@@ -337,16 +443,16 @@ func Scan() ([]Entry, error) {
 			if _, err := os.Stat(body); err == nil {
 				e.bodyPath = body
 			}
-			e.Kind = Classify(e)
+			e.Category, e.Kind = Classify(e)
 			out = append(out, e)
 		}
 	}
 
-	// 稳定排序：先按类别（噪声在前），再按时间倒序。
+	// 稳定排序：按处置分级（噪声 → 草稿 → 保留），同级再按时间倒序。
 	sort.SliceStable(out, func(i, j int) bool {
-		ni, nj := out[i].Kind != "", out[j].Kind != ""
-		if ni != nj {
-			return ni
+		si, sj := out[i].Category.severity(), out[j].Category.severity()
+		if si != sj {
+			return si < sj
 		}
 		return out[i].DeletedAt.After(out[j].DeletedAt)
 	})
@@ -364,13 +470,20 @@ type Summary struct {
 	// NoiseBytes 是这些噪声的体积。通常很小——卡死看的是条目数不是体积，
 	// 这个字段只是顺带给出，别拿它判断严重性。
 	NoiseBytes int64 `json:"noiseBytes"`
-	// ByKind 按类别分组计数，让用户一眼看出是谁在塞。
+	// Scratch 是"开发草稿"的条数：项目 tmp/dist/build 下的产物、
+	// 系统临时目录里的散落文件。这些确实可以删，但不自动删。
+	Scratch int `json:"scratch"`
+	// ScratchBytes 是这些草稿的体积——往往比噪声大得多（几百 MB）。
+	ScratchBytes int64 `json:"scratchBytes"`
+	// Tiers 是按处置分级的完整统计，界面按这个渲染。
+	Tiers []TierCount `json:"tiers"`
+	// ByKind 是工具噪声的细分来源（保留给旧界面用）。
 	ByKind []KindCount `json:"byKind"`
-	// Other 是"非噪声"条目（多半是用户自己删的），只取前若干条给界面展示。
+	// Other 是"保留"档的样本（多半是用户自己删的）。
 	Other []Entry `json:"other"`
-	// OtherTotal 是其他条目的总数（Other 只是其中一部分）。
+	// OtherTotal 是保留档的总数（Other 只是其中一部分）。
 	OtherTotal int `json:"otherTotal"`
-	// OtherBytes 是其他条目的总体积。
+	// OtherBytes 是保留档的总体积。
 	OtherBytes int64 `json:"otherBytes"`
 }
 
@@ -383,36 +496,94 @@ type KindCount struct {
 // otherPreviewLimit 限制返回给界面的"其他条目"条数，避免一次渲染几百行。
 const otherPreviewLimit = 20
 
+// samplePerTier 是每档给出的预览条数。
+const samplePerTier = 8
+
+// TierCount 是某一分级的统计。
+type TierCount struct {
+	// Category 是分级。
+	Category Category `json:"category"`
+	// Count 是条数。
+	Count int `json:"count"`
+	// Bytes 是体积。卡死看的是条数，这个只是顺带给出。
+	Bytes int64 `json:"bytes"`
+	// ByKind 是该分级下的细分来源，按条数降序。
+	ByKind []KindCount `json:"byKind,omitempty"`
+	// Sample 是该分级下体积最大的几条，给界面做预览。
+	Sample []Entry `json:"sample,omitempty"`
+}
+
 // Summarize 把扫描结果汇总成界面用的概览。
+//
+// 关键改动：按**处置分级**分别统计，而不是把"非噪声"当成一个筐。
+// 原来只有 noise / other 两档时，开发草稿（项目 tmp/dist、系统临时目录里
+// 的散落文件）全落进 other，用户点完"清理噪声"发现还剩一大半，就是这么来的。
 func Summarize(entries []Entry) Summary {
 	var s Summary
 	s.Total = len(entries)
 
-	counts := map[string]int{}
+	byTier := map[Category]*TierCount{}
+	kinds := map[Category]map[string]int{}
 	for _, e := range entries {
-		if e.Kind == "" {
-			s.OtherTotal++
-			s.OtherBytes += e.Size
-			if len(s.Other) < otherPreviewLimit {
-				s.Other = append(s.Other, e)
-			}
-			continue
+		c := e.Category
+		if c == "" {
+			c = CategoryKeep
 		}
-		s.Noise++
-		s.NoiseBytes += e.Size
-		counts[e.Kind]++
+		t := byTier[c]
+		if t == nil {
+			t = &TierCount{Category: c}
+			byTier[c] = t
+			kinds[c] = map[string]int{}
+		}
+		t.Count++
+		t.Bytes += e.Size
+		if e.Kind != "" {
+			kinds[c][e.Kind]++
+		}
+		// 预览：每档留体积最大的几条，便于用户看清"要删的是什么"
+		if len(t.Sample) < samplePerTier || e.Size > t.Sample[len(t.Sample)-1].Size {
+			t.Sample = append(t.Sample, e)
+			sort.Slice(t.Sample, func(i, j int) bool {
+				return t.Sample[i].Size > t.Sample[j].Size
+			})
+			if len(t.Sample) > samplePerTier {
+				t.Sample = t.Sample[:samplePerTier]
+			}
+		}
 	}
 
-	// 按条数从多到少，让最大的来源排最前。
-	for k, n := range counts {
-		s.ByKind = append(s.ByKind, KindCount{Kind: k, Count: n})
-	}
-	sort.Slice(s.ByKind, func(i, j int) bool {
-		if s.ByKind[i].Count != s.ByKind[j].Count {
-			return s.ByKind[i].Count > s.ByKind[j].Count
+	// 按分级顺序输出（噪声 → 草稿 → 保留），固定顺序方便界面排版。
+	for _, c := range []Category{CategoryNoise, CategoryScratch, CategoryKeep} {
+		t := byTier[c]
+		if t == nil {
+			continue
 		}
-		return s.ByKind[i].Kind < s.ByKind[j].Kind
-	})
+		for k, n := range kinds[c] {
+			t.ByKind = append(t.ByKind, KindCount{Kind: k, Count: n})
+		}
+		sort.Slice(t.ByKind, func(i, j int) bool {
+			if t.ByKind[i].Count != t.ByKind[j].Count {
+				return t.ByKind[i].Count > t.ByKind[j].Count
+			}
+			return t.ByKind[i].Kind < t.ByKind[j].Kind
+		})
+		s.Tiers = append(s.Tiers, *t)
+	}
+
+	// 兼容旧字段：界面上"工具噪声 / 开发草稿"两个数字块直接用。
+	for _, t := range s.Tiers {
+		switch t.Category {
+		case CategoryNoise:
+			s.Noise, s.NoiseBytes = t.Count, t.Bytes
+			// ByKind 保留"只给噪声细分"的老语义，别让旧调用方读不到。
+			s.ByKind = t.ByKind
+		case CategoryScratch:
+			s.Scratch, s.ScratchBytes = t.Count, t.Bytes
+		case CategoryKeep:
+			s.OtherTotal, s.OtherBytes = t.Count, t.Bytes
+			s.Other = t.Sample
+		}
+	}
 	return s
 }
 
@@ -420,9 +591,26 @@ func Summarize(entries []Entry) Summary {
 
 // CleanOptions 控制清理范围。
 type CleanOptions struct {
-	// All 为 true 时连"非噪声"条目一起清掉（等于清空回收站）。
-	// 默认 false——用户自己删的东西可能还想恢复，不该替他决定。
+	// Through 是"清理到哪一档为止"，按危险度从低到高：
+	// CategoryNoise（只清工具噪声，默认）< CategoryScratch（连开发草稿）
+	// < CategoryKeep（等于清空回收站，会动用户文件与升级包）。
+	//
+	// 用分级而不是一堆 bool，是因为这样"自动清理"只能落在最低档上，
+	// 想要更狠必须显式往上加——不太可能误触。
+	Through Category
+	// All 保留给旧调用方：等价于 Through=CategoryKeep。
 	All bool
+}
+
+// maxSeverity 返回这次要清理到的危险度上限。
+func (o CleanOptions) maxSeverity() int {
+	if o.All {
+		return CategoryKeep.severity()
+	}
+	if o.Through == "" {
+		return CategoryNoise.severity()
+	}
+	return o.Through.severity()
 }
 
 // CleanResult 是一次清理的结果。
@@ -443,8 +631,14 @@ type CleanResult struct {
 // 但点还原会失败，因为内容已经不在了。
 func Clean(entries []Entry, opts CleanOptions) CleanResult {
 	var res CleanResult
+	limit := opts.maxSeverity()
 	for _, e := range entries {
-		if e.Kind == "" && !opts.All {
+		c := e.Category
+		if c == "" {
+			// 没分级的一律当"保留"处理——宁可漏删也不要误删。
+			c = CategoryKeep
+		}
+		if c.severity() > limit {
 			continue
 		}
 		if err := removeEntry(e); err != nil {

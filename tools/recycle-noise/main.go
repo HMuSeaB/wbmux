@@ -1,4 +1,4 @@
-// Command recycle-noise 诊断并清理回收站里的工具噪声。
+// Command recycle-noise 诊断并清理回收站里的垃圾。
 //
 // # 为什么有这个命令行入口
 //
@@ -10,6 +10,16 @@
 // 这一点很要紧——最早有个 Python 版脚本，模式表是抄的，两边很快就漂了：
 // 面板能认出的，脚本认不出。
 //
+// # 分档
+//
+// 界面和这里都按"能不能放心删"分三档，顺序即危险度：
+//
+//	noise    工具反复产生的垃圾（被中断的构建、测试临时树、探测文件）
+//	scratch  开发草稿（项目 tmp/dist 下的产物、临时目录里的散落文件）
+//	keep     用户自己删的文件、wbmux 下载的升级包
+//
+// 不加 -through 时只清第一档，跟自动清理的行为一致。
+//
 // # 为什么不用脚本
 //
 // 早先那版 Python 脚本清理上千个条目要 10 分钟以上（每个条目一轮
@@ -18,16 +28,16 @@
 //
 // # 用法
 //
-//	go run ./tools/recycle-noise            # 报告，看是谁在塞
-//	go run ./tools/recycle-noise clean      # 清掉已识别的噪声
-//	go run ./tools/recycle-noise clean -all # 连用户自己的文件一起清
+//	go run ./tools/recycle-noise                        # 报告，看是哪几档
+//	go run ./tools/recycle-noise clean                  # 只清工具噪声
+//	go run ./tools/recycle-noise clean -through scratch # 连开发草稿一起清
+//	go run ./tools/recycle-noise clean -all             # 清空（含用户文件）
 package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/recyclenoise"
 )
@@ -44,13 +54,21 @@ func human(n int64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
+// tierLabels 是各档的中文名，界面与命令行用同一套说法。
+var tierLabels = map[recyclenoise.Category]string{
+	recyclenoise.CategoryNoise:   "工具噪声",
+	recyclenoise.CategoryScratch: "开发草稿",
+	recyclenoise.CategoryKeep:    "保留（你自己的文件）",
+}
+
 func main() {
-	all := flag.Bool("all", false, "clean 时连\"非噪声\"条目一起清掉（等于清空回收站）")
+	all := flag.Bool("all", false, "清空回收站，含用户自己删的文件")
+	through := flag.String("through", "",
+		"清到哪一档：noise（默认）/ scratch / keep")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "用法: %s [report|clean] [-all]\n\n", os.Args[0])
-		fmt.Fprintln(os.Stderr, "  report  列出回收站构成，指出是谁在塞（默认）")
-		fmt.Fprintln(os.Stderr, "  clean   清掉已识别的工具噪声；你自己的文件不动")
-		fmt.Fprintln(os.Stderr, "  -all    clean 时连你自己的文件也清掉")
+		fmt.Fprintf(os.Stderr, "用法: %s [report|clean] [-through noise|scratch|keep] [-all]\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "  report  列出回收站分档构成（默认）")
+		fmt.Fprintln(os.Stderr, "  clean   清到指定的那一档；默认只清工具噪声")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -70,7 +88,7 @@ func main() {
 	case "report":
 		report(entries)
 	case "clean":
-		clean(entries, *all)
+		runClean(entries, *through, *all)
 	default:
 		fmt.Fprintf(os.Stderr, "不认识的命令: %s\n\n", action)
 		flag.Usage()
@@ -87,43 +105,60 @@ func report(entries []recyclenoise.Entry) {
 	}
 
 	fmt.Printf("回收站共 %d 项\n\n", s.Total)
-
-	if s.Noise > 0 {
-		fmt.Println("=== 工具噪声（可以安全清掉）===")
-		for _, k := range s.ByKind {
-			fmt.Printf("  %-24s %5d 项\n", k.Kind, k.Count)
+	for _, t := range s.Tiers {
+		fmt.Printf("=== %s：%d 项，%s ===\n", tierLabels[t.Category], t.Count, human(t.Bytes))
+		for _, k := range t.ByKind {
+			fmt.Printf("    %-24s %5d 项\n", k.Kind, k.Count)
 		}
-		fmt.Println("  " + strings.Repeat("-", 34))
-		fmt.Printf("  %-24s %5d 项\n\n", "小计", s.Noise)
-	} else {
-		fmt.Println("没有识别到工具噪声。")
-		fmt.Println()
-	}
-
-	if s.OtherTotal > 0 {
-		fmt.Printf("=== 其他 %d 项（你自己删的，我没动）===\n", s.OtherTotal)
-		for _, e := range s.Other {
-			fmt.Printf("  %10s  %s\n", human(e.Size), e.Original)
-		}
-		if s.OtherTotal > len(s.Other) {
-			fmt.Printf("  …… 另有 %d 项（都很小）\n", s.OtherTotal-len(s.Other))
+		// 只有"保留"档值得列样本：那一档是用户自己的东西，
+		// 得让人看清楚哪些被留下了。其它档删了就是垃圾，不必刷屏。
+		if t.Category == recyclenoise.CategoryKeep {
+			for _, e := range t.Sample {
+				fmt.Printf("      %9s  %s\n", human(e.Size), e.Original)
+			}
 		}
 		fmt.Println()
 	}
 
-	// 强调"条目数"而不是"体积"：这些条目每个只有几字节，
-	// 但几千项就够让资源管理器卡死。别让用户按体积判断严重性。
-	fmt.Printf("总体积 %s —— 体积不是问题，条目数才是。\n", human(s.NoiseBytes+s.OtherBytes))
+	total := s.NoiseBytes + s.ScratchBytes + s.OtherBytes
+	fmt.Printf("总体积 %s —— 体积不是问题，条目数才是。\n", human(total))
 	fmt.Println()
-	fmt.Println("跑 `clean` 可以把噪声清掉；界面里的「回收站清理」页是同一个功能。")
+	fmt.Println("clean 默认只清「工具噪声」；加 -through scratch 可连开发草稿一起清。")
+	fmt.Println("界面上是同一个功能：面板 →「回收站清理」。")
 }
 
-func clean(entries []recyclenoise.Entry, all bool) {
-	res := recyclenoise.Clean(entries, recyclenoise.CleanOptions{All: all})
+func runClean(entries []recyclenoise.Entry, through string, all bool) {
+	opts := recyclenoise.CleanOptions{All: all}
+	switch through {
+	case "", "noise":
+		opts.Through = recyclenoise.CategoryNoise
+	case "scratch":
+		opts.Through = recyclenoise.CategoryScratch
+	case "keep":
+		opts.Through = recyclenoise.CategoryKeep
+	default:
+		fmt.Fprintf(os.Stderr, "不认识的档: %s（可选 noise / scratch / keep）\n", through)
+		os.Exit(2)
+	}
 
+	// 动手前先报一遍要删多少。别让人稀里糊涂把几百 MB 抹掉。
+	s := recyclenoise.Summarize(entries)
+	var n int
+	limit := opts.Through
+	if all {
+		limit = recyclenoise.CategoryKeep
+	}
+	for _, t := range s.Tiers {
+		if t.Category.Severity() <= limit.Severity() {
+			n += t.Count
+		}
+	}
+	fmt.Printf("将清理「%s」及以下各档，共 %d 项。\n", tierLabels[limit], n)
+
+	res := recyclenoise.Clean(entries, opts)
 	if res.Removed == 0 && res.Failed == 0 {
 		fmt.Println("没有需要清理的条目。")
-		fmt.Println("（要连你自己删的文件一起清掉，加 -all）")
+		fmt.Println("（想连你自己的文件一起清，加 -all）")
 		return
 	}
 
@@ -136,13 +171,17 @@ func clean(entries []recyclenoise.Entry, all bool) {
 	}
 
 	// 清完再报一次，让用户看到剩下什么。
-	if after, err := recyclenoise.Scan(); err == nil {
-		s := recyclenoise.Summarize(after)
-		fmt.Printf("\n剩余 %d 项（噪声 %d / 其他 %d）\n", s.Total, s.Noise, s.OtherTotal)
-		if s.OtherTotal > 0 {
-			fmt.Println("剩下的都是你自己删的：")
-			for _, e := range s.Other {
-				fmt.Printf("  %s\n", e.Original)
+	after, err := recyclenoise.Scan()
+	if err != nil {
+		return
+	}
+	s2 := recyclenoise.Summarize(after)
+	fmt.Printf("\n剩余 %d 项\n", s2.Total)
+	for _, t := range s2.Tiers {
+		fmt.Printf("  %-24s %4d 项  %s\n", tierLabels[t.Category], t.Count, human(t.Bytes))
+		if t.Category == recyclenoise.CategoryKeep {
+			for _, e := range t.Sample {
+				fmt.Printf("      留下：%s\n", e.Original)
 			}
 		}
 	}

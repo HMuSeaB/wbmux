@@ -848,17 +848,12 @@
   <section>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</h2>
     <p class="sub">
-      回收站里堆的大多不是你删的文件，而是<strong>工具每次干活留下的小文件</strong>：
-      PowerShell 每次启动都会写一个策略探测脚本，开发工具每次调用也会在临时目录留一个
-      随机名目录。它们每个只有几字节，但堆到几千个之后，资源管理器要逐个读元数据才能
-      画出列表，于是打开就卡死——<strong>卡的是条目数，不是体积</strong>。
+      按<strong>能不能放心删</strong>分成三档。卡死的原因是<strong>条目数</strong>而不是体积——
+      资源管理器要逐个读元数据才能画出列表，几千条就转不动了。
+      每档都能单独清，越往下越危险；自动清理只碰第一档。
     </p>
     <div class="row" style="margin-top:14px">
-      <button id="btn-recycle-scan">扫描回收站</button>
-      <button class="primary" id="btn-recycle-clean" disabled>清理噪声</button>
-      <button class="ghost danger" id="btn-recycle-nuke" disabled title="连你自己删的文件一起清掉，等于清空回收站。只在确定不需要恢复时才用。">
-        全部清空
-      </button>
+      <button id="btn-recycle-scan">重新扫描</button>
       <span class="hint" id="recycle-note" style="margin:0"></span>
     </div>
     <div id="recycle-body" style="margin-top:14px"></div>
@@ -1719,23 +1714,32 @@
   }
 
   // busy 期间禁用全部按钮；结束后**按当前数据重新判定**，而不是一律放开。
-  // 之前是 .then(function(){ recycleBusy(false); }) 直接把三个按钮全放开，
-  // 结果把 renderRecycle 刚设好的"没有噪声就禁用清理按钮"又覆盖掉了——
-  // 反过来也踩过一次：清完之后按钮该禁用却仍可点。
-  // 所以这里统一走 refreshRecycleButtons，由它看数据说话。
+  // 之前是 .then(function(){ recycleBusy(false); }) 直接把按钮全放开，
+  // 结果把 renderRecycle 刚设好的"没有噪声就禁用清理按钮"又覆盖掉了。
+  // ���里统一走 refreshRecycleButtons，由它看数据说话。
   var recycleLast = null;
 
-  function refreshRecycleButtons() {
+  function tierCount(cat) {
     var s = (recycleLast && recycleLast.summary) || null;
-    var clean = document.getElementById("btn-recycle-clean");
-    var nuke = document.getElementById("btn-recycle-nuke");
-    if (clean) clean.disabled = !(s && s.noise > 0);
-    if (nuke) nuke.disabled = !(s && s.total > 0);
+    if (!s || !s.tiers) return 0;
+    for (var i = 0; i < s.tiers.length; i++) {
+      if (s.tiers[i].category === cat) return s.tiers[i].count || 0;
+    }
+    return 0;
+  }
+
+  function refreshRecycleButtons() {
+    [["btn-recycle-noise", "noise"], ["btn-recycle-scratch", "scratch"],
+     ["btn-recycle-nuke", "keep"]].forEach(function (p) {
+      var b = document.getElementById(p[0]);
+      if (b) b.disabled = tierCount(p[1]) === 0;
+    });
   }
 
   function recycleBusy(on) {
     if (on) {
-      ["btn-recycle-scan", "btn-recycle-clean", "btn-recycle-nuke"].forEach(function (id) {
+      ["btn-recycle-scan", "btn-recycle-noise", "btn-recycle-scratch",
+       "btn-recycle-nuke"].forEach(function (id) {
         var b = document.getElementById(id);
         if (b) b.disabled = true;
       });
@@ -2137,72 +2141,110 @@
       .then(function () { recycleBusy(false); });
   }
 
+  // 每档的展示与按钮配置。顺序即危险度从低到高。
+  //
+  // 为什么做成数据而不是三段写死的 DOM：之前只有"噪声 / 其他"两档，
+  // 清完噪声才发现开发草稿根本没被覆盖（用户反馈"清不全"）。
+  // 现在加一档就多一行配置，不用重写渲染逻辑。
+  var RECYCLE_TIERS = [
+    {
+      cat: "noise", label: "工具噪声", tone: "warn",
+      desc: "每次干活都会重新冒出来的：被中断的构建、测试临时树、" +
+            "策略探测文件。可随时清，自动清理也只碰这一档。",
+      btn: "清理噪声", btnClass: "primary"
+    },
+    {
+      cat: "scratch", label: "开发草稿", tone: "intl",
+      desc: "项目 tmp/dist 目录下的构建产物与临时脚本、系统临时目录里的散落文件。" +
+            "确实是垃圾，但删了不可恢复，所以要你自己点。",
+      btn: "连草稿一起清", btnClass: "ghost"
+    },
+    {
+      cat: "keep", label: "保留", tone: "",
+      desc: "你自己从桌面/文档/下载删掉的东西、wbmux 下载的升级包。" +
+            "这些不该由工具替你决定，只有「全部清空」会动。",
+      btn: "全部清空", btnClass: "ghost danger"
+    }
+  ];
+
   function renderRecycle(data) {
     var box = document.getElementById("recycle-body");
     var s = data.summary || {};
     clear(box);
 
-    // 两块数字：噪声（可清）与其他（用户自己的）。
-    // 刻意把"体积"放在次要位置——卡死看的是条目数不是体积。
-    box.appendChild(el("div", { class: "tiles" }, [
-      el("div", { class: "tile" }, [
-        el("div", { class: "hint", text: "工具噪声（可清）" }),
-        el("div", { class: "big " + (s.noise > 0 ? "warn" : "ok"),
-                    text: (s.noise || 0) + " 项" }),
-        el("div", { class: "hint", text: "共 " + humanBytes(s.noiseBytes || 0) })
-      ]),
-      el("div", { class: "tile" }, [
-        el("div", { class: "hint", text: "其他（你自己删的）" }),
-        el("div", { class: "big", text: (s.otherTotal || 0) + " 项" }),
-        el("div", { class: "hint", text: "共 " + humanBytes(s.otherBytes || 0) })
-      ])
-    ]));
-
-    if (s.byKind && s.byKind.length) {
-      var rows = s.byKind.map(function (k) {
-        var pct = s.noise ? Math.round(k.count * 100 / s.noise) : 0;
-        return el("div", { class: "bar-row" }, [
-          el("span", { class: "bar-name", text: k.kind }),
-          el("span", { class: "bar-track" }, [
-            el("span", { class: "bar-fill intl", style: "width:" + pct + "%" })
-          ]),
-          el("span", { class: "bar-num", text: k.count + " 项" })
-        ]);
-      });
-      box.appendChild(el("div", { class: "hint", style: "margin:14px 0 4px",
-        text: "是谁在塞：" }));
-      rows.forEach(function (r) { box.appendChild(r); });
-    } else if (!s.total) {
+    if (!s.total) {
       box.appendChild(el("div", { class: "note ok", text: "回收站是空的。" }));
-    } else {
-      box.appendChild(el("div", { class: "note ok",
-        text: "没有识别到工具噪声——剩下这些都是你自己删的文件。" }));
+      recycleLast = data;
+      refreshRecycleButtons();
+      applyAutoState(data.auto);
+      return;
     }
 
-    if (s.other && s.other.length) {
-      var det = el("details", { class: "fold", style: "margin-top:16px" });
-      det.appendChild(el("summary", {},
-        ["看看其他条目（我没动它们）"]));
-      var body = el("div", { class: "desc" });
-      s.other.forEach(function (o) {
-        body.appendChild(el("div", { class: "path", text: o.original }));
-      });
-      if (s.otherTotal > s.other.length) {
-        body.appendChild(el("div", { class: "hint",
-          text: "……共 " + s.otherTotal + " 项，只列出前 " + s.other.length + " 条。" }));
+    var tiers = {};
+    (s.tiers || []).forEach(function (t) { tiers[t.category] = t; });
+
+    RECYCLE_TIERS.forEach(function (cfg) {
+      var t = tiers[cfg.cat] || { count: 0, bytes: 0, byKind: [], sample: [] };
+
+      // 保留档不放"清理"按钮：那些是用户自己的文件，不该由工具代劳，
+      // 只在最后那个「全部清空」里一并清掉。
+      var actions = el("div", { class: "row", style: "margin-top:8px" }, [
+        cfg.cat === "keep"
+          ? el("button", {
+              class: "ghost danger", id: "btn-recycle-nuke", disabled: !t.count,
+              title: "清空回收站，包括你自己删掉的文件。只在确定不需要恢复时才用。",
+              text: cfg.btn,
+              onclick: function () { cleanRecycle("keep"); }
+            })
+          : el("button", {
+              class: cfg.btnClass, id: "btn-recycle-" + cfg.cat, disabled: !t.count,
+              text: cfg.btn,
+              onclick: function () { cleanRecycle(cfg.cat); }
+            })
+      ]);
+
+      box.appendChild(el("div", { class: "tile", style: "margin-bottom:12px" }, [
+        el("div", { class: "row" }, [
+          el("b", { text: cfg.label }),
+          el("span", { class: "hint", style: "margin:0",
+                       text: t.count + " 项 · " + humanBytes(t.bytes || 0) })
+        ]),
+        el("p", { class: "desc", style: "margin:6px 0 0", text: cfg.desc }),
+        actions
+      ]));
+
+      if (t.byKind && t.byKind.length) {
+        t.byKind.forEach(function (k) {
+          var pct = t.count ? Math.max(2, Math.round(k.count * 100 / t.count)) : 0;
+          box.appendChild(el("div", { class: "bar-row" }, [
+            el("span", { class: "bar-name", text: k.kind }),
+            el("span", { class: "bar-track" }, [
+              el("span", { class: "bar-fill " + (cfg.tone || "intl"), style: "width:" + pct + "%" })
+            ]),
+            el("span", { class: "bar-num", text: k.count + " 项" })
+          ]));
+        });
       }
-      det.appendChild(body);
-      box.appendChild(det);
-    }
+
+      // 体积大的几条列出来，让人知道自己点下去会删掉什么。
+      if (t.sample && t.sample.length) {
+        var det = el("details", { class: "fold", style: "margin:6px 0 0" });
+        det.appendChild(el("summary", {}, ["看看这一档最大的几条"]));
+        var inner = el("div", { class: "desc" });
+        t.sample.forEach(function (o) {
+          inner.appendChild(el("div", { class: "path", text: o.original }));
+        });
+        det.appendChild(inner);
+        box.appendChild(det);
+      }
+    });
 
     // 记下这次的数据，交给 refreshRecycleButtons 统一判定按钮状态。
     // 不要在几处各写一遍 disabled，那样总会漏掉一处（这里就漏过）。
     recycleLast = data;
     refreshRecycleButtons();
 
-    document.getElementById("recycle-note").textContent =
-      s.total ? "共 " + s.total + " 项" : "";
-
+    document.getElementById("recycle-note").textContent = "共 " + s.total + " 项";
     applyAutoState(data.auto);
   }
 
@@ -2219,16 +2261,20 @@
     }
   }
 
-  function cleanRecycle(all) {
-    var label = all ? "全部清空" : "清理噪声";
-    if (all && !confirm("这会连你自己删的文件一起彻底删除，无法恢复。确定？")) {
+  function cleanRecycle(through) {
+    // through 是要清到哪一档：noise / scratch / keep。
+    var labels = { noise: "清理噪声", scratch: "连草稿一起清", keep: "全部清空" };
+    var label = labels[through] || "清理";
+    // 越往上越危险，确认一次。清噪声不用问——它只碰反复产生的工具垃圾。
+    if (through !== "noise" && !confirm(
+        "「" + label + "」会彻底删除回收站里的条目，无法恢复。确定？")) {
       return;
     }
     recycleBusy(true);
     api("/api/recycle/clean", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ all: !!all })
+      body: JSON.stringify({ through: through })
     }).then(function (data) {
       var r = data.result || {};
       var msg = "已清 " + (r.removed || 0) + " 项";
@@ -3080,12 +3126,8 @@
   // 回收站清理。切到这一页时才去读——读回收站要遍历所有条目的元数据，
   // 没必要在启动时就跑。
   document.getElementById("btn-recycle-scan").addEventListener("click", loadRecycle);
-  document.getElementById("btn-recycle-clean").addEventListener("click", function () {
-    cleanRecycle(false);
-  });
-  document.getElementById("btn-recycle-nuke").addEventListener("click", function () {
-    cleanRecycle(true);
-  });
+  // 三档的清理按钮由 renderRecycle 动态创建（每次重绘都是新元素），
+  // 点击处理直接绑在创建处，不在这里 addEventListener——那样会找不到元素。
   document.getElementById("recycle-auto").addEventListener("change", function (ev) {
     api("/api/recycle/auto", {
       method: "POST",
