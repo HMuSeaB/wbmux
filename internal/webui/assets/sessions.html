@@ -58,6 +58,9 @@
   button.mini { background: var(--g3); color: var(--ink-2); border: 1px solid var(--g5);
                 border-radius: 5px; padding: 2px 9px; font-size: 11.5px; cursor: pointer; }
   button.mini:hover { background: var(--g4); color: var(--ink); }
+  button.mini.open { color: var(--brand); border-color: var(--brand); }
+  button.mini.open:hover { background: var(--g4); }
+  button.mini + button.mini { margin-left: 5px; }
   button.mini:disabled { opacity: .5; cursor: wait; }
   .nope { color: var(--ink-3); font-size: 11.5px; }
   #expbar { margin-top: 12px; padding: 10px 12px; border-radius: 7px;
@@ -299,10 +302,20 @@ function renderDetail() {
     "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th><th></th>" +
     "</tr></thead><tbody>" + rows.map(function (s, i) {
       // 只有能导出的源给按钮。不能导的给一句说明，而不是一个点了报错的按钮。
-      var can = s.vendor === "codex";
-      var act = can
-        ? '<button class="mini" data-i="' + i + '">导出</button>'
-        : '<span class="nope" title="这个源的正文不在独立文件里，暂不支持导出">—</span>';
+      // "能不能看"与"能不能导出"现在是同一批源，但判断分开写：
+      // 以后 Claude 可能先能看、还不能导。
+      var canView = s.vendor === "codex";
+      var canExp = s.vendor === "codex";
+      var act = "";
+      if (canView) {
+        act += '<button class="mini open" data-i="' + i + '">打开</button>';
+      }
+      if (canExp) {
+        act += '<button class="mini" data-i="' + i + '">导出</button>';
+      }
+      if (!canView && !canExp) {
+        act = '<span class="nope" title="这个源的正文不在独立文件里，暂不支持直接查看">—</span>';
+      }
       return "<tr" + (s.candidate ? ' class="cand"' : "") + ">" +
         '<td><span class="vb ' + esc(s.vendor) + '">' + esc(s.vendor) + "</span></td>" +
         '<td class="title">' + esc(s.title) + (s.archived ? ' <span class="archived">（已归档）</span>' : "") + "</td>" +
@@ -322,9 +335,23 @@ function renderDetail() {
 
   // 绑"导出"。用 data-i 回指 rows 里的下标，避免把 id 拼进 HTML 属性
   // ——会话标题里可能有引号，拼进去会把属性截断。
-  Array.prototype.forEach.call(box.querySelectorAll("button.mini"), function (b) {
+  Array.prototype.forEach.call(box.querySelectorAll("button.mini.open"), function (b) {
+    b.onclick = function () { openSession(rows[Number(b.getAttribute("data-i"))]); };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll("button.mini:not(.open)"), function (b) {
     b.onclick = function () { doExport(rows[Number(b.getAttribute("data-i"))], b); };
   });
+}
+
+// openSession 在新标签页里打开这个会话。
+//
+// 用 window.open 而不是在当前页替换：用户多半想"看完就关掉回到列表"，
+// 而且新标签页可以是全屏宽度，比右侧那块窄栏舒服得多。
+function openSession(s) {
+  var u = "/session?id=" + encodeURIComponent(s.id) +
+          "&t=" + encodeURIComponent(TOKEN) +
+          "&title=" + encodeURIComponent(s.title || "");
+  window.open(u, "_blank", "noopener");
 }
 
 // doExport 导出单个会话。

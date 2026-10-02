@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,5 +132,97 @@ func TestExportUnsupportedVendorIsReported(t *testing.T) {
 		if got.Exported == 0 && len(got.Failed) == 0 {
 			t.Fatal("没导出任何东西、却没有一条说明——用户会以为成功了")
 		}
+	}
+}
+
+// ---------- 界面里直接查看 ----------
+
+// TestSessionViewRendersConversation 走一遍"点打开新标签页"。
+//
+// 这个路由与别的不同：它回的是**整页 HTML**、不走 guard（guard 失败回 JSON），
+// 所以令牌校验必须自己再做一遍——漏了就是把会话正文敞开给任何能访问
+// 本地端口的东西。
+func TestSessionViewRendersConversation(t *testing.T) {
+	env := newTestEnv(t, Options{})
+	const sid = "rollout-2026-03-16T06-00-00-bbbb"
+	writeCodexSession(t, env.home, sid+".jsonl", `D:/proj/view`, "帮我看下这个报错")
+
+	res := env.do(t, "GET", "/session?id="+sid+"&limit=10", "", true)
+	if res.code != 200 {
+		t.Fatalf("HTTP %d：%s", res.code, res.body)
+	}
+	page := string(res.body)
+
+	if !strings.Contains(page, "<!DOCTYPE html>") {
+		t.Error("该是一整页 HTML")
+	}
+	// 正文必须在里面 —— 这是这个页面的全部意义。
+	if !strings.Contains(page, "帮我看下这个报错") {
+		t.Error("页面里没有会话正文")
+	}
+	if !strings.Contains(page, "proj") {
+		t.Error("页面里没有项目路径")
+	}
+	// 头部该显示传进来的标题。
+	if !strings.Contains(page, "测试标题") && !strings.Contains(page, "view") {
+		t.Error("页面里没有标题")
+	}
+}
+
+// TestSessionViewRequiresToken 确认整页路由自己也校验令牌。
+func TestSessionViewRequiresToken(t *testing.T) {
+	env := newTestEnv(t, Options{})
+	res := env.do(t, "GET", "/session?id=x", "", false)
+	if res.code != 403 {
+		t.Fatalf("无令牌该 403，实际 %d", res.code)
+	}
+}
+
+// TestSessionViewUnknownIDIsNotFound 确认找不到时给 404 且说清原因。
+func TestSessionViewUnknownIDIsNotFound(t *testing.T) {
+	env := newTestEnv(t, Options{})
+	res := env.do(t, "GET", "/session?id=根本没有这个&t=x", "", true)
+	if res.code != 404 {
+		t.Fatalf("该 404，实际 %d：%s", res.code, res.body)
+	}
+	if !strings.Contains(string(res.body), "重新扫描") {
+		t.Errorf("该提示怎么办（重新扫描），实际：%s", res.body)
+	}
+}
+
+// TestSessionViewTruncationNotice 确认大会话会告诉用户"还有更早的"，
+// 并给出「加载全部」的链接。
+//
+// 不给提示的话，用户会以为"这个会话就这么点"——而实际上前面还有几百项。
+func TestSessionViewTruncationNotice(t *testing.T) {
+	env := newTestEnv(t, Options{})
+	// 造一个 30 对的会话，窗口给 5。
+	dir := filepath.Join(env.home, ".codex", "sessions", "2026", "03", "17")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"id":"big","cwd":"D://p"}}` + "\n")
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&b, `{"type":"response_item","payload":{"type":"function_call","name":"t%02d","arguments":"a","call_id":"c%02d"}}`+"\n", i, i)
+		fmt.Fprintf(&b, `{"type":"response_item","payload":{"type":"function_call_output","call_id":"c%02d","output":"r"}}`+"\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rollout-big.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := env.do(t, "GET", "/session?id=big&limit=5", "", true)
+	if res.code != 200 {
+		t.Fatalf("HTTP %d：%s", res.code, res.body)
+	}
+	page := string(res.body)
+	if !strings.Contains(page, "加载全部") {
+		t.Error("截断时该给出「加载全部」的入口")
+	}
+	if !strings.Contains(page, "limit=0") {
+		t.Error("「加载全部」的链接该带 limit=0")
+	}
+	if !strings.Contains(page, "共 ") {
+		t.Error("该告诉用户总共有多少项")
 	}
 }

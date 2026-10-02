@@ -211,6 +211,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/sessions/clean", s.guard(s.handleSessionsClean))
 	mux.HandleFunc("/api/sessions/clean/rows", s.guard(s.handleSessionsCleanRows))
 	mux.HandleFunc("/api/sessions/export", s.guard(s.handleSessionsExport))
+	// 整页路由：不走 guard（失败要回 HTML 而不是 JSON），自己校验令牌。
+	mux.HandleFunc("/session", s.handleSessionView)
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
 	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))
@@ -303,15 +305,24 @@ func (s *Server) Shutdown() {
 func (s *Server) Headless() bool { return s.opts.Headless }
 
 // guard 校验令牌。
+// checkToken 校验请求带没带对的令牌（头或查询串都认）。
+//
+// 抽出来是因为**页面**也要用它：会话查看页是整页 HTML，不走 guard
+// （guard 失败会回 JSON），但同样必须挡住无令牌的访问
+// ——那个页面里内嵌着会话正文。
+func (s *Server) checkToken(r *http.Request) bool {
+	got := r.Header.Get("X-Wbmux-Token")
+	if got == "" {
+		got = r.URL.Query().Get("t")
+	}
+	// 定长比较，避免按字节提前返回泄漏信息。
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+}
+
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.touch()
-		got := r.Header.Get("X-Wbmux-Token")
-		if got == "" {
-			got = r.URL.Query().Get("t")
-		}
-		// 定长比较，避免按字节提前返回泄漏信息。
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		if !s.checkToken(r) {
 			writeErr(w, http.StatusForbidden, "令牌无效")
 			return
 		}

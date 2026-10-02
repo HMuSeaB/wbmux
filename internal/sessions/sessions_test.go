@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -652,5 +653,118 @@ func TestCodexRootsFollowProbeHome(t *testing.T) {
 	// session_index.jsonl 同理。
 	if codexIndexPath(p1) == codexIndexPath(p2) {
 		t.Fatal("codexIndexPath 也没走 probe")
+	}
+}
+
+// ---------- 会话正文的截断（滑动窗口） ----------
+
+// writeRollout 造一个带 N 对「工具调用 / 工具结果」的最小会话文件。
+//
+// 每对的调用名是 toolNN、结果是 RESULTNN——一样，就能查出有没有配错。
+func writeRollout(t *testing.T, n int) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-x.jsonl")
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"id":"s1","cwd":"D://p"}}` + "\n")
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("call%02d", i)
+		fmt.Fprintf(&b, `{"type":"response_item","payload":{"type":"function_call","name":"tool%02d","arguments":"ARG%02d","call_id":"%s"}}`+"\n", i, i, id)
+		fmt.Fprintf(&b, `{"type":"response_item","payload":{"type":"function_call_output","call_id":"%s","output":"RESULT%02d"}}`+"\n", id, i)
+	}
+	if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestParseCodexTailKeepsPairing 是这块**最要紧**的一条。
+//
+// 工具调用与它的结果靠 call_id 配对。曾经这里记的是**下标**，用了滑动窗口
+// 之后下标会随"丢掉最早的那些"而失效——结果被拼到另一个工具调用上，
+// 甚至直接越界 panic（实测复现过：index out of range [-1]）。
+//
+// 所以改成按 call_id 在窗口里**回查**。这条测试用"名字里带编号"的办法
+// 一眼能看出配错：tool07 的结果必须是 RESULT07。
+func TestParseCodexTailKeepsPairing(t *testing.T) {
+	p := writeRollout(t, 20)
+
+	tr, err := ParseCodexTail(p, 10)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if !tr.Truncated {
+		t.Fatal("窗口 10、总项 20 时该标记为已截断")
+	}
+	if tr.TotalTurns != 20 {
+		t.Fatalf("总项数该是 20（不管窗口多大），实际 %d", tr.TotalTurns)
+	}
+	// 窗口是"项数"上界；批量丢弃会让实际略少于窗口，所以用 <=。
+	if len(tr.Turns) > 10 {
+		t.Fatalf("窗口 10，实际带了 %d 项", len(tr.Turns))
+	}
+
+	for _, turn := range tr.Turns {
+		if turn.Kind != "tool" || !strings.Contains(turn.ToolArg, "RESULT") {
+			continue
+		}
+		var nameNo, resNo int
+		if _, err := fmt.Sscanf(turn.ToolName, "tool%d", &nameNo); err != nil {
+			continue
+		}
+		i := strings.Index(turn.ToolArg, "RESULT")
+		if _, err := fmt.Sscanf(turn.ToolArg[i:], "RESULT%d", &resNo); err != nil {
+			continue
+		}
+		if nameNo != resNo {
+			t.Fatalf("配对错了：%s 的调用配上了 RESULT%d —— call_id 回查没生效",
+				turn.ToolName, resNo)
+		}
+	}
+}
+
+// TestParseCodexTailZeroMeansAll 确认窗口 0 = 不裁。
+//
+// 导出走的就是这条路：要完整，不能因为窗口默认值悄悄少导。
+func TestParseCodexTailZeroMeansAll(t *testing.T) {
+	p := writeRollout(t, 12)
+	tr, err := ParseCodexTail(p, 0)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if tr.Truncated {
+		t.Fatal("窗口 0 不该标记为已截断")
+	}
+	// **调用与结果合并成一项**（同一件事的两半，分成两项反而割裂），
+	// 所以 12 对 = 12 项。这一点容易记反，写在这里钉住。
+	if len(tr.Turns) != 12 {
+		t.Fatalf("12 对调用/结果应当合并成 12 项，实际 %d", len(tr.Turns))
+	}
+	if tr.TotalTurns != 12 {
+		t.Fatalf("TotalTurns 该是 12，实际 %d", tr.TotalTurns)
+	}
+	// 每项都得把结果带上——不然"合并没有生效"会被上面那条掩盖。
+	for _, turn := range tr.Turns {
+		if !strings.Contains(turn.ToolArg, "RESULT") {
+			t.Fatalf("%s 没带上结果：%q", turn.ToolName, turn.ToolArg)
+		}
+	}
+}
+
+// TestParseCodexTailKeepsSessionMeta 确认裁窗口不影响会话元数据。
+//
+// id / cwd / 时间不占 Turns 的位置、单独收集，所以哪怕窗口只有 1，
+// 这些也得完整——否则页面头部会变成空的。
+func TestParseCodexTailKeepsSessionMeta(t *testing.T) {
+	p := writeRollout(t, 30)
+	tr, err := ParseCodexTail(p, 3)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if tr.ID != "s1" {
+		t.Errorf("会话 id 丢了：%q", tr.ID)
+	}
+	if tr.CWD == "" {
+		t.Error("项目路径丢了——它决定页面头部显示什么")
 	}
 }

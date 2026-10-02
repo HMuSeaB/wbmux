@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,6 +47,12 @@ type CodexTurn struct {
 	// ToolName / ToolArg 用于工具调用。
 	ToolName string
 	ToolArg  string
+	// CallID 是这次工具调用的稳定标识，用来把结果配回调用。
+	//
+	// 为什么不记下标：用了滑动窗口之后，下标会随着"丢掉最早的那些"而失效
+	// ——结果会被拼到另一个工具调用上，甚至越界 panic（实测过）。call_id
+	// 是文件里本来就有的、不随窗口变化的键。
+	CallID string
 	// IsEnv 标记这是环境注入（AGENTS.md / environment_context），默认折叠。
 	IsEnv bool
 }
@@ -60,6 +67,10 @@ type CodexTranscript struct {
 	Turns     []CodexTurn
 	// Sub 标记这是子代理的转录。
 	Sub bool
+	// Truncated 为真表示只带了最近一段（见 ParseCodexTail）。
+	Truncated bool
+	// TotalTurns 是文件里的总项数（含没带上的）。Truncated 为假时等于 len(Turns)。
+	TotalTurns int
 }
 
 // 环境注入的段落前缀。这些是客户端塞给模型的上下文，不是用户打的字。
@@ -79,7 +90,30 @@ func isEnvText(t string) bool {
 }
 
 // ParseCodex 读一个 rollout-*.jsonl，还原成对话。
+//
+// 它读**整个文件**。实测最大的会话 237 MB / 2732 项，解析约 1 秒——
+// 对"导出"够用，对"在界面里点开就得看见"就偏慢，而且全渲染出来是 36 MB
+// 的 HTML（图片占 16 MB），浏览器会卡。所以界面那边走 ParseCodexTail。
 func ParseCodex(path string) (*CodexTranscript, error) {
+	return ParseCodexTail(path, 0)
+}
+
+// ParseCodexTail 只保留**最后 maxTurns 项**。maxTurns <= 0 表示全部。
+//
+// # 为什么用滑动窗口而不是"解析两遍"
+//
+// 两遍要先数总数、再定位起点，多一次全文件扫描（237 MB 就是多 1 秒）。
+// 滑动窗口一遍过，且**内存占用有上界**——只留最近 N 项的文本与图片，
+// 而不是把 2732 项全装进内存再裁。这对单进程服务是实打实的好处。
+//
+// # 为什么裁掉早期内容不会丢信息
+//
+// `session_meta`（会话 id、项目路径、起止时间）是**单独收集**的，不占
+// Turns 的位置，所以它不受窗口影响。窗口影响的只有"对话内容本身"，
+// 而那正是我们希望"默认少看点、需要再往前翻"的部分。
+//
+// 返回的 Truncated 说明有没有被裁——界面据此显示"还有更早的 N 项"。
+func ParseCodexTail(path string, maxTurns int) (*CodexTranscript, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -90,12 +124,12 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 	dec := json.NewDecoder(f)
 	dec.UseNumber()
 
-	// 工具调用先记下来，等它的 output 到了再合并成一项。
-	type pendingCall struct {
-		idx  int
-		name string
-	}
-	calls := map[string]pendingCall{}
+	// 记下"哪些 call_id 的调用项还在窗口里"，等结果来了直接按 id 找回去。
+	//
+	// 值用 bool 而不是下标：下标会随窗口滑动失效（见 CodexTurn.CallID 的注释）。
+	// 项可能已被窗口丢掉——那就当作"结果找不到调用"，另起一项，而不是
+	// 拼到错误的位置上。
+	calls := map[string]bool{}
 
 	for {
 		var line map[string]any
@@ -173,7 +207,7 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 			}
 			if text.Len() > 0 {
 				body := text.String()
-				tr.Turns = append(tr.Turns, CodexTurn{
+				tr.push(CodexTurn{
 					Kind:  kind,
 					Role:  role,
 					Text:  body,
@@ -181,7 +215,7 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 					// 把这一轮里所有的图挂到同一条上：用户发图时往往配一句话，
 					// 分成两个气泡就丢了"哪句话配哪张图"的对应。
 					Images: imgs,
-				})
+				}, maxTurns)
 			}
 		case "reasoning":
 			// 思考片段：折叠起来，默认不占版面。
@@ -200,7 +234,7 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 				}
 			}
 			if strings.TrimSpace(sb.String()) != "" {
-				tr.Turns = append(tr.Turns, CodexTurn{Kind: "reasoning", Text: sb.String()})
+				tr.push(CodexTurn{Kind: "reasoning", Text: sb.String()}, maxTurns)
 			}
 		case "function_call", "custom_tool_call":
 			name, _ := pl["name"].(string)
@@ -212,10 +246,10 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 			if id == "" {
 				id, _ = pl["id"].(string)
 			}
-			tr.Turns = append(tr.Turns, CodexTurn{
-				Kind: "tool", ToolName: name, ToolArg: arg,
-			})
-			calls[id] = pendingCall{idx: len(tr.Turns) - 1, name: name}
+			tr.push(CodexTurn{Kind: "tool", ToolName: name, ToolArg: arg, CallID: id}, maxTurns)
+			if id != "" {
+				calls[id] = true
+			}
 		case "function_call_output", "custom_tool_call_output":
 			id, _ := pl["call_id"].(string)
 			out := ""
@@ -228,16 +262,21 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 				}
 			}
 			// 合并到对应的那次调用上，而不是单开一项：调用与结果是同一件事。
-			if pc, ok := calls[id]; ok && pc.idx < len(tr.Turns) {
-				if tr.Turns[pc.idx].ToolArg != "" {
-					tr.Turns[pc.idx].ToolArg += "\n\n── 结果 ──\n"
+			//
+			// 按 call_id **回查**（不是用记下来的下标）：窗口滑动会挪动位置。
+			if _, ok := calls[id]; ok && id != "" {
+				for i := len(tr.Turns) - 1; i >= 0; i-- {
+					if tr.Turns[i].Kind == "tool" && tr.Turns[i].CallID == id {
+						if tr.Turns[i].ToolArg != "" {
+							tr.Turns[i].ToolArg += "\n\n── 结果 ──\n"
+						}
+						tr.Turns[i].ToolArg += out
+						break
+					}
 				}
-				tr.Turns[pc.idx].ToolArg += out
 				delete(calls, id)
 			} else {
-				tr.Turns = append(tr.Turns, CodexTurn{
-					Kind: "tool", ToolName: "(结果)", ToolArg: out,
-				})
+				tr.push(CodexTurn{Kind: "tool", ToolName: "(结果)", ToolArg: out}, maxTurns)
 			}
 		}
 	}
@@ -255,6 +294,28 @@ func ParseCodex(path string) (*CodexTranscript, error) {
 func isImagePlaceholder(t string) bool {
 	return t == "</image>" || t == "<image>" ||
 		(strings.HasPrefix(t, "<image name=") && strings.HasSuffix(t, ">"))
+}
+
+// push 追加一项，并在启用窗口时丢掉最早的。
+//
+// 单独一个方法而不是每处手写：窗口逻辑一旦散在 4 个 append 点上，
+// 漏掉任何一处就会出现"只有工具调用被裁、消息没被裁"这种半截行为。
+func (tr *CodexTranscript) push(t CodexTurn, maxTurns int) {
+	tr.TotalTurns++
+	tr.Turns = append(tr.Turns, t)
+	if maxTurns > 0 && len(tr.Turns) > maxTurns {
+		// 一次丢一批而不是每次丢一个：源头是 2732 项、窗口 120 项时，
+		// 每次 copy 一个元素是 O(n²)。
+		drop := len(tr.Turns) - maxTurns
+		if drop < 64 {
+			drop = 64
+		}
+		if drop > len(tr.Turns) {
+			drop = len(tr.Turns)
+		}
+		tr.Turns = append(tr.Turns[:0], tr.Turns[drop:]...)
+		tr.Truncated = true
+	}
 }
 
 type contentSeg struct {
@@ -328,6 +389,17 @@ type CodexHTMLOptions struct {
 	// 存在的理由：极端情况下单张图可能几 MB，一个页面塞几十张会到几百 MB，
 	// 浏览器直接卡死。给个上限，超了就只留标记。
 	MaxImageBytes int
+
+	// ---- 以下只在"界面里直接看"时用（导出时留空）----
+
+	// ShowMore 为真时在顶部显示"还有更早的 N 项"和「看全部」链接。
+	ShowMore bool
+	// LoadedTurns / TotalTurns 用于那句提示。
+	LoadedTurns int
+	TotalTurns  int
+	// Token 与 ID 用来拼「看全部」的链接（limit=0 即不裁）。
+	Token string
+	ID    string
 }
 
 // RenderCodexHTML 把一个会话渲染成完整的 HTML 页面。
@@ -356,6 +428,15 @@ func RenderCodexHTML(tr *CodexTranscript, opts CodexHTMLOptions) string {
 		b.WriteString("<span class=\"tag\">子代理转录</span>")
 	}
 	b.WriteString("</div>\n")
+	if opts.ShowMore && opts.TotalTurns > opts.LoadedTurns {
+		// 「看全部」直接给 limit=0 的链接：它会把整个会话重新渲染一遍
+		// （含全部图片），所以不做成按钮自动替换——用户该知道这会更慢。
+		full := "/session?id=" + url.QueryEscape(opts.ID) + "&t=" + url.QueryEscape(opts.Token) + "&limit=0"
+		b.WriteString("<div class=\"more\">只显示最近 " + fmt.Sprint(opts.LoadedTurns) +
+			" 项（共 " + fmt.Sprint(opts.TotalTurns) + " 项）　" +
+			"<a href=\"" + html.EscapeString(full) + "\">加载全部</a>" +
+			"<span class=\"hint\"> — 项多时会更慢，图片也会全部载入</span></div>\n")
+	}
 	b.WriteString("<div class=\"tools\">")
 	b.WriteString("<label><input type=\"checkbox\" id=\"hideEnv\" checked> 隐藏环境注入</label>")
 	b.WriteString("<label><input type=\"checkbox\" id=\"hideTools\" checked> 折叠工具调用</label>")
@@ -383,7 +464,7 @@ func RenderCodexHTML(tr *CodexTranscript, opts CodexHTMLOptions) string {
 				b.WriteString(" <span class=\"tag\">环境注入</span>")
 			}
 			b.WriteString("</div>\n")
-			for _, u := range t.allImages() {
+			for _, u := range t.ImagesOf() {
 				imgSeq++
 				b.WriteString(renderImage(u, imgSeq, opts.MaxImageBytes))
 			}
@@ -413,8 +494,11 @@ func RenderCodexHTML(tr *CodexTranscript, opts CodexHTMLOptions) string {
 	return b.String()
 }
 
-// allImages 返回这条消息的所有图（把单张与多张两个字段合起来）。
-func (t CodexTurn) allImages() []string {
+// ImagesOf 返回这条消息的所有图（把单张与多张两个字段合起来）。
+//
+// 导出成方法：外面（性能统计、界面接口）也需要知道这条消息有几张图，
+// 而 Image / Images 两个字段并存是历史原因，不该让调用方各自判断。
+func (t CodexTurn) ImagesOf() []string {
 	if len(t.Images) > 0 {
 		return t.Images
 	}
@@ -589,7 +673,7 @@ func sanitizeFileName(s string) string {
 
 const codexCSS = `<style>
 :root{--bg:#0e0f12;--pan:#16181d;--pan2:#1c1f25;--ink:#e6e8ec;--ink2:#a4aab5;
---ink3:#6f757f;--line:#2a2e36;--user:#3d7ea6;--ai:#4a9d6a;--mono:ui-monospace,
+--ink3:#6f757f;--line:#2a2e36;--user:#3d7ea6;--ai:#4a9d6a;--brand:#63b3c4;--mono:ui-monospace,
 SFMono-Regular,"Cascadia Mono",Consolas,monospace;--sans:system-ui,-apple-system,
 "Segoe UI","Microsoft YaHei",sans-serif}
 *{box-sizing:border-box}
@@ -601,10 +685,22 @@ h1{margin:0 0 6px;font-size:17px;font-weight:600}
 .meta code{font-family:var(--mono);color:var(--ink2)}
 .tag{background:var(--pan2);border:1px solid var(--line);border-radius:4px;
 padding:0 6px;font-size:11px;color:var(--ink3)}
-.tools{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12.5px;color:var(--ink2)}
-.tools label{display:flex;gap:5px;align-items:center;cursor:pointer}
+.tools{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:10px;
+font-size:12.5px;color:var(--ink2)}
+.tools label{display:flex;gap:6px;align-items:center;cursor:pointer;color:var(--ink2);
+white-space:nowrap;user-select:none}
+.tools label:hover{color:var(--ink)}
+/* 复选框自己画：浏览器默认会在深色底上给一个系统蓝，跟整页不搭。 */
+.tools input[type=checkbox]{-webkit-appearance:none;appearance:none;width:13px;height:13px;
+margin:0;border:1px solid var(--g5);border-radius:3px;background:var(--pan);
+cursor:pointer;position:relative;flex:none}
+.tools input[type=checkbox]:checked{background:var(--brand);border-color:var(--brand)}
+.tools input[type=checkbox]:checked::after{content:'';position:absolute;left:3.5px;top:1px;
+width:3px;height:7px;border:solid #0e0f12;border-width:0 2px 2px 0;transform:rotate(45deg)}
 .tools input[type=search]{background:var(--pan);border:1px solid var(--line);
-color:var(--ink);border-radius:6px;padding:4px 10px;min-width:190px;font-family:var(--sans)}
+color:var(--ink);border-radius:6px;padding:4px 10px;width:200px;font-family:var(--sans);
+font-size:12.5px;margin-left:auto}
+.tools input[type=search]:focus{outline:none;border-color:var(--brand)}
 main{max-width:940px;margin:0 auto;padding:20px 22px 60px}
 .msg{border-left:3px solid var(--line);background:var(--pan);border-radius:0 8px 8px 0;
 padding:11px 15px;margin:13px 0}
@@ -635,6 +731,11 @@ text-decoration:none;color:var(--ink)}
 .idx .d{color:var(--ink3);font-size:12px;white-space:nowrap}
 .idx .c{grid-column:1/-1;color:var(--ink3);font-size:11.5px;font-family:var(--mono)}
 mark{background:#5a4a1e;color:var(--ink)}
+.more{margin-top:9px;padding:7px 11px;background:var(--pan2);border:1px solid var(--line);
+border-radius:7px;font-size:12.5px;color:var(--ink2)}
+.more a{color:var(--brand);text-decoration:none}
+.more a:hover{text-decoration:underline}
+.more .hint{color:var(--ink3)}
 </style>`
 
 const codexJS = `<script>

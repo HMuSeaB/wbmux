@@ -172,6 +172,16 @@ func containsStr(xs []string, v string) bool {
 	return false
 }
 
+// CanRenderInline 说明某一家现在能不能在界面里直接看。
+//
+// 与 canExport 是**不同的判断**：能不能"看"取决于有没有读取正文的实现，
+// 能不能"导出"还取决于那个实现是否适合落盘。现在两者恰好相同（都只有
+// Codex），但以后 Claude 只读实现写完时，很可能先能看、再考虑导出。
+// 所以两个函数分开，而不是让一个去调另一个。
+func CanRenderInline(v Vendor) bool {
+	return v == VendorCodex
+}
+
 // canExport 说明某一家现在能不能导出。
 //
 // 单独一个函数而不是散在 if 里：以后给 Claude 写好读取实现时，
