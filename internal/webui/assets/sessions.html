@@ -229,6 +229,10 @@ function fmtBytes(n) {
   if (n >= 1 << 10) return Math.round(n / (1 << 10)) + "K";
   return n + "B";
 }
+// fmtCredits 显示会话积分（与额度面板同刻度）。没数据的源（非 WB）显示 —。
+function fmtCredits(n) {
+  return n > 0 ? n.toFixed(2) : "—";
+}
 
 function load(refresh) {
   var btn = document.getElementById(refresh ? "refresh" : "reload");
@@ -322,6 +326,7 @@ function renderProjects() {
       '<div class="meta">' + badges +
       "<span>最近 " + fmtMs(p.lastMs) + "</span>" +
       "<span>" + p.count + " 条</span>" +
+      (p.creditsTotal ? "<span>" + fmtCredits(p.creditsTotal) + " 积分</span>" : "") +
       (p.totalBytes ? "<span>" + fmtBytes(p.totalBytes) + "</span>" : "") +
       (p.onlyStale ? '<span class="stale">⚠ 全部超期（保底 ' + state.idx.keepPerProject + " 条仍在）</span>" : "") +
       "</div></div>";
@@ -346,7 +351,7 @@ function renderDetail() {
   });
   if (!state.sel) { box.innerHTML = '<div class="empty">← 选一个项目</div>'; return; }
   box.innerHTML = "<table><thead><tr>" +
-    "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>类别</th><th>候选</th><th>位置</th><th></th>" +
+    "<th>来源</th><th>标题</th><th>更新</th><th>大小</th><th>积分</th><th>类别</th><th>候选</th><th>位置</th><th></th>" +
     "</tr></thead><tbody>" + rows.map(function (s, i) {
       // 只有能导出的源给按钮。不能导的给一句说明，而不是一个点了报错的按钮。
       // "能不能看"与"能不能导出"现在是同一批源，但判断分开写：
@@ -368,6 +373,7 @@ function renderDetail() {
         '<td class="title">' + esc(s.title) + (s.archived ? ' <span class="archived">（已归档）</span>' : "") + "</td>" +
         "<td>" + fmtMs(s.updatedMs) + "</td>" +
         "<td>" + fmtBytes(s.sizeBytes) + "</td>" +
+        "<td>" + fmtCredits(s.credits) + "</td>" +
         "<td>" + esc(s.kind || "") + "</td>" +
         "<td>" + (s.candidate ? '<span class="candmark">候选 #' + s.rank + "</span>" : "#" + s.rank) + "</td>" +
         '<td class="path">' + esc(s.source.path) + "</td>" +

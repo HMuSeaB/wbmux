@@ -92,6 +92,10 @@ type Session struct {
 	CreatedMs  int64  `json:"createdMs"`
 	UpdatedMs  int64  `json:"updatedMs"`
 	SizeBytes  int64  `json:"sizeBytes"`
+	// Credits 是这个会话烧掉的积分（WB 侧来自 session_usage.used/1000，
+	// 与额度面板同源同刻度；其他源没有消耗数据，为 0）。清理候选多了
+	// 一个"性价比"维度：几天没动还烧了大积分的会话最值得看一眼。
+	Credits float64 `json:"credits,omitempty"`
 	// Kind 是来源自己的会话类别：WB 的 status、ZCode 的 task_type
 	// （interactive / subagent_child）等。原样保留，不过度解读。
 	Kind string `json:"kind"`
@@ -115,6 +119,8 @@ type Project struct {
 	// TotalBytes 是所有会话载体的大小合计。sqlite 源给 0——
 	// 库是多家共用的，把整个库算进某个项目是撒谎；文件源才给真实大小。
 	TotalBytes int64 `json:"totalBytes"`
+	// CreditsTotal 是该项目所有会话的积分合计（同上，只有 WB 侧有数）。
+	CreditsTotal float64 `json:"creditsTotal,omitempty"`
 	// OnlyStale 表示这个项目的全部会话都超过保留期。
 	// 这正是用户担心的场景："清完一个会话都不剩"。有这个标记的项目
 	// 即使会话再老，保底的那 K 条也永远不是候选——这里只是给个视觉警示。
@@ -248,6 +254,7 @@ func buildIndex(all []Session, warnings []string, opts Options, generatedAt int6
 			p.LastMs = s.UpdatedMs
 		}
 		p.TotalBytes += s.SizeBytes
+		p.CreditsTotal += s.Credits
 		if s.ProjectRaw != "" && len(s.ProjectRaw) > len(p.Display) {
 			// 展示取见过的最长的原样路径：短的往往是别的源记的省略形式。
 			p.Display = s.ProjectRaw

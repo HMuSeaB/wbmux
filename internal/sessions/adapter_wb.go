@@ -19,6 +19,23 @@ const wbQuery = `select id, cwd, coalesce(custom_title, title) as title, ` +
 	`from sessions where deleted_at is null or deleted_at = -1 ` +
 	`order by updated_at desc`
 
+// wbUsageQuery 读 session_usage 的每会话消耗。used 的刻度与额度面板
+// 一致：面板显示的"积分"= used/1000（实测 408.04 积分的会话，used
+// ≈ 408040）。查询失败静默——积分是锦上添花，不能让它挡住会话列表。
+const wbUsageQuery = `select session_id, used from session_usage`
+
+// wbUsageByID 把每会话消耗读成 session_id → used 映射。
+func wbUsageByID(probe *variant.Probe, id variant.ID, dbPath, label string) map[string]float64 {
+	rows, _ := queryLive(probe, id, dbPath, wbUsageQuery, label)
+	out := map[string]float64{}
+	for _, r := range rows {
+		if sid := mapStr(r, "session_id"); sid != "" {
+			out[sid] = mapF64(r, "used")
+		}
+	}
+	return out
+}
+
 // scanWB 扫一侧 WorkBuddy 的会话（两侧 schema 同构，2026-09-28 实测）。
 func scanWB(probe *variant.Probe, id variant.ID, vendor Vendor) ([]Session, []string, error) {
 	dbPath := probe.DataDir(id) + "\\workbuddy.db"
@@ -26,6 +43,7 @@ func scanWB(probe *variant.Probe, id variant.ID, vendor Vendor) ([]Session, []st
 	if rows == nil {
 		return nil, warns, fmt.Errorf("数据库读取失败")
 	}
+	usedByID := wbUsageByID(probe, id, dbPath, vendor.Label())
 	out := make([]Session, 0, len(rows))
 	for _, r := range rows {
 		s := Session{
@@ -36,6 +54,7 @@ func scanWB(probe *variant.Probe, id variant.ID, vendor Vendor) ([]Session, []st
 			CreatedMs:  mapMs(r, "created_at"),
 			UpdatedMs:  mapMs(r, "updated_at"),
 			Kind:       mapStr(r, "status"),
+			Credits:    usedByID[mapStr(r, "id")] / 1000,
 		}
 		if mapInt(r, "is_playground") == 1 {
 			s.Kind = "playground"
