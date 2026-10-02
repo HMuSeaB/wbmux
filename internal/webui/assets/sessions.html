@@ -16,10 +16,16 @@
     --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   }
   * { box-sizing: border-box; }
+  /* body 是纵向 flex，顶部这些条都不该被压扁——它们不是"剩余空间"，是固定高度的。 */
+  header, .warnbar, #cleanbar, #expbar, .hint { flex: none; }
+  /* 页面本体不滚：滚动发生在上下两块**内部**。这样项目列表再长
+     也顶不动下面的会话表格（原来左右布局时就是这么被顶走的）。 */
   body { margin: 0; background: var(--g0); color: var(--ink);
-         font: 13.5px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+         font: 13.5px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+         height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   header { padding: 14px 18px 10px; border-bottom: 1px solid var(--g4);
-           display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+           display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           flex: none; }
   header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
   header .sub { color: var(--ink-3); font-size: 12px; }
   header input, header select {
@@ -31,9 +37,21 @@
     border-radius: 6px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
   header button:hover { background: var(--g4); }
   header button:disabled { opacity: .5; cursor: wait; }
-  .warnbar { margin: 10px 18px 0; padding: 8px 12px; border-radius: 8px;
+  /* 警告条固定**一行**（可点开看全部）。
+     原来多条警告就是多行，而布局是"页面不滚、滚动在内部"——
+     警告一多就把项目列表和会话表格往下挤。 */
+  .warnbar { margin: 8px 18px 0; padding: 6px 12px; border-radius: 8px;
              background: var(--g2); border: 1px solid var(--g5);
-             color: var(--warn); font-size: 12.5px; white-space: pre-line; }
+             color: var(--warn); font-size: 12.5px; cursor: pointer;
+             display: flex; align-items: center; gap: 8px; }
+  .warnbar .cnt { flex: none; font-weight: 600; }
+  .warnbar .first { flex: 1; min-width: 0; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+  .warnbar .more { flex: none; font-size: 11.5px; opacity: .8; }
+  .warnbar .all { display: none; margin-top: 6px; padding-top: 6px;
+                  border-top: 1px solid var(--g5); white-space: pre-line; }
+  .warnbar.open { cursor: default; }
+  .warnbar.open .all { display: block; }
   /* 清理面板：这是全页唯一会动文件的地方，所以做得比别处"重"——
      有边框、有标题、按钮分两步，避免误点。 */
   #cleanbar { margin: 10px 18px 0; padding: 12px 14px; border-radius: 8px;
@@ -78,19 +96,31 @@
              border-radius: 50%; animation: spin .7s linear infinite;
              vertical-align: -1px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  main { display: flex; gap: 14px; padding: 14px 18px 30px; align-items: flex-start; }
-  /* 左：项目列表 */
-  #projects { width: 340px; flex: none; }
-  .proj { padding: 9px 11px; border-radius: 9px; background: var(--g1);
-          border: 1px solid transparent; margin-bottom: 7px; cursor: pointer; }
+  /* 上下布局：项目列表在上（横向滚），会话表格在下（占满宽度）。
+     原来左右两栏时，45 个项目把页面撑到 2700px 高，右边的会话表格被顶走
+     ——滚下去全是空白的左栏。换成上下之后，两边各自占一块固定高度、
+     各自内部滚动，谁也撑不动谁。 */
+  /* 高度用 flex 撑满剩余空间（body 是纵向 flex），而不是
+     calc(100vh - 某个写死的数)。header 的高度会因为展开清理面板、
+     导出结果条而变化 —— 写死就会在某些状态下算错。 */
+  main { display: flex; flex-direction: column; gap: 12px;
+         padding: 0 18px 18px; flex: 1; min-height: 0; }
+  /* 上：项目列表（横向一条，可左右滚） */
+  #projects { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
+              padding-bottom: 4px; flex: none; }
+  #projects::-webkit-scrollbar { height: 8px; }
+  .proj { padding: 7px 11px; border-radius: 8px; background: var(--g1);
+          border: 1px solid transparent; cursor: pointer; flex: none;
+          max-width: 320px; }
   .proj:hover { background: var(--g2); }
   .proj.sel { border-color: var(--brand); background: var(--g2); }
-  .proj .name { font-weight: 600; word-break: break-all; font-size: 13px; }
-  .proj .meta { color: var(--ink-3); font-size: 11.5px; margin-top: 2px;
-                display: flex; gap: 8px; flex-wrap: wrap; }
+  .proj .name { font-weight: 600; font-size: 12.5px; white-space: nowrap;
+                overflow: hidden; text-overflow: ellipsis; }
+  .proj .meta { color: var(--ink-3); font-size: 11px; margin-top: 1px;
+                display: flex; gap: 8px; white-space: nowrap; }
   .proj .stale { color: var(--warn); }
-  /* 右：会话明细 */
-  #detail { flex: 1; min-width: 0; }
+  /* 下：会话明细（占满宽度，自己滚） */
+  #detail { flex: 1; min-height: 0; overflow: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th { text-align: left; color: var(--ink-3); font-weight: 500;
        padding: 4px 8px; border-bottom: 1px solid var(--g4); white-space: nowrap; }
@@ -229,8 +259,25 @@ function render(idx) {
     " · 共 " + idx.sessions.length + " 条会话 / " + idx.projects.length + " 个项目";
   var warn = document.getElementById("warn");
   if (idx.warnings && idx.warnings.length) {
+    var ws = idx.warnings;
     warn.style.display = "";
-    warn.textContent = idx.warnings.join("\n");
+    // 一条时直接显示；多条时压成一行、点开看全部。
+    warn.className = "warnbar" + (ws.length > 1 ? " openable" : "");
+    warn.innerHTML =
+      (ws.length > 1 ? '<span class="cnt">' + ws.length + " 条提示</span>" : "") +
+      '<span class="first">' + esc(ws[0]) + "</span>" +
+      (ws.length > 1
+        ? '<span class="more">点开看全部 ▾</span>' +
+          '<div class="all">' + ws.map(esc).join("\n") + "</div>"
+        : "");
+    if (ws.length > 1) {
+      warn.onclick = function () {
+        var open = warn.classList.contains("open");
+        warn.classList.toggle("open", !open);
+        var m = warn.querySelector(".more");
+        if (m) m.textContent = open ? "点开看全部 ▾" : "收起 ▴";
+      };
+    }
   } else { warn.style.display = "none"; }
 
   // 来源下拉（按实际扫到的来源动态生成）
