@@ -47,6 +47,7 @@ const (
 	VendorZCode  Vendor = "zcode"   // ZCode（~/.zcode）
 	VendorCodex  Vendor = "codex"   // OpenAI Codex（~/.codex）
 	VendorClaude Vendor = "claude"  // Claude Code（~/.claude）
+	VendorCursor Vendor = "cursor"  // Cursor（globalStorage/state.vscdb）
 )
 
 // Label 返回界面上显示的厂商名。
@@ -62,6 +63,8 @@ func (v Vendor) Label() string {
 		return "Codex"
 	case VendorClaude:
 		return "Claude"
+	case VendorCursor:
+		return "Cursor"
 	}
 	return string(v)
 }
@@ -208,6 +211,7 @@ func Scan(probe *variant.Probe, opts Options) (*Index, error) {
 	run("WB 国际", func() ([]Session, []string, error) { return scanWB(probe, variant.Intl, VendorWBIntl) })
 	run("ZCode", func() ([]Session, []string, error) { return scanZCode(probe) })
 	run("Codex", func() ([]Session, []string, error) { return scanCodex(codexRoots(probe), codexIndexPath(probe)) })
+	run("Cursor", func() ([]Session, []string, error) { return scanCursor(probe) })
 	run("Claude", func() ([]Session, []string, error) { return scanClaude(defaultClaudeRoot()) })
 	wg.Wait()
 
