@@ -48,6 +48,7 @@ const (
 	VendorCodex  Vendor = "codex"   // OpenAI Codex（~/.codex）
 	VendorClaude Vendor = "claude"  // Claude Code（~/.claude）
 	VendorCursor Vendor = "cursor"  // Cursor（globalStorage/state.vscdb）
+	VendorQoder  Vendor = "qoder"   // Qoder（SharedClientCache/cache/db）
 )
 
 // Label 返回界面上显示的厂商名。
@@ -65,6 +66,8 @@ func (v Vendor) Label() string {
 		return "Claude"
 	case VendorCursor:
 		return "Cursor"
+	case VendorQoder:
+		return "Qoder"
 	}
 	return string(v)
 }
@@ -212,6 +215,7 @@ func Scan(probe *variant.Probe, opts Options) (*Index, error) {
 	run("ZCode", func() ([]Session, []string, error) { return scanZCode(probe) })
 	run("Codex", func() ([]Session, []string, error) { return scanCodex(codexRoots(probe), codexIndexPath(probe)) })
 	run("Cursor", func() ([]Session, []string, error) { return scanCursor(probe) })
+	run("Qoder", func() ([]Session, []string, error) { return scanQoder(probe) })
 	run("Claude", func() ([]Session, []string, error) { return scanClaude(defaultClaudeRoot()) })
 	wg.Wait()
 
