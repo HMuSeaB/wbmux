@@ -52,17 +52,29 @@ func (s *Server) handleSessionView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 找到这个会话的正文文件。id 是客户端生成的，可能带路径分隔符之类的
-	// 意外字符 —— 但这里只用它去**比对**扫描结果里已有的路径，
+	// 找到这个会话。id 是客户端生成的，可能带路径分隔符之类的
+	// 意外字符 —— 但这里只用它去**比对**扫描结果里已有的记录，
 	// 不拿它拼路径，所以没有目录穿越的问题。
-	path, err := s.findSessionBody(id)
+	ss, err := s.findSession(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 
 	limit := intParam(r.URL.Query().Get("limit"), defaultViewTurns)
-	tr, err := sessions.ParseCodexTail(path, limit)
+
+	// 渲染器只有一份（RenderCodexHTML）：各来源的读取器把自己的对话
+	// 还原成同构的 CodexTranscript。新增来源 = 新增一个读取器，不改渲染。
+	var tr *sessions.CodexTranscript
+	switch ss.Vendor {
+	case sessions.VendorCodex:
+		tr, err = sessions.ParseCodexTail(ss.Source.Path, limit)
+	case sessions.VendorCursor:
+		tr, err = sessions.ParseCursorTail(s.probe(), ss.Source.Path, ss.ID, limit)
+	default:
+		writeErr(w, http.StatusUnsupportedMediaType, errUnsupportedVendor.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "读取会话失败："+err.Error())
 		return
@@ -70,7 +82,7 @@ func (s *Server) handleSessionView(w http.ResponseWriter, r *http.Request) {
 
 	title := r.URL.Query().Get("title")
 	if title == "" {
-		title = id
+		title = ss.ID
 	}
 	page := sessions.RenderCodexHTML(tr, sessions.CodexHTMLOptions{
 		Title:         title,
@@ -91,28 +103,29 @@ func (s *Server) handleSessionView(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(page))
 }
 
-// findSessionBody 按 id 在扫描结果里找出正文文件路径。
+// findSession 按 id 在扫描结果里找出会话（含来源与正文位置）。
 //
 // 依赖扫描而不是自己拼路径：会话在哪只有各适配器知道（Codex 按年/月/日分层、
-// Claude 按项目 slug 分目录），拼错了会"找不到"或更糟——找到别人的。
-func (s *Server) findSessionBody(id string) (string, error) {
+// Claude 按项目 slug 分目录、Cursor 在全局库里），拼错了会"找不到"或更糟——
+// 找到别人的。
+func (s *Server) findSession(id string) (sessions.Session, error) {
 	idx, err := sessions.Scan(s.probe(), sessions.Options{})
 	if err != nil {
-		return "", err
+		return sessions.Session{}, err
 	}
 	for _, ss := range idx.Sessions {
 		if ss.ID != id {
 			continue
 		}
 		if ss.Source.Path == "" {
-			return "", errNoBody
+			return ss, errNoBody
 		}
 		if !sessions.CanRenderInline(ss.Vendor) {
-			return "", errUnsupportedVendor
+			return ss, errUnsupportedVendor
 		}
-		return ss.Source.Path, nil
+		return ss, nil
 	}
-	return "", errSessionNotFound
+	return sessions.Session{}, errSessionNotFound
 }
 
 var (

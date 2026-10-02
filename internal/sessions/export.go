@@ -179,7 +179,7 @@ func containsStr(xs []string, v string) bool {
 // Codex），但以后 Claude 只读实现写完时，很可能先能看、再考虑导出。
 // 所以两个函数分开，而不是让一个去调另一个。
 func CanRenderInline(v Vendor) bool {
-	return v == VendorCodex
+	return v == VendorCodex || v == VendorCursor
 }
 
 // canExport 说明某一家现在能不能导出。
