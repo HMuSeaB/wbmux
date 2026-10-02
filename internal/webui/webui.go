@@ -230,6 +230,7 @@ func (s *Server) Start() error {
 	}
 	go func() { _ = s.http.Serve(ln) }()
 	go s.watchIdle()
+	s.resumeAutoClean()
 	return nil
 }
 
@@ -293,6 +294,8 @@ func (s *Server) Done() <-chan struct{} { return s.done }
 
 // Shutdown 停止服务。
 func (s *Server) Shutdown() {
+	// 先停后台循环：服务没了之后它不该还在扫盘清理回收站。
+	stopAutoClean()
 	s.doneOnce.Do(func() {
 		close(s.done)
 		if s.http != nil {

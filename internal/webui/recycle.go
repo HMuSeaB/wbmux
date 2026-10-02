@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/recyclenoise"
 )
 
@@ -45,12 +46,14 @@ type AutoCleanState struct {
 }
 
 var (
-	autoMu       sync.Mutex
-	autoEnabled  bool
-	autoLastRun  time.Time
-	autoRemoved  int
-	autoStopOnce sync.Once
-	autoStop     = make(chan struct{})
+	autoMu      sync.Mutex
+	autoEnabled bool
+	autoLastRun time.Time
+	autoRemoved int
+	// autoStop 是当前后台循环的停止信号。nil 表示没在跑。
+	autoStop chan struct{}
+	// autoRunning 只在 autoMu 下读写。
+	autoRunning bool
 )
 
 // handleRecycleScan 扫描回收站并汇总。
@@ -138,6 +141,20 @@ func (s *Server) handleRecycleAuto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 落盘。少了这一步，用户勾上开关、关掉界面再打开，发现自己被悄悄关掉��
+	// ——而他的原意正是"别再往回收站里塞"。设置自己会消失比没这个设置更糟。
+	cfg, err := config.Load()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "读配置失败："+err.Error())
+		return
+	}
+	on := req.Enabled
+	cfg.AutoCleanRecycle = &on
+	if err := config.Save(cfg); err != nil {
+		writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
+		return
+	}
+
 	autoMu.Lock()
 	autoEnabled = req.Enabled
 	autoMu.Unlock()
@@ -162,60 +179,108 @@ func (s *Server) logf(format string, args ...any) {
 // autoSnapshot 取当前自动清理状态。
 func autoSnapshot() AutoCleanState {
 	autoMu.Lock()
-	defer autoMu.Unlock()
+	enabled, removed, last := autoEnabled, autoRemoved, autoLastRun
+	autoMu.Unlock()
+
 	st := AutoCleanState{
-		Enabled:     autoEnabled,
+		Enabled:     enabled,
 		Interval:    autoCleanInterval.String(),
-		LastRemoved: autoRemoved,
+		LastRemoved: removed,
 	}
-	if !autoLastRun.IsZero() {
-		st.LastRun = autoLastRun.Format(time.RFC3339)
+	if !last.IsZero() {
+		st.LastRun = last.Format(time.RFC3339)
 	}
 	return st
 }
 
-// startAutoClean 起后台循环。重复调用是安全的（只起一个）。
-func startAutoClean() {
-	autoStopOnce = sync.Once{}
-	autoMu.Lock()
-	defer autoMu.Unlock()
-	// 已经在跑就不重复起
-	if autoRunning {
-		return
+// autoCleanOn 读配置里的"自动清理"开关。默认关闭——它会删东西。
+//
+// 读不出配置时按**关闭**处理：这个方向是刻意的，环境有问题时不该还在
+// 定时删用户的回收站。
+func autoCleanOn() bool {
+	cfg, err := config.Load()
+	if err != nil {
+		return false
 	}
-	autoRunning = true
-	go func() {
-		t := time.NewTicker(autoCleanInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-autoStop:
-				autoMu.Lock()
-				autoRunning = false
-				autoMu.Unlock()
-				return
-			case <-t.C:
-				autoMu.Lock()
-				on := autoEnabled
-				autoMu.Unlock()
-				if !on {
-					continue
-				}
-				runAutoCleanOnce()
-			}
-		}
-	}()
+	return cfg.AutoCleanRecycle != nil && *cfg.AutoCleanRecycle
 }
 
-var autoRunning bool
+// resumeAutoClean 在服务启动时按配置把循环拉起来。
+//
+// 没有这一步，开关就是个摆设：用户勾上、关掉界面、再打开，发现它自己
+// 灭了，得再勾一次——而他勾它的理由正是"别再往回收站里塞"。
+func (s *Server) resumeAutoClean() {
+	if !autoCleanOn() {
+		return
+	}
+	autoMu.Lock()
+	autoEnabled = true
+	autoMu.Unlock()
+	startAutoClean()
+	s.logf("回收站自动清理已按上次设置恢复开启，间隔 %s", autoCleanInterval)
+}
 
-// runAutoCleanOnce 执行一次自动清理。只清噪声，不动用户文件。
+// startAutoClean 起后台循环。重复调用是安全的（只起一个）。
+//
+// 循环会在 stopAutoClean 时退出。原来它靠一个**永远不关闭**的 autoStop
+// 通道停不掉，等于每个进程都留一个空转的 goroutine；顺带 autoStopOnce
+// 声明了却从没调用过 .Do，是废代码。两样都清掉了。
+func startAutoClean() {
+	autoMu.Lock()
+	defer autoMu.Unlock()
+	// 已经在跑就别再起一个。两个循环同时扫盘，而 Clean 是成对删 $I/$R 的，
+	// 并发下去可能删到一半留下幽灵条目。
+	if autoRunning && autoStop != nil {
+		return
+	}
+	autoStop = make(chan struct{})
+	autoRunning = true
+	go autoCleanLoop(autoStop)
+}
+
+// autoCleanLoop 是后台循环本体。
+func autoCleanLoop(stop <-chan struct{}) {
+	t := time.NewTicker(autoCleanInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			autoMu.Lock()
+			on := autoEnabled
+			autoMu.Unlock()
+			if !on {
+				continue
+			}
+			runAutoCleanOnce()
+		}
+	}
+}
+
+// stopAutoClean 停掉后台循环。服务关闭时调用——否则它在服务没了之后
+// 还继续扫盘清理，那是没人要求的行为。
+func stopAutoClean() {
+	autoMu.Lock()
+	stop, running := autoStop, autoRunning
+	autoStop, autoRunning = nil, false
+	autoMu.Unlock()
+	if running && stop != nil {
+		close(stop)
+	}
+}
+
+// runAutoCleanOnce 执行一次自动清理。只清噪声档，不动草稿与用户文件。
 func runAutoCleanOnce() {
 	entries, err := recyclenoise.Scan()
 	if err != nil {
 		return
 	}
-	res := recyclenoise.Clean(entries, recyclenoise.CleanOptions{All: false})
+	// 不显式给 Through：默认就是最保守的噪声档。写出来是为了让读代码的人
+	// 一眼看出"这里只碰最安全的一档"，而不是靠默认值兜着。
+	res := recyclenoise.Clean(entries, recyclenoise.CleanOptions{
+		Through: recyclenoise.CategoryNoise,
+	})
 
 	autoMu.Lock()
 	autoLastRun = time.Now()

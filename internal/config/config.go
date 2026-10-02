@@ -43,6 +43,15 @@ type Config struct {
 	// 替他决定合适。
 	AutoCheckin *bool `json:"autoCheckin,omitempty"`
 
+	// AutoCleanRecycle 控制"自动清理回收站噪声"。
+	//
+	// 默认（nil）按**关闭**处理——它会删东西，这种开关不该默认打开。
+	//
+	// 为什么必须持久化：原本这个开关只存在内存里。用户打开界面勾上，关掉
+	// 界面再打开，发现自己被悄悄关掉了——而他的原意是"别再往回收站里塞"。
+	// 那种"设置自己会消失"比没有这个设置更糟。
+	AutoCleanRecycle *bool `json:"autoCleanRecycle,omitempty"`
+
 	// GUIToken 是图形界面的访问令牌，持久化保存。
 	//
 	// # 为什么不做成"每次启动随机"
