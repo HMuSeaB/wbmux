@@ -862,7 +862,10 @@
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>自动清理</h2>
     <p class="sub">
       开启后每 30 分钟自动清一次<strong>已识别的噪声</strong>，绝不碰你自己删的文件。
-      默认关闭——删东西的开关不该默认打开。
+      开关会记住，下次打开界面仍然有效。
+      <br>
+      <span class="desc">注意：wbmux 进程不开着的时候它不会运行——关掉界面就等于停了。
+      想让它常驻，把 wbmux 留着别关。</span>
     </p>
     <label class="check">
       <input type="checkbox" id="recycle-auto">
