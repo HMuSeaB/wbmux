@@ -359,7 +359,7 @@ function renderDetail() {
       // "能不能看"与"能不能导出"现在是同一批源，但判断分开写：
       // 以后 Claude 可能先能看、还不能导。
       var canView = s.vendor === "codex" || s.vendor === "cursor";
-      var canExp = s.vendor === "codex";
+      var canExp = s.vendor === "codex" || s.vendor === "cursor";
       var act = "";
       if (canView) {
         act += '<button class="mini open" data-i="' + i + '">打开</button>';

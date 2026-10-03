@@ -272,8 +272,9 @@ func (s *Server) handleSessionsExport(w http.ResponseWriter, r *http.Request) {
 	if dir == "" {
 		// 没给目录就用默认位置：放在用户主目录下一个好找的地方，
 		// 而不是当前工作目录——界面是从托盘/快捷方式起的，工作目录不可预期。
+		// 目录名不带厂商：导出现在有 Codex（HTML）与 Cursor（Markdown handoff）两家。
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, "WorkBuddy AI", "Codex会话导出")
+		dir = filepath.Join(home, "WorkBuddy AI", "会话导出")
 	}
 
 	rep, err := sessions.ExportSessions(s.probe(), sessions.ExportOptions{

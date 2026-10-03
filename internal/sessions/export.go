@@ -19,6 +19,7 @@ package sessions
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -105,7 +106,15 @@ func ExportSessions(probe *variant.Probe, opts ExportOptions) (*ExportReport, er
 	}
 
 	var files []string
+	var cursorList []Session
 	for v, list := range byVendor {
+		if v == VendorCursor {
+			// Cursor 走单独的分支：正文在共用库里（不在独立文件），
+			// 产物是 **Markdown handoff**（问答 + 文件清单 + 待办），
+			// 与 Codex 的 HTML 归档互补——见 cursorhandoff.go 的定位说明。
+			cursorList = append(cursorList, list...)
+			continue
+		}
 		if !canExport(v) {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf(
 				"%s：暂不支持导出（它的正文不在独立文件里，需要单独的读取实现），共 %d 条",
@@ -124,6 +133,27 @@ func ExportSessions(probe *variant.Probe, opts ExportOptions) (*ExportReport, er
 			}
 			files = append(files, p)
 		}
+	}
+
+	// Cursor 分支：逐条提炼 Markdown handoff。
+	// 放在 Codex 文件流之前建目录：cursor-only 导出也要有落点。
+	if len(cursorList) > 0 {
+		if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	for _, s := range cursorList {
+		md, err := RenderCursorHandoff(probe, s.Source.Path, s.ID, s.Title)
+		if err != nil {
+			rep.Failed = append(rep.Failed, "cursor "+shortID(s.ID)+"："+err.Error())
+			continue
+		}
+		name := fmt.Sprintf("cursor_%s_%s.md", shortID(s.ID), exportSlug(s.Title))
+		if err := os.WriteFile(filepath.Join(opts.Dir, name), md, 0o644); err != nil {
+			rep.Failed = append(rep.Failed, s.ID+"："+err.Error())
+			continue
+		}
+		rep.Exported++
 	}
 
 	if len(files) == 0 {

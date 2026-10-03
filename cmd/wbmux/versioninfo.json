@@ -1,12 +1,22 @@
 {
   "FixedFileInfo": {
-    "FileVersion": { "Major": 0, "Minor": 11, "Patch": 3, "Build": 0 },
-    "ProductVersion": { "Major": 0, "Minor": 11, "Patch": 3, "Build": 0 }
+    "FileVersion": {
+      "Major": 0,
+      "Minor": 12,
+      "Patch": 0,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 0,
+      "Minor": 12,
+      "Patch": 0,
+      "Build": 0
+    }
   },
   "StringFileInfo": {
     "FileDescription": "wbmux — 用一份安装连两套后端",
     "ProductName": "wbmux",
-    "ProductVersion": "0.11.3",
+    "ProductVersion": "0.12.0",
     "CompanyName": "HMuSeaB",
     "OriginalFilename": "wbmux.exe",
     "LegalCopyright": ""

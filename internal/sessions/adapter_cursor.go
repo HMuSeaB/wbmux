@@ -112,7 +112,13 @@ func firstLine(s string) string {
 //
 // 反斜杠形态（D:\\4rchive\\…）也认，虽然实测里很少。
 // 一条会话可能碰过多个文件夹——出现最多的那个最有资格当"它的项目"。
-func cursorProject(raw string) string {
+// cursorPathCounts 从会话原始 JSON 里数所有文件/目录路径的出现次数。
+// cursorProject 取其中最多的当项目；handoff 导出要全部（按频次排）。
+// 三种实测形态都收：
+//   - "path":"/d:/4rchive/AI/Cursor"   （workspace URI 的 path 字段）
+//   - file:///d%3A/4rchive/…           （file URI，%3A 是冒号）
+//   - D:\\4rchive\\…                   （反斜杠，实测里很少）
+func cursorPathCounts(raw string) map[string]int {
 	count := map[string]int{}
 	grab := func(p string) {
 		p = normalizeProject(p)
@@ -130,6 +136,13 @@ func cursorProject(raw string) string {
 		}
 		grab(m[1] + ":/" + p)
 	}
+	return count
+}
+
+// cursorProject 从会话原始 JSON 里数文件路径，取出现最多的文件夹当项目。
+// 一条会话可能碰过多个文件夹——出现最多的那个最有资格当"它的项目"。
+func cursorProject(raw string) string {
+	count := cursorPathCounts(raw)
 	best, bestN := "", 0
 	for p, n := range count {
 		if n > bestN || (n == bestN && p < best) {
@@ -139,7 +152,6 @@ func cursorProject(raw string) string {
 	if best == "" {
 		return "Cursor（全局）"
 	}
-	// sort 上面 map 遍历无序，best 的选择在同频时靠字典序保持稳定。
 	return best
 }
 

@@ -37,13 +37,28 @@ import (
 // 拼进 LIKE 模式前先过这道闸，风格与"不拿 id 拼路径"同一套谨慎。
 var cursorIDRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 
-// ParseCursorTail 读一个 Cursor composer 的正文，按对话顺序还原。
+// ParseCursorTail 带窗口：只保留最近 maxTurns 个**有正文**的气泡
+// （≤0 时按 120 处理）。查看界面用这个；导出走 ParseCursorTailAll。
 func ParseCursorTail(probe *variant.Probe, dbPath, composerID string, maxTurns int) (*CodexTranscript, error) {
-	if !cursorIDRe.MatchString(composerID) {
-		return nil, errors.New("composer id 形状异常")
-	}
 	if maxTurns <= 0 {
 		maxTurns = 120
+	}
+	tr, err := parseCursorTailAll(probe, dbPath, composerID)
+	if err != nil {
+		return nil, err
+	}
+	if len(tr.Turns) > maxTurns {
+		tr.Truncated = true
+		tr.Turns = tr.Turns[len(tr.Turns)-maxTurns:]
+	}
+	return tr, nil
+}
+
+// parseCursorTailAll 读一个 Cursor composer 的全部有正文气泡，按对话顺序
+// 还原成与 Codex 同构的转录，**不设窗口**。Truncated 恒为假。
+func parseCursorTailAll(probe *variant.Probe, dbPath, composerID string) (*CodexTranscript, error) {
+	if !cursorIDRe.MatchString(composerID) {
+		return nil, errors.New("composer id 形状异常")
 	}
 
 	// 第一步：composerData——顺序清单与元数据。
@@ -96,7 +111,7 @@ func ParseCursorTail(probe *variant.Probe, dbPath, composerID string, maxTurns i
 		bubbles[b.BubbleID] = bubble{kind: kind, text: strings.TrimSpace(b.Text)}
 	}
 
-	// 第三步：按 headers 的顺序还原，跳过空泡，窗口取最近的。
+	// 第三步：按 headers 的顺序还原，跳过空泡（工具/检查点）。
 	all := make([]CodexTurn, 0, len(comp.Headers))
 	for _, h := range comp.Headers {
 		b, ok := bubbles[h.BubbleID]
@@ -105,17 +120,12 @@ func ParseCursorTail(probe *variant.Probe, dbPath, composerID string, maxTurns i
 		}
 		all = append(all, CodexTurn{Kind: b.kind, Text: b.text})
 	}
-	truncated := len(all) > maxTurns
-	if truncated {
-		all = all[len(all)-maxTurns:]
-	}
 
 	tr := &CodexTranscript{
 		ID:         composerID,
 		Source:     dbPath,
 		Turns:      all,
 		TotalTurns: len(comp.Headers),
-		Truncated:  truncated,
 	}
 	if comp.CreatedAt > 0 {
 		tr.CreatedAt = time.UnixMilli(int64(comp.CreatedAt))
