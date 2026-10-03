@@ -97,6 +97,19 @@ func BuildCleanPlan(idx *Index) *CleanPlan {
 			continue
 		}
 		p := s.Source.Path
+		// 第一道闸按**来源种类**：sqlite 型（WB/ZCode/Cursor/Qoder）的会话
+		// 存在共用库里，无论几条都不能按文件删——尤其"这个库里只有 1 条
+		// 候选"时，shared 计数是 1，纯计数的安全阀会放行，把整个库
+		// （含全部其他数据）送进回收站。Cursor 的 state.vscdb 有 706MB。
+		if s.Source.Kind != "file" {
+			plan.Refused = append(plan.Refused, CleanRefusal{
+				ID:       s.ID,
+				Path:     p,
+				Reason:   "会话存在数据库里，删它要删库里的行，不能按文件删",
+				SharedBy: shared[p],
+			})
+			continue
+		}
 		if shared[p] > 1 {
 			plan.Refused = append(plan.Refused, CleanRefusal{
 				ID:       s.ID,

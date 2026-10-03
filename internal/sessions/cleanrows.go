@@ -77,6 +77,12 @@ func BuildRowPlan(idx *Index) *RowPlan {
 		if !s.Candidate || shared[s.Source.Path] <= 1 {
 			continue
 		}
+		// 行级删除只对已实现的三家开放：ZCode（六张表）、WB 双档（正文
+		// 文件 + 库行）。Cursor/Qoder 的行结构/加密不同，还没实现——
+		// 不进这张计划，免得界面显示"可清理"实际却一个字都没动。
+		if s.Vendor != VendorZCode && s.Vendor != VendorWBCN && s.Vendor != VendorWBIntl {
+			continue
+		}
 		t := rowTarget{
 			ID:     s.ID,
 			Vendor: s.Vendor,

@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/HMuSeaB/wbmux/internal/migrate"
@@ -19,19 +20,30 @@ const wbQuery = `select id, cwd, coalesce(custom_title, title) as title, ` +
 	`from sessions where deleted_at is null or deleted_at = -1 ` +
 	`order by updated_at desc`
 
-// wbUsageQuery 读 session_usage 的每会话消耗。used 的刻度与额度面板
-// 一致：面板显示的"积分"= used/1000（实测 408.04 积分的会话，used
-// ≈ 408040）。查询失败静默——积分是锦上添花，不能让它挡住会话列表。
-const wbUsageQuery = `select session_id, used from session_usage`
+// wbUsageQuery 读 session_usage 的每会话计费。**积分的正确来源是
+// credit_json 里各分项求和**（与额度面板同口径）——used 是另一套计量
+// （第一次实现误当成"积分×1000"，对面板同一条会话差了 5 倍多）。
+// credit_json 可为 NULL 或损坏，解析失败按 0 计。
+const wbUsageQuery = `select session_id, credit_json from session_usage`
 
-// wbUsageByID 把每会话消耗读成 session_id → used 映射。
+// wbUsageByID 把每会话计费读成 session_id → 积分映射。
 func wbUsageByID(probe *variant.Probe, id variant.ID, dbPath, label string) map[string]float64 {
 	rows, _ := queryLive(probe, id, dbPath, wbUsageQuery, label)
 	out := map[string]float64{}
 	for _, r := range rows {
-		if sid := mapStr(r, "session_id"); sid != "" {
-			out[sid] = mapF64(r, "used")
+		sid := mapStr(r, "session_id")
+		if sid == "" {
+			continue
 		}
+		var parts map[string]float64
+		if json.Unmarshal([]byte(mapStr(r, "credit_json")), &parts) != nil {
+			continue
+		}
+		total := 0.0
+		for _, v := range parts {
+			total += v
+		}
+		out[sid] = total
 	}
 	return out
 }
@@ -54,7 +66,7 @@ func scanWB(probe *variant.Probe, id variant.ID, vendor Vendor) ([]Session, []st
 			CreatedMs:  mapMs(r, "created_at"),
 			UpdatedMs:  mapMs(r, "updated_at"),
 			Kind:       mapStr(r, "status"),
-			Credits:    usedByID[mapStr(r, "id")] / 1000,
+			Credits:    usedByID[mapStr(r, "id")],
 		}
 		if mapInt(r, "is_playground") == 1 {
 			s.Kind = "playground"

@@ -240,11 +240,21 @@ func TestScanClaude(t *testing.T) {
 //
 // 注意它**不设 Vendor**：BuildCleanPlan 只看 path 与 candidate，
 // 而 BuildRowPlan 要看 Vendor 决定删几张表。所以用 mkSessionV 那条。
+// Kind 默认 "file"（Codex/Claude 这类独占文件源）；共用库的夹具用
+// mkSessionDB——clean 安全阀按 Kind 判"能否按文件删"，夹具必须如实。
 func mkSession(id, path string, cand bool, size int64) Session {
 	return Session{
 		ID: id, Candidate: cand, SizeBytes: size,
-		Source: Source{Path: path},
+		Source: Source{Path: path, Kind: "file"},
 	}
+}
+
+// mkSessionDB 是"存在共用数据库里"的夹具（Kind=sqlite，WB 国内档）。
+func mkSessionDB(id, path string, cand bool, size int64) Session {
+	s := mkSession(id, path, cand, size)
+	s.Source.Kind = "sqlite"
+	s.Vendor = VendorWBCN
+	return s
 }
 
 func mkSessionV(id string, v Vendor, path string, cand bool, size int64) Session {
@@ -264,9 +274,9 @@ func mkSessionV(id string, v Vendor, path string, cand bool, size int64) Session
 func TestCleanPlanRefusesSharedPaths(t *testing.T) {
 	idx := &Index{Sessions: []Session{
 		mkSession("a", `/x/.codex/sessions/rollout-1.jsonl`, true, 100),
-		mkSession("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 候选
-		mkSession("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
-		mkSession("d", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
+		mkSessionDB("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 候选
+		mkSessionDB("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
+		mkSessionDB("d", `/x/.workbuddy/workbuddy.db`, false, 0), // 非候选，同库
 		mkSession("e", `/x/.codex/sessions/rollout-2.jsonl`, false, 200),
 	}}
 
@@ -419,16 +429,34 @@ func TestCleanRefineVendors(t *testing.T) {
 
 // ---------- 删库行 ----------
 
+// 新来源（Cursor/Qoder）的会话也在共用库里，Kind=sqlite。这条钉住
+// "单条候选的共享库也不能按文件删"——Cursor 只有 1 条会话时，
+// 706MB 的 state.vscdb 差点被当成独占文件整个送进回收站。
+func TestCleanPlanRefusesSqliteKind(t *testing.T) {
+	s := mkSession("cur1", `/x/AppData/Roaming/Cursor/User/globalStorage/state.vscdb`, true, 0)
+	s.Vendor = VendorCursor
+	s.Source.Kind = "sqlite"
+	idx := &Index{Sessions: []Session{s}}
+
+	plan := BuildCleanPlan(idx)
+	if len(plan.Targets) != 0 {
+		t.Fatalf("sqlite 型绝不按文件删，实际出现了 %d 个目标", len(plan.Targets))
+	}
+	if len(plan.Refused) != 1 {
+		t.Fatalf("该进 Refused 并说明原因，实际 %+v", plan.Refused)
+	}
+}
+
 // TestBuildRowPlanPicksOnlyDBBacked 确认只挑"在数据库里"的候选。
 //
 // 与 BuildCleanPlan 互补：那个挑独占文件、这个挑共用数据库，不能重叠。
 // 重叠了就会出现"同一会话被两条路径都删一次"。
 func TestBuildRowPlanPicksOnlyDBBacked(t *testing.T) {
 	idx := &Index{Sessions: []Session{
-		mkSession("a", `/x/.codex/rollout-1.jsonl`, true, 100), // 独占文件 → 归 clean
-		mkSession("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 库行 → 归这里
-		mkSession("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 同库、非候选
-		mkSession("d", `/x/.workbuddy/workbuddy.db`, false, 0),
+		mkSession("a", `/x/.codex/rollout-1.jsonl`, true, 100),   // 独占文件 → 归 clean
+		mkSessionDB("b", `/x/.workbuddy/workbuddy.db`, true, 0),  // 库行 → 归这里
+		mkSessionDB("c", `/x/.workbuddy/workbuddy.db`, false, 0), // 同库、非候选
+		mkSessionDB("d", `/x/.workbuddy/workbuddy.db`, false, 0),
 	}}
 	plan := BuildRowPlan(idx)
 	if len(plan.Targets) != 1 || plan.Targets[0].ID != "b" {
