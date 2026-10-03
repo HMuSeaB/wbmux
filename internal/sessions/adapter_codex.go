@@ -111,9 +111,11 @@ func scanCodex(roots []string, indexPath string) ([]Session, []string, error) {
 	return out, nil, nil
 }
 
-// parseCodexFile 只读首行。首行是 session_meta（约 10K 上下文说明），
-// 第二行开始才是逐条事件——用 ReadBytes 而不是 Scanner，
-// 免得某行超长把整次扫描带崩。
+// parseCodexFile 读首行 session_meta + 扫文件头部找首条真用户消息。
+//
+// 用 Scanner（1MB 行上限）而不是 ReadBytes：行可能极大（整段粘贴、
+// base64 图），无上限的累积读取会吃内存；超长行直接放弃标题兜底——
+// 标题是尽力而为，不为它冒内存风险。
 func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -121,13 +123,16 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 	}
 	defer f.Close()
 
-	reader := bufio.NewReaderSize(f, 1<<20)
-	line, err := reader.ReadBytes('\n')
-	if err != nil && len(line) == 0 {
-		return Session{}, err
+	sc := bufio.NewScanner(bufio.NewReaderSize(f, 1<<20))
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	if !sc.Scan() {
+		if serr := sc.Err(); serr != nil {
+			return Session{}, serr
+		}
+		return Session{}, fmt.Errorf("空文件")
 	}
 	var meta codexMeta
-	if uerr := json.Unmarshal(line, &meta); uerr != nil {
+	if uerr := json.Unmarshal(sc.Bytes(), &meta); uerr != nil {
 		return Session{}, uerr
 	}
 	if meta.Type != "session_meta" {
@@ -153,9 +158,19 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 	if ms, terr := parseRFC3339Nanos(meta.Timestamp); terr == nil && ms > 0 {
 		createdMs = ms
 	}
-	title := "(无标题)"
+	title := ""
 	if e, ok := titles[meta.Payload.ID]; ok && strings.TrimSpace(e.Name) != "" {
 		title = strings.TrimSpace(e.Name)
+	} else {
+		// 标题兜底：索引里没有 thread_name 时，从正文头部找第一条"真用户
+		// 消息"当标题——这是 WorkBuddy 手动清理清单里最有价值的信息
+		// （"它在聊什么"），收进适配器后面板就不用代劳。
+		if fp := firstUserPrompt(sc); fp != "" {
+			title = fp
+		}
+	}
+	if title == "" {
+		title = "(无标题)"
 	}
 
 	return Session{
@@ -169,6 +184,40 @@ func parseCodexFile(path string, titles map[string]codexIndexEntry) (Session, er
 		Kind:       "thread",
 		Source:     Source{Kind: "file", Path: path},
 	}, nil
+}
+
+// firstUserPrompt 沿同一个 Scanner 继续扫，找第一条真用户消息（截 80 字）。
+// 只再扫 300 行：首条用户消息总在文件头部。单行超 1MB 会终止扫描——
+// 标题是尽力而为。坏行、环境注入（复用渲染器的 envPrefixes/isEnvText，
+// 两处识别口径保持一致）都跳过。
+func firstUserPrompt(sc *bufio.Scanner) string {
+	for i := 0; i < 300 && sc.Scan(); i++ {
+		var p struct {
+			Payload struct {
+				Type    string          `json:"type"`
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"payload"`
+		}
+		// 注意层级：顶层 type 是 "response_item"，"message"/"user" 在 payload 里。
+		if json.Unmarshal(sc.Bytes(), &p) != nil || p.Payload.Type != "message" || p.Payload.Role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(claudeUserText(p.Payload.Content))
+		if text == "" || isEnvText(text) {
+			continue
+		}
+		out := strings.ReplaceAll(text, "\r", "")
+		if j := strings.IndexByte(out, '\n'); j >= 0 {
+			out = out[:j]
+		}
+		r := []rune(out)
+		if len(r) > 80 {
+			out = string(r[:80]) + "…"
+		}
+		return out
+	}
+	return ""
 }
 
 // loadCodexIndex 把 session_index.jsonl 读成 id → 条目。

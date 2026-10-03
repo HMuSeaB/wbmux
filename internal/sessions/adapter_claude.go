@@ -161,8 +161,9 @@ func parseClaudeFile(path, dirName string) (Session, error) {
 }
 
 // claudeUserText 从 message.content 里抠出可读文本。
-// content 可能是纯字符串，也可能是分块数组（[{type:"text",text:"…"},…]），
-// 两样都试；数组里取第一块文本就够当标题了。
+// content 可能是纯字符串，也可能是分块数组——块的 type 有两种实测形态：
+// Claude 是 "text"，Codex 是 "input_text"，两样都认；
+// 数组里取第一块文本就够当标题了。
 func claudeUserText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -177,7 +178,7 @@ func claudeUserText(raw json.RawMessage) string {
 	}
 	if json.Unmarshal(raw, &blocks) == nil {
 		for _, b := range blocks {
-			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			if (b.Type == "text" || b.Type == "input_text") && strings.TrimSpace(b.Text) != "" {
 				return strings.TrimSpace(b.Text)
 			}
 		}
