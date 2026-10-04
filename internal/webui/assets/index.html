@@ -523,8 +523,13 @@
     <p class="brand-sub ver" id="side-msg"
        style="min-height:16px;margin:-2px 0 0;font-size:11.5px;color:var(--ink-3)"></p>
     <nav class="nav">
-      <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
+      <!-- 每日签到放第一位：它的价值全在"顺手"。
+           用户原话："最好放在第一页，这样一打开 wbmux 就签上了，而不是切换
+           到那个 tab"。**排序与自动签是两件事**——自动签在打开界面时就已经
+           发了（见 loadCheckin(true)），放第一页是为了让"今天签没签"一眼可见，
+           不用去别处找。断一天连签就归零，这种事值得摆在最上面。 -->
       <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</div>
+      <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
       <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
       <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
@@ -807,8 +812,9 @@
       签到目前只在国内侧开放，国际侧接口在、活动没开。
     </p>
     <p class="sub">
-      <strong>打开这一页会自动签到</strong>：先查状态，只有今天还没签才领。
-      已签过就只记下状态、不再重复领（接口是幂等的，重复领也不会多拿）。
+      <strong>打开 wbmux 就自动签了</strong>，不用切到这一页——先查状态，
+      只有今天还没签才领；已签过就只记下状态、不再重复领。
+      这一页是给你看结果的：今天签没签、连了几天、还剩多少。
     </p>
     <div class="row" style="margin-top:14px">
       <button id="btn-checkin-refresh">刷新状态</button>
@@ -1572,7 +1578,24 @@
     });
     // 切进来先拉一次，别让用户对着空页面等下一个刷新周期。
     if (page === "log") loadProxyLog(true);
-    if (page === "checkin") loadCheckin();
+    // 签到**不在切页时重发写请求**。
+    //
+    // 打开界面时已经签过一遍（loadCheckin(true)，见启动段）。切回来再发一次
+    // POST /api/checkin/auto 是多余的写操作——服务端虽然幂等，但"用户只是切了
+    // 个 tab"不该产生一次改账号状态的请求。已经拿到了状态就直接重绘，
+    // 拿不到（启动时那次失败了）才重新查一次。
+    if (page === "checkin") {
+      // renderCheckin 只重绘 #checkin-body，不动 #checkin-auto-note，
+      // 所以启动时那句"打开 wbmux 时已自动签：…"会留在原处——正是想要的。
+      // 它不会被清掉，是因为那个提示是**这一趟界面会话里发生过的事实**，
+      // 不该因为切了个 tab 就消失。
+      if (checkinLast) {
+        renderCheckin(checkinLast);
+        refreshCheckinButtons();
+      } else {
+        loadCheckin(false);
+      }
+    }
     if (page === "workspace") loadWorkspace();
     if (page === "recycle") loadRecycle();
     if (page === "providers") loadProviders(true);
@@ -1757,6 +1780,10 @@
   // 两个按钮对应两种性质：刷新是读，领取是写。进页面只读，写必须由用户亲手点。
   var checkinLast = null;
   var checkinBusyFlag = false;
+  // checkinAsked 记录"这一趟界面会话里已经问过服务端要不要签了"。
+  // 与 checkinLast 的区别：后者是**结果**（失败时为 null），前者是**事实**。
+  // 分开记才能做到"失败也不重发"。
+  var checkinAsked = false;
 
   function checkinBusy(on) {
     checkinBusyFlag = on;
@@ -1789,9 +1816,20 @@
   //
   // 手动重查走 loadCheckinStatus（只读），能清楚区分"我点的是刷新"与
   // "页面自己在自动签"——两者性质不同，不该共用一个入口。
-  function loadCheckin() {
+  //
+  // atBoot 为 true 表示是**打开界面时**自动跑的（不是用户切到这一页）。
+  // 两种情况都照常签，区别只在提示语：打开界面时用户可能压根没在看这一页，
+  // 得在页面上留一句"刚才是自动签的"，免得他以为要手动补一次。
+  function loadCheckin(atBoot) {
     var box = document.getElementById("checkin-body");
     if (!box) return;
+    // 已经问过服务端了就别再问。
+    //
+    // 守卫必须是个**独立的布尔**，不能拿 checkinLast 当判据：请求失败时
+    // checkinLast 会被置成 null，那样切回这一页又会重发一次写请求——
+    // "试过了但没成"和"还没试过"是两回事，得分开记。
+    if (checkinAsked) return;
+    checkinAsked = true;
     loadAutoCheckinToggle();
     clear(box);
     box.appendChild(el("div", { class: "hint" },
@@ -1803,7 +1841,7 @@
         // 自动签到的回话形状与 /api/checkin 一致（都带 status/label），
         // 额外多了 skipped / note 说明"这次做了什么"。
         checkinLast = { side: data.side, label: data.label, status: data.status };
-        renderAutoNote(data);
+        renderAutoNote(data, atBoot);
         if (data.status) {
           renderCheckin(checkinLast);
         } else {
@@ -1826,12 +1864,17 @@
   //
   // 这一步是硬要求：自动签**会改账号状态**，用户有权知道它刚才动没动、动了什么。
   // 悄悄签掉、只显示一个"已签到"，等于把写操作藏起来。
-  function renderAutoNote(data) {
+  function renderAutoNote(data, atBoot) {
     var box = document.getElementById("checkin-auto-note");
     if (!box) return;
     clear(box);
     var note = data && data.note;
     if (!note) return;
+    if (atBoot) {
+      // 打开界面时就签掉了：用户这一趟可能根本没看这一页，
+      // 所以除了说明做了什么，还要点明"你不用再点一次"。
+      note = "打开 wbmux 时已自动签：" + note;
+    }
     var cls = "note ok";
     if (data.skipped === "unavailable") cls = "note warn";
     else if (data.skipped === "disabled") cls = "note";
@@ -3103,7 +3146,12 @@
   // 没必要在启动时就跑。
   // 「刷新状态」是**只读**重查，不碰自动签到——用户点它是想看现在什么状态，
   // 不该顺手再发一次领取。要自动签的那个入口是进页面时的 loadCheckin。
-  document.getElementById("btn-checkin-refresh").addEventListener("click", loadCheckinStatus);
+  // 「刷新状态」是**只读**重查，与自动签分开（见 loadCheckin 的说明）。
+  // 顺手把 checkinAsked 落回"已问过"——刷新只是看状态，不等于重新发起签到；
+  // 真要重新走自动签，刷新页面即可（那时会重跑启动段）。
+  document.getElementById("btn-checkin-refresh").addEventListener("click", function () {
+    loadCheckinStatus();
+  });
   document.getElementById("btn-checkin-claim").addEventListener("click", claimCheckin);
   document.getElementById("chk-checkin-auto").addEventListener("change", function () {
     var box = document.getElementById("checkin-auto-note");
@@ -3182,6 +3230,16 @@
     // 限流状态默认就查一次：用户打开界面时，最想知道的往往就是
     // "刚才那次 429 到底是哪一侧"。让他再点一次按钮才看到，等于没解决。
     loadUsage();
+
+    // 每日签到同样在**打开界面时**就跑，不要求用户切到那个 tab。
+    //
+    // 用户的原话："最好放在第一页，这样一打开 wbmux 就签上了，而不是切换到
+    // 那个 tab"。签到的价值全在"顺手"，要求人专门去点一下，多半就断了连签。
+    // 与 loadUsage 的区别：这一条会**改账号状态**（领积分、改连签天数），
+    // 所以只在"该领"时才发写请求（判断在服务端，见 checkin.AutoClaim），
+    // 并且签完要在界面上明说"这次是自动签的"，不能悄悄做。
+    loadCheckin(true);
+
     document.getElementById("btn-mig-scan").disabled = !(migFrom && migTo);
 
     // 支持 ?doctor=1 直接跑一遍体检。做成深链接是因为"先检查一下"
