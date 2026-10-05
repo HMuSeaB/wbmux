@@ -531,6 +531,7 @@
       <div class="nav-item" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
       <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
+      <div class="nav-item" data-page="compact"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>压缩阈值</div>
       <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
       <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
       <div class="nav-item" data-page="sessions"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>会话中心</div>
@@ -654,6 +655,20 @@
   </section>
 
     </div>
+    <div data-page="compact" hidden>
+  <section>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>压缩阈值</h2>
+    <p class="sub">
+      客户端在<strong>发消息前</strong>会检查上下文占用，到阈值就把旧历史压缩掉
+      —— 表现是"聊到一半模型突然忘了前面说过什么"。它判断"满了没"用的
+      <strong>基准窗口</strong>默认只有 <strong>200k</strong>，
+      而你选的国际模型（deepseek-v4.1-flash、hy4-preview-f）实际窗口是 1M。
+      把基准调大，压缩就来得更晚，模型记得更久。
+    </p>
+    <div id="compact-body" style="margin-top:14px"></div>
+    <div id="compact-note" style="margin-top:12px"></div>
+  </section>
+</div>
     <div data-page="switch" hidden>
   <div id="banner"></div>
   <section>
@@ -1357,6 +1372,136 @@
     });
   }
 
+  // ---------- 压缩阈值 ----------
+  //
+  // 这一页会**改客户端的环境变量**，属于会影响模型记忆行为的设置。
+  // 所以两个原则：
+  //   1. 把代价写在按钮旁边，不能让用户以为它是个无害的开关；
+  //   2. 明确说"要重启客户端才生效"——环境变量是进程启动时读的，
+  //      不说清就会有人点了发现没变化，然后来问"为什么没用"。
+  function loadCompact() {
+    var box = document.getElementById("compact-body");
+    if (!box) return;
+    clear(box);
+    box.appendChild(el("div", { class: "hint" },
+      [el("span", { class: "spinner" }), "正在读当前设置…"]));
+
+    api("/api/compact").then(renderCompact).catch(function (e) {
+      clear(box);
+      box.appendChild(el("div", { class: "note bad", text: "读取失败：" + e.message }));
+    });
+  }
+
+  function renderCompact(st) {
+    var box = document.getElementById("compact-body");
+    var note = document.getElementById("compact-note");
+    if (!box) return;
+    clear(box);
+    if (note) clear(note);
+
+    // 当前生效值 + 换算出来的触发点
+    var tiles = el("div", { class: "tiles" }, [
+      el("div", { class: "tile" }, [
+        el("div", { class: "hint", text: "当前基准窗口" }),
+        el("div", { class: "big", text: fmtTokens(st.effective) }),
+        el("div", { class: "hint",
+          text: st.set ? ("已设置（" + st.envName + "=" + st.currentValue + "）")
+                       : "未设置，走的客户端内置默认" })
+      ]),
+      el("div", { class: "tile" }, [
+        el("div", { class: "hint", text: "发消息前的压缩点" }),
+        el("div", { class: "big", text: "约 " + fmtTokens(st.triggerAtPreMessage) }),
+        el("div", { class: "hint", text: "聊到这个量左右，旧历史会被压缩" })
+      ])
+    ]);
+    box.appendChild(tiles);
+
+    // 后端发现的问题（值非法 / 超范围被 clamp）如实转告
+    if (st.note) {
+      box.appendChild(el("div", { class: "note warn", style: "margin-top:12px",
+        text: st.note }));
+    }
+
+    if (!st.available) {
+      box.appendChild(el("div", { class: "note", style: "margin-top:12px",
+        text: st.note || "当前环境不支持修改。" }));
+      return;
+    }
+
+    // 档位按钮
+    box.appendChild(el("div", { class: "hint", style: "margin-top:14px",
+      text: "选一个档位（当前值会被高亮；点一下即生效，可随时改回）" }));
+
+    var row = el("div", { class: "row", style: "margin-top:8px;flex-wrap:wrap" });
+    st.levels.forEach(function (lv) {
+      var isCur = (lv.value === 0) ? !st.set : (st.set && st.currentValue === lv.value);
+      var btn = el("button", {
+        class: isCur ? "primary" : "",
+        // 推荐档给个视觉标识，但不改变任何行为
+        text: lv.label + (lv.recommended ? " · 推荐" : "")
+      });
+      btn.disabled = isCur;
+      if (!isCur) {
+        btn.onclick = function () { applyCompact(lv, btn); };
+      }
+      row.appendChild(btn);
+    });
+    box.appendChild(row);
+
+    // 每个档的取舍
+    var descs = el("div", { class: "desc", style: "margin-top:10px" });
+    st.levels.forEach(function (lv) {
+      descs.appendChild(el("div", { text: "· " + lv.label + "：" + lv.desc }));
+    });
+    box.appendChild(descs);
+
+    // 代价与生效条件——这两条必须显眼，不能埋在说明里
+    box.appendChild(el("div", { class: "note warn", style: "margin-top:12px" }, [
+      el("b", { text: "代价：" }),
+      el("div", { text: "基准调大 = 模型记得更久，但每轮请求更大、更慢。" +
+        "它和「发消息更顺畅」是此消彼长的，按自己需要选。" })
+    ]));
+    box.appendChild(el("div", { class: "note", style: "margin-top:8px" }, [
+      el("b", { text: "必须重启客户端才生效。" }),
+      el("div", { text: "环境变量是客户端启动时读的。改完请在「切换与双开」里" +
+        "重新启动客户端一次——改之前就开着的那个不会变。" })
+    ]));
+
+    if (note) {
+      note.appendChild(el("div", { class: "hint",
+        text: "写入位置：用户环境变量 " + st.envName + "（只动这一个键，不改客户端任何文件）" }));
+    }
+  }
+
+  function applyCompact(lv, btn) {
+    var label = lv.label;
+    btn.disabled = true;
+    btn.textContent = "设置中…";
+    api("/api/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: lv.value })
+    }).then(function (st) {
+      toast("已切到 " + label + "，重启客户端后生效", "ok");
+      renderCompact(st);
+    }).catch(function (e) {
+      toast("设置失败：" + e.message, "bad");
+      btn.disabled = false;
+      btn.textContent = label + (lv.recommended ? " · 推荐" : "");
+    });
+  }
+
+  // fmtTokens 把 token 数写成"300k / 1M"这种好读的形式。
+  // 2400000 这种也要能显示，所以不是简单的除以 1000。
+  function fmtTokens(n) {
+    if (!n || n < 0) return "—";
+    if (n >= 1000000) {
+      var m = n / 1000000;
+      return (m % 1 === 0 ? m : m.toFixed(1)) + "M";
+    }
+    return Math.round(n / 1000) + "k";
+  }
+
   function fillProviderForm(p) {
     provEditing = p.id;
     document.getElementById("prov-form-title").textContent = "编辑：" + p.name;
@@ -1625,6 +1770,7 @@
     if (page === "workspace") loadWorkspace();
     if (page === "recycle") loadRecycle();
     if (page === "providers") loadProviders(true);
+    if (page === "compact") loadCompact();
     if (page === "zcode") loadZCode(false);
     if (page === "sessions") {
       var fr = document.getElementById("sessions-frame");

@@ -217,6 +217,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/recycle/scan", s.guard(s.handleRecycleScan))
 	mux.HandleFunc("/api/recycle/clean", s.guard(s.handleRecycleClean))
 	mux.HandleFunc("/api/recycle/auto", s.guard(s.handleRecycleAuto))
+	mux.HandleFunc("/api/compact", s.guard(s.handleCompactSetting))
 	mux.HandleFunc("/api/checkin", s.guard(s.handleCheckin))
 	mux.HandleFunc("/api/checkin/claim", s.guard(s.handleCheckinClaim))
 	mux.HandleFunc("/api/checkin/auto", s.guard(s.handleCheckinAuto))

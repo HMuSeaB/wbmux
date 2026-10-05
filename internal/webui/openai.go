@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -337,6 +338,15 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		s.note(ProxyLogEntry{Level: "bad", Text: "拒绝请求：" + compactError(err.Error())})
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// 临时诊断（默认关，见 dump_body_diag.go）：抓一次请求体的**结构**，
+	// 回答"图片是内联 base64 还是引用"。写成文件后立刻停用，不反复写。
+	if p := dumpOncePath(); p != "" {
+		_ = os.WriteFile(p, []byte(dumpBodyShape(raw)), 0o600)
+		_ = os.Unsetenv("WBMUX_DUMP_ONCE")
+		s.note(ProxyLogEntry{Level: "info",
+			Text: "已把请求体结构写到 " + p + "（一次性诊断，开关已自关）"})
 	}
 
 	// 路由：客户端发来的 model 决定这次转给谁——内置国际后端，还是
