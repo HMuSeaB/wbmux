@@ -523,13 +523,12 @@
     <p class="brand-sub ver" id="side-msg"
        style="min-height:16px;margin:-2px 0 0;font-size:11.5px;color:var(--ink-3)"></p>
     <nav class="nav">
-      <!-- 每日签到放第一位：它的价值全在"顺手"。
-           用户原话："最好放在第一页，这样一打开 wbmux 就签上了，而不是切换
-           到那个 tab"。**排序与自动签是两件事**——自动签在打开界面时就已经
-           发了（见 loadCheckin(true)），放第一页是为了让"今天签没签"一眼可见，
-           不用去别处找。断一天连签就归零，这种事值得摆在最上面。 -->
-      <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</div>
-      <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
+      <!-- 每日签到既是侧栏第一项，也是**默认落地页**（见下面它的 section
+           没有 hidden）。用户的原话是"一打开 wbmux 就签上了，而不是切换
+           到那个 tab"——只把它排到第一位不够，那不解决"打开看到的是别的页"。
+           断一天连签就归零，所以把"今天签没签"摆在开门第一眼。 -->
+      <div class="nav-item active" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</div>
+      <div class="nav-item" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
       <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
       <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
       <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
@@ -552,7 +551,7 @@
     </div>
   </aside>
   <main class="main">
-    <div data-page="status">
+    <div data-page="status" hidden>
   <section id="usage-sec">
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-gauge"/></svg>额度与计费</h2>
     <details class="fold" style="margin-bottom:10px">
@@ -804,7 +803,7 @@
   </section>
 
     </div>
-    <div data-page="checkin" hidden>
+    <div data-page="checkin">
   <section>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</h2>
     <p class="sub">
