@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -452,6 +453,15 @@ type State struct {
 	HostID   variant.ID      `json:"hostId"`
 	HostNote string          `json:"hostNote"`
 	CanRun   map[string]bool `json:"canRun"`
+	// Quota 是当前被限流的模型。界面据此在**顶部**提醒，见下面理由。
+	Quota []ProxyQuota `json:"quota,omitempty"`
+	// QuotaWarn 是把限流的后果说清楚的一句话。
+	//
+	// 为什么要在首屏喊一嗓子：客户端拿到 429 之后会**自己换模型**继续跑，
+	// 而国内客户端那边的备选往往是**付费**模型。用户看不到这个切换，
+	// 等发现时已经在烧钱了。wbmux 拦不住客户端的故障转移（那条路不经过
+	// 代理），能做的就是把它说破。
+	QuotaWarn string `json:"quotaWarn,omitempty"`
 }
 
 // CheckView 是 doctor 的单项结论。
@@ -508,12 +518,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	st := State{
 		Version: s.opts.Version,
 		CanRun:  map[string]bool{},
+		Quota:   s.quotaSnapshot(),
 		Settings: SettingsView{
 			Path:           cfgPath,
 			HostVariant:    cfg.HostVariant,
 			HostExe:        cfg.HostExe,
 			ExtraEndpoints: cfg.ExtraEndpoints,
 		},
+	}
+	if len(st.Quota) > 0 {
+		st.QuotaWarn = quotaWarnText(st.Quota)
 	}
 
 	// 逐档位探测安装。
@@ -678,6 +692,28 @@ func (s *Server) syncInto() (int, string, error) {
 
 	base := "http://" + s.Addr() + "/v1/chat/completions"
 	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
+
+	// 只注入"此刻还能用"的模型。
+	//
+	// 为什么要在注入前过滤：客户端**只在启动时读一次** models.json，
+	// 中途改它没用。而一旦客户端手上拿着一个额度已经耗尽的条目，
+	// 用到一半被上游 429 打回来，它就会自己换一个模型继续——
+	// 国内客户端那边的备选往往正是**付费**模型。用户的原话是
+	// "希望 hy4 额度用完时别掉进国内版付费"，所以宁可这一轮不注入，
+	// 也不要注入了之后让他不知不觉挨一刀。
+	//
+	// 状态从 gui.log 里恢复（seedFromLog），所以跨重启仍然记得。
+	var skipped []string
+	var usable []usage.LiveModel
+	for _, m := range intl {
+		if q := s.quotaFor(m.ID); q != nil && q.State != "ok" {
+			skipped = append(skipped, m.ID)
+			continue
+		}
+		usable = append(usable, m)
+	}
+	intl = usable
+
 	added, err := custommodels.Sync(path, base, s.token, intl, cfg.Providers)
 	if err != nil {
 		return 0, "", err
@@ -697,6 +733,23 @@ func (s *Server) syncInto() (int, string, error) {
 	parts := fmt.Sprintf("已注入 %d 个模型（国际免费 %d + 自备提供方 %d）", added, free, own)
 	if intlErr != "" {
 		parts += "；国际侧这一轮没注入：" + intlErr
+	}
+	if len(skipped) > 0 {
+		// 把跳过的名字与原因说清楚。
+		// "少注入了几个"这种事如果不解释，用户只会以为同步坏了。
+		var why []string
+		for _, m := range skipped {
+			if q := s.quotaFor(m); q != nil && q.UntilText != "" {
+				why = append(why, m+"（"+q.UntilText+" 恢复）")
+			} else {
+				why = append(why, m+"（额度已尽）")
+			}
+		}
+		parts += "；这 " + strconv.Itoa(len(skipped)) + " 个上一轮就被限流了，" +
+			"这轮先不注入，免得用到一半被拒、客户端自动切到付费模型：" +
+			strings.Join(why, "、")
+		s.note(ProxyLogEntry{Level: "warn",
+			Text: "跳过 " + strconv.Itoa(len(skipped)) + " 个限流中的模型：" + strings.Join(skipped, "、")})
 	}
 	if added == free {
 		// 一个自有模型都没注入：多半是还没建卡片，顺带提一句入口在哪。

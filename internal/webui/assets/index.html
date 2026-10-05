@@ -985,6 +985,33 @@
     var box = document.getElementById("banner");
     clear(box);
 
+    // 限流提醒放**最上面**，压过其它提示。
+    //
+    // 为什么值得占这个位置：客户端拿到 429 会自己换模型继续跑，
+    // 而国内客户端那边的备选常常是付费模型——这一下不经过 wbmux，
+    // 用户看不到，等发现时已经在烧钱了。wbmux 拦不住那个切换，
+    // 只能把它说破，让人有机会先手动选个认可的模型。
+    if (state.quotaWarn) {
+      var q = el("div", { class: "note bad" }, [
+        el("b", { text: "有模型被限流了，注意别掉进付费模型。" }),
+        el("div", { text: state.quotaWarn })
+      ]);
+      if (state.quota && state.quota.length) {
+        var det = el("details", { class: "fold", style: "margin-top:6px" });
+        det.appendChild(el("summary", {}, ["看看这几个的状态"]));
+        var inner = el("div", { class: "desc" });
+        state.quota.forEach(function (x) {
+          inner.appendChild(el("div", {
+            text: x.model + "：" + (x.state === "exhausted" ? "额度已尽" :
+              ("限流中" + (x.untilText ? "，" + x.untilText + " 恢复" : "")))
+          }));
+        });
+        det.appendChild(inner);
+        q.appendChild(det);
+      }
+      box.appendChild(q);
+    }
+
     if (state.hostNote) {
       box.appendChild(el("div", { class: "note bad" }, [
         el("b", { text: "找不到可用的宿主客户端。" }),

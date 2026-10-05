@@ -326,6 +326,63 @@ func (s *Server) observe(model string, status int, msg string) {
 	s.rate.items[model] = q
 }
 
+// quotaWarnText 把"限流之后会发生什么"说清楚。
+//
+// 关键不是"你被限流了"（那句客户端也会说），而是**客户端接下来会做什么**：
+// 它拿到 429 会自己换一个模型继续跑，而国内客户端那边的备选往往是
+// **付费**模型。用户看不到这次切换，等发现时已经在烧钱了。
+//
+// wbmux 拦不住这个故障转移（那条路不经过代理），能做的就是把它说破，
+// 让人有机会主动换模型，而不是被动挨一刀。
+func quotaWarnText(items []ProxyQuota) string {
+	var names, times []string
+	for _, q := range items {
+		names = append(names, q.Model)
+		if q.UntilText != "" {
+			times = append(times, q.Model+" "+q.UntilText+" 恢复")
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	s := "这些国际模型现在用不了：" + strings.Join(names, "、") + "。"
+	if len(times) > 0 {
+		s += "（" + strings.Join(times, "；") + "）"
+	}
+	// 这里不要写 Markdown 的 **强调**：这段是塞进 <div> 的纯文本，
+	// 星号会原样显示成星号。
+	s += " 客户端收到拒绝后可能自动切到别的模型继续，而国内客户端那边的" +
+		"备选常常是付费模型——这一下不走 wbmux，费用照记。要避开的话，" +
+		"先在客户端里手动选一个你认可的模型。"
+	return s
+}
+
+// quotaFor 返回某个模型当前的限流状态；没有记录（即可用）时返回 nil。
+//
+// 与 quotaSnapshot 的区别：那个是给界面列全量用的，这个是给"要不要注入"
+// 这种单点判断用的——返回 nil 而不是零值，调用方就不会把"没记录"和
+// "记录了但状态是 ok"搞混。
+func (s *Server) quotaFor(model string) *ProxyQuota {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	s.seedFromLog()
+	s.rate.mu.Lock()
+	defer s.rate.mu.Unlock()
+	q, ok := s.rate.items[model]
+	if !ok {
+		return nil
+	}
+	// 到了恢复时刻就当它已经好了——不然会一直挂着，
+	// 明明能用了却不注入。
+	if q.UntilMs > 0 && q.UntilMs <= time.Now().UnixMilli() {
+		return nil
+	}
+	cp := q
+	return &cp
+}
+
 // quotaOKSnapshot 返回"代理确认可用"的模型（排序后）。
 func (s *Server) quotaOKSnapshot() []string {
 	s.seedFromLog()

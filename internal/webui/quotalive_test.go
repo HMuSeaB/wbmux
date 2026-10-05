@@ -265,3 +265,118 @@ func TestSeedFromLogOnce(t *testing.T) {
 		t.Errorf("成功后不该被日志里的旧记录复活，得到 %+v", snap)
 	}
 }
+
+// TestQuotaForNilWhenHealthy 确认"没记录"与"限流中"分得开。
+//
+// 这是注入过滤的前提：返回 nil 表示**可以注入**。
+// 若把"没记录"也返回成零值，调用方会把所有模型都当成有问题，
+// 一个都注入不进去。
+func TestQuotaForNilWhenHealthy(t *testing.T) {
+	s := newQuotaTestServer(t)
+	if q := s.quotaFor("deepseek-v4.1-flash"); q != nil {
+		t.Errorf("没有记录的模型应返回 nil，实际 %+v", q)
+	}
+	if q := s.quotaFor(""); q != nil {
+		t.Errorf("空模型名应返回 nil，实际 %+v", q)
+	}
+}
+
+// TestQuotaForExpiredIsUsable 到了恢复时刻就该重新可用。
+//
+// 少了这一步，一个模型一旦被限流就会**永远**被挡在外面——
+// 哪怕它的额度早就恢复了。
+func TestQuotaForExpiredIsUsable(t *testing.T) {
+	s := newQuotaTestServer(t)
+
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	s.rate.items = map[string]ProxyQuota{
+		"hy4-preview-f": {Model: "hy4-preview-f", State: "rate_limited", UntilMs: past},
+	}
+	if q := s.quotaFor("hy4-preview-f"); q != nil {
+		t.Error("恢复时刻已过，应判定为可用（返回 nil）")
+	}
+
+	future := time.Now().Add(time.Hour).UnixMilli()
+	s.rate.items["hy4-preview-f"] = ProxyQuota{
+		Model: "hy4-preview-f", State: "rate_limited", UntilMs: future,
+		UntilText: "2026-10-05 02:13:38",
+	}
+	q := s.quotaFor("hy4-preview-f")
+	if q == nil {
+		t.Fatal("还在限流窗口内，应返回状态而不是 nil")
+	}
+	if q.UntilText != "2026-10-05 02:13:38" {
+		t.Errorf("恢复时刻文案没带出来：%q", q.UntilText)
+	}
+}
+
+// TestQuotaForExhaustedStaysBlocked 额度用尽（没有恢复时刻）要一直挡着。
+//
+// 与 rate_limited 的区别：那个有 UntilMs 会自己恢复，这个不会。别混为一谈。
+func TestQuotaForExhaustedStaysBlocked(t *testing.T) {
+	s := newQuotaTestServer(t)
+	s.rate.items = map[string]ProxyQuota{
+		"some-model": {Model: "some-model", State: "exhausted"},
+	}
+	q := s.quotaFor("some-model")
+	if q == nil {
+		t.Fatal("额度已尽应一直挡住")
+	}
+	if q.State != "exhausted" {
+		t.Errorf("状态不对：%q", q.State)
+	}
+}
+
+// TestQuotaForReturnsCopy 返回副本，调用方改它不该污染内部状态。
+func TestQuotaForReturnsCopy(t *testing.T) {
+	s := newQuotaTestServer(t)
+	future := time.Now().Add(time.Hour).UnixMilli()
+	s.rate.items = map[string]ProxyQuota{
+		"m": {Model: "m", State: "rate_limited", UntilMs: future},
+	}
+	q := s.quotaFor("m")
+	if q == nil {
+		t.Fatal("应返回状态")
+	}
+	q.State = "tampered"
+	if s.rate.items["m"].State != "rate_limited" {
+		t.Error("返回的是引用，调用方能改坏内部状态")
+	}
+}
+
+// TestQuotaWarnTextExplainsConsequence 提醒的重点不是"你被限流了"，
+// 而是"客户端接下来会做什么"。
+//
+// 只说前半句没用——客户端自己也会弹限流提示。真正容易被坑的是后半句：
+// 它拿到 429 会**自己换模型**继续跑，而国内客户端那边的备选常常是付费模型，
+// 这一下不走 wbmux，用户看不到。所以文案里必须有"付费"和"自动切换"两个意思。
+func TestQuotaWarnTextExplainsConsequence(t *testing.T) {
+	got := quotaWarnText([]ProxyQuota{
+		{Model: "hy4-preview-f", State: "rate_limited", UntilText: "2026-10-05 02:13:38"},
+	})
+	if got == "" {
+		t.Fatal("有限流记录时应该有提醒")
+	}
+	for _, want := range []string{"hy4-preview-f", "2026-10-05 02:13:38", "付费", "自动"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("提醒里缺 %q：\n  %s", want, got)
+		}
+	}
+
+	// 没有记录 → 不该凭空造一句提醒
+	if quotaWarnText(nil) != "" {
+		t.Error("没有限流记录时不该有提醒")
+	}
+}
+
+// TestQuotaWarnTextExhaustedHasNoTime 额度已尽没有恢复时刻，
+// 文案不能写出一个空的时间。
+func TestQuotaWarnTextExhaustedHasNoTime(t *testing.T) {
+	got := quotaWarnText([]ProxyQuota{{Model: "m", State: "exhausted"}})
+	if strings.Contains(got, "（）") || strings.Contains(got, "()") {
+		t.Errorf("额度已尽时写出了空的恢复时刻：%s", got)
+	}
+	if !strings.Contains(got, "m") {
+		t.Errorf("模型名没写进去：%s", got)
+	}
+}
