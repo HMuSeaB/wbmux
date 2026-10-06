@@ -548,6 +548,12 @@
       <button class="primary" id="btn-launch-side" hidden>
         <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>启动客户端
       </button>
+      <!-- 重启按钮：改完"要重启才生效"的设置（压缩阈值、后端配置）后，
+           用户不必自己去托盘退出再回来点启动。一直显示，因为它本身就是
+           一个完整动作，不像"启动"那样需要先选好后端。 -->
+      <button class="ghost" id="btn-restart-side">
+        <svg class="ico ico-sm" aria-hidden="true"><use href="#i-swap"/></svg>重启客户端
+      </button>
       <button class="ghost danger" id="btn-quit"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-x"/></svg>关闭界面</button>
     </div>
   </aside>
@@ -1875,6 +1881,38 @@
       if (btn) { btn.disabled = false; btn.textContent = "启动客户端"; }
       syncLaunchBtn(false);
     }).then(function () { busy = false; });
+  }
+
+  // restartClient 关掉正在运行的客户端再重新启动它。
+  //
+  // 为什么值得有个专门的按钮：压缩阈值、后端配置这类设置是客户端
+  // **启动时**才读的，改完不重启就没效果。而让用户自己去托盘退出、
+  // 再回来点「启动客户端」，他很容易在这一步以为"改了没用"。
+  //
+  // 会关掉他正在用的客户端，所以必须问一句——这可能丢掉没保存的东西。
+  function restartClient() {
+    if (busy || !target) return;
+    if (!confirm("会先关闭正在运行的客户端，再重新启动它。\n\n" +
+                 "请确认没有未保存的对话或正在跑的任务。要继续吗？")) return;
+
+    busy = true;
+    var btn = document.getElementById("btn-restart-side");
+    if (btn) { btn.disabled = true; btn.innerHTML = ICO("swap", "ico-sm") + "重启中…"; }
+
+    api("/api/restart-client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: target, native: nativeMode })
+    }).then(function (pv) {
+      renderPreview(pv);
+      var closed = pv.killed ? ("已关闭 " + pv.killed + " 个旧进程，") : "";
+      toast(closed + "已重新启动客户端（" + pv.targetName + "）。新设置这次就生效了。", "ok");
+    }).catch(function (e) {
+      toast("重启失败：" + e.message, "bad");
+    }).then(function () {
+      busy = false;
+      if (btn) { btn.disabled = false; btn.innerHTML = ICO("swap", "ico-sm") + "重启客户端"; }
+    });
   }
 
   function runDoctor() {
@@ -3308,6 +3346,7 @@
   document.getElementById("btn-quit").addEventListener("click", quit);
   // 侧边栏的启动按钮跟页面里那个是同一个动作，只是位置常驻。
   document.getElementById("btn-launch-side").addEventListener("click", launch);
+  document.getElementById("btn-restart-side").addEventListener("click", restartClient);
 
   // 工作区。读是 GET（进页面自动），写是两步 POST（先看计划、再确认执行）。
   document.getElementById("btn-ws-refresh").addEventListener("click", loadWorkspace);

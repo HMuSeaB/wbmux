@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/checkin"
+	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
@@ -189,6 +190,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/doctor", s.guard(s.handleDoctor))
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
+	mux.HandleFunc("/api/restart-client", s.guard(s.handleRestart))
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
@@ -495,6 +497,12 @@ type PreviewView struct {
 	Warnings    []string   `json:"warnings"`
 	Native      bool       `json:"native"`
 	Launched    bool       `json:"launched"`
+	// Restarted 说明这次是"先关掉旧的再启动"，而不是直接启动。
+	// 界面据此换一句提示语——用户点的是重启按钮，回话不该说"已启动"。
+	Restarted bool `json:"restarted,omitempty"`
+	// Killed 是这次关掉了几个旧进程。0 表示本来就没在跑。
+	// 报出来是为了让用户知道"它确实处理了旧的"，而不是跳过了一步。
+	Killed int `json:"killed,omitempty"`
 }
 
 // ---------- 处理函数 ----------
@@ -648,6 +656,72 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	view := toPreview(res)
 	view.Launched = true
+	writeJSON(w, view)
+}
+
+// handleRestart 关掉正在运行的客户端再重新启动它。
+//
+// # 为什么要这个按钮
+//
+// 有些设置是客户端**启动时**才读的（比如压缩阈值那个环境变量，以及
+// wbmux 生成的后端配置）。改完不重启就没效果，而让用户自己去托盘退出、
+// 再回来点「启动客户端」，既绕又不明显 —— 他很可能就在这一步以为"改了没用"。
+//
+// # 顺序不能反
+//
+// **必须先关干净、再启动**。反过来做会让新进程与旧进程抢同一个用户数据
+// 目录的锁，或者新进程被旧实例"接管"（单实例锁），结果是配置没换、
+// 界面还停在旧的上面。所以这里等 Terminate 报告进程确实没了才继续。
+//
+// # 关了但启动失败怎么办
+//
+// 如实报错，并说明"客户端已经关了"。最坏的情况是用户的客户端被关掉、
+// 新的没起来 —— 这种事必须让他立刻知道，而不是给一句"重启失败"让他
+// 自己去猜客户端还在不在。
+func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.decodeRequest(w, r)
+	if !ok {
+		return
+	}
+
+	target, err := variant.Get(req.Target)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "目标后端无效")
+		return
+	}
+
+	killed, err := clientproc.Terminate(target.WinExecutableName)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError,
+			"关闭客户端没成功："+err.Error()+"。为避免两个实例抢同一份数据，"+
+				"这一次没有重新启动，请手动在托盘退出后再点「启动客户端」。")
+		return
+	}
+	s.logf("重启客户端：已关闭 %d 个进程，准备重新启动 %s", killed, target.DisplayName)
+
+	// 关掉之后再启动。Prepare 要重新做一遍：它会重新读一遍环境与配置，
+	// 这正是我们想要新进程拿到的。
+	res, err := runner.Prepare(runner.Options{
+		Target:    req.Target,
+		Native:    req.Native,
+		ParentEnv: s.opts.ParentEnv,
+		Probe:     s.probe(),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError,
+			"客户端已经关闭，但重新启动前准备失败："+err.Error())
+		return
+	}
+	if err := res.Launch(); err != nil {
+		writeErr(w, http.StatusInternalServerError,
+			"客户端已经关闭，但重新启动失败："+err.Error())
+		return
+	}
+
+	view := toPreview(res)
+	view.Launched = true
+	view.Restarted = true
+	view.Killed = killed
 	writeJSON(w, view)
 }
 
