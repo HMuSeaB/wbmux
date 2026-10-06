@@ -101,9 +101,26 @@ func Terminate(execName string) (int, error) {
 		_ = c.Run()
 	}
 
-	time.Sleep(700 * time.Millisecond)
-	if still := pidsOf(execName); len(still) > 0 {
-		return len(pids), fmt.Errorf("还有 %d 个进程没关掉（可能被别的程序占用或需要管理员权限）", len(still))
+	// 强杀之后**不能只等一次就下结论**。
+	//
+	// 实测踩到：这里原本只 sleep 700ms 然后查一次，结果偶发报
+	// "还有 1 个进程没关掉"——进程其实正在退出，只是 tasklist 还没反映过来
+	// （tasklist 自己也要几百毫秒），而且它的退出还需要一点时间。
+	// 这种假失败很坏：调用方会因此**拒绝启动新实例**，用户看到的是
+	// "重启失败"，可客户端其实已经关掉了，等于卡在半路。
+	//
+	// 所以改成"给一段窗口、期间反复确认"：只要在窗口内观察到它没了就算成功。
+	killDeadline := time.Now().Add(5 * time.Second)
+	for {
+		if len(pidsOf(execName)) == 0 {
+			return len(pids), nil
+		}
+		if !time.Now().Before(killDeadline) {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
-	return len(pids), nil
+
+	still := pidsOf(execName)
+	return len(pids), fmt.Errorf("还有 %d 个进程没关掉（可能被别的程序占用或需要管理员权限）", len(still))
 }
