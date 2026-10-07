@@ -107,13 +107,36 @@
          padding: 0 18px 18px; flex: 1; min-height: 0; }
   /* 上：项目列表（横向一条，可左右滚） */
   #projects { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
-              padding-bottom: 4px; flex: none; }
-  #projects::-webkit-scrollbar { height: 8px; }
+              padding-bottom: 6px; flex: none;
+              /* scrollbar-width/color 是标准属性（Firefox 与新版 Chromium 认），
+                 ::-webkit-* 兜底老 Chromium。两边都写，免得换内核就没样式。 */
+              scrollbar-width: thin;
+              scrollbar-color: var(--g5) transparent; }
+  /* ⚠️ 这里**不要**加 scroll-snap-type。
+     实测（2026-10-07）：加上 `x proximity` 之后，拖动时每次设 scrollLeft
+     都被吸附回最近的卡片边界 —— 设 160 变 0、设 500 变 656，
+     表现就是"怎么拖都不动"。**吸附与自由拖动是冲突的**，
+     而这条列表要的是"随手拖到哪算哪"，选拖动。 */
+  /* 滚动条以前只设了 height、没设颜色 —— 暗底上等于隐形，
+     用户根本不知道这里能横向滚（2026-10-07 反馈"拖不动"就是这个）。
+     补上 thumb 与轨道配色，并加 hover 提亮。 */
+  #projects::-webkit-scrollbar { height: 10px; }
+  #projects::-webkit-scrollbar-track { background: var(--g1); border-radius: 5px; }
+  #projects::-webkit-scrollbar-thumb { background: var(--g5); border-radius: 5px; }
+  #projects::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+  /* 一旦内容溢出，右上角会出现"可以横向滚"的提示（见 JS 里的 has-more 类） */
+  #projects.has-more { position: relative; }
+  /* 拖动时把光标换成抓取态，并压掉文字选中。
+     没有这一步，拖动会顺手选中卡片里的文字，看起来像出错。 */
+  #projects.dragging { cursor: grabbing; }
+  #projects.dragging .proj { cursor: grabbing; }
+  #projects.dragging, #projects.dragging * { user-select: none; }
   .proj { padding: 7px 11px; border-radius: 8px; background: var(--g1);
           border: 1px solid transparent; cursor: pointer; flex: none;
-          max-width: 320px; }
+          max-width: 320px; transition: background .15s, border-color .15s; }
   .proj:hover { background: var(--g2); }
-  .proj.sel { border-color: var(--brand); background: var(--g2); }
+  /* 选中态参照 cc-switch 的会话卡片：淡色底 + 同色描边，比纯描边更有"选中"感 */
+  .proj.sel { border-color: var(--brand); background: rgba(99,179,196,.10); }
   .proj .name { font-weight: 600; font-size: 12.5px; white-space: nowrap;
                 overflow: hidden; text-overflow: ellipsis; }
   .proj .meta { color: var(--ink-3); font-size: 11px; margin-top: 1px;
@@ -125,7 +148,12 @@
   th { text-align: left; color: var(--ink-3); font-weight: 500;
        padding: 4px 8px; border-bottom: 1px solid var(--g4); white-space: nowrap; }
   td { padding: 5px 8px; border-bottom: 1px solid var(--g3); vertical-align: top; }
+  /* 行悬停给一点反馈。参照 cc-switch 的会话卡片：
+     悬停浅浅提亮，而不是整行变色——表格里整行变色会显得很吵。 */
+  tbody tr { transition: background .12s; }
+  tbody tr:hover td { background: rgba(255,255,255,.028); }
   tr.cand td { background: rgba(194, 85, 80, .07); }
+  tr.cand:hover td { background: rgba(194, 85, 80, .11); }
   td.title { word-break: break-all; }
   td.path { font-family: var(--mono); color: var(--ink-3); font-size: 11px; word-break: break-all; }
   .vb { display: inline-block; padding: 0 7px; border-radius: 9px;
@@ -337,6 +365,68 @@ function renderProjects() {
   Array.prototype.forEach.call(box.querySelectorAll(".proj"), function (el) {
     el.onclick = function () { state.sel = el.getAttribute("data-p"); renderProjects(); renderDetail(); };
   });
+  // 内容超出就打个标记，配合 CSS 让用户知道这里可以横向滚。
+  box.classList.toggle("has-more", box.scrollWidth > box.clientWidth + 4);
+}
+
+// 让项目条**好滚**。原来的问题不是滚不了，是没有任何提示、也没有顺手的滚法
+// （2026-10-07 用户反馈"右滑拖不动"）。
+//
+// 三条一起加，缺哪个都还是难用：
+//   1. 纵向滚轮 → 横向滚。鼠标滚轮天生只会纵向滚，而这条恰恰是横向的，
+//      用户"滚一下没反应"就以为坏了。这是最常见也最该加的一条。
+//   2. 按住拖动。像触屏那样拖着走，不需要精准抓到那条细滚动条。
+//   3. 到边不过冲。滚到头就停下，否则会连带把整个页面滚走。
+function wireProjectScroll() {
+  var box = document.getElementById("projects");
+  if (!box || box.__wired) return;
+  box.__wired = true;
+
+  // 1) 滚轮改横向。只处理"以纵向为主"的滚轮（deltaY），
+  //    保留本来就横向的滚（触控板左右滑）。
+  box.addEventListener("wheel", function (e) {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // 本来就是横向，交给浏览器
+    if (box.scrollWidth <= box.clientWidth) return;        // 没得滚，别拦
+    e.preventDefault();
+    box.scrollLeft += e.deltaY;
+  }, { passive: false });
+
+  // 2) 按住拖动。用 pointer 事件，鼠标与触屏一套代码。
+  //    拖动时把文字选中的默认行为压掉，否则会选出一片蓝。
+  var down = false, startX = 0, startLeft = 0, moved = false;
+  box.addEventListener("pointerdown", function (e) {
+    // 只接主键（左键 / 触屏）
+    if (e.button !== 0) return;
+    down = true; moved = false;
+    startX = e.clientX; startLeft = box.scrollLeft;
+    box.classList.add("dragging");
+  });
+  box.addEventListener("pointermove", function (e) {
+    if (!down) return;
+    var dx = e.clientX - startX;
+    // 走超过 4px 才算"拖动"，否则算点击 —— 不然点一下会变成微滚，
+    // 让"点卡片切换项目"变得很难点中。
+    if (!moved && Math.abs(dx) < 4) return;
+    moved = true;
+    box.scrollLeft = startLeft - dx;
+    e.preventDefault();
+  });
+  function endDrag(e) {
+    if (!down) return;
+    down = false;
+    box.classList.remove("dragging");
+    // 拖动过就把这次 click 吃掉，避免拖完顺手切了项目。
+    if (moved) {
+      var swallow = function (ev) { ev.stopPropagation(); ev.preventDefault(); };
+      box.addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(function () {
+        box.removeEventListener("click", swallow, { capture: true });
+      }, 0);
+    }
+  }
+  box.addEventListener("pointerup", endDrag);
+  box.addEventListener("pointerleave", endDrag);
+  box.addEventListener("pointercancel", endDrag);
 }
 
 function renderDetail() {
@@ -610,6 +700,9 @@ document.getElementById("clean").onclick = loadCleanPlan;
     state.sel = null; renderProjects(); renderDetail();
   });
 });
+// 项目条的横向滚动只绑一次（wireProjectScroll 自己有 __wired 兜底，
+// 但放这里更清楚：这是"页面级"的交互，不随每次渲染重来）。
+wireProjectScroll();
 load(false);
 </script>
 </body>

@@ -702,12 +702,22 @@ color:var(--ink);border-radius:6px;padding:4px 10px;width:200px;font-family:var(
 font-size:12.5px;margin-left:auto}
 .tools input[type=search]:focus{outline:none;border-color:var(--brand)}
 main{max-width:940px;margin:0 auto;padding:20px 22px 60px}
-.msg{border-left:3px solid var(--line);background:var(--pan);border-radius:0 8px 8px 0;
-padding:11px 15px;margin:13px 0}
-.msg.user{border-left-color:var(--user)}
-.msg.assistant{border-left-color:var(--ai)}
-.msg.env{border-left-color:var(--line);background:var(--pan2);opacity:.72}
+/* 对话气泡。样式参照 cc-switch 的会话管理（用户 2026-10-07 说那个好看）。
+   三条要点：
+     1. **左右错开** —— 用户靠右缩进、AI 靠左缩进，扫一眼就知道谁说的，
+        不必逐条去读"你 / Codex"那几个字；
+     2. **底色按角色染一层淡色**（不是整块高饱和），暗色主题下不刺眼；
+     3. 角色名用彩色，和 cc-switch 一样：用户偏绿、AI 偏蓝。 */
+.msg{border:1px solid var(--line);background:var(--pan);border-radius:10px;
+padding:11px 14px;margin:12px 0;transition:border-color .15s}
+.msg.user{margin-left:52px;background:rgba(74,157,106,.06);border-color:rgba(74,157,106,.28)}
+.msg.assistant{margin-right:52px;background:rgba(91,141,214,.06);border-color:rgba(91,141,214,.28)}
+.msg.env{border-color:var(--line);background:var(--pan2);opacity:.72;margin-left:0;margin-right:0}
 .who{font-size:12px;color:var(--ink3);margin-bottom:5px;font-weight:600;letter-spacing:.02em}
+/* 角色名上色，与底色同一套色相，强化"谁在说" */
+.msg.user .who{color:#6cc48c}
+.msg.assistant .who{color:#7aa7e0}
+.msg.env .who{color:var(--ink3)}
 .body .txt{white-space:pre-wrap;word-break:break-word;margin:0;font:13.5px/1.72 var(--mono)}
 .msg.user .body .txt{font-family:var(--sans);font-size:14px}
 .body hr{border:0;border-top:1px solid var(--line);margin:10px 0}
