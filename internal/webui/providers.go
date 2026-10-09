@@ -2,11 +2,16 @@ package webui
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 )
+
+// errAbort 表示"这次改动被业务规则拒绝"，对应的 HTTP 状态码由调用方决定
+// （400 / 404 等），不该被当成 500 内部错误。
+var errAbort = errors.New("aborted")
 
 // ---------- 自备提供方（BYOK）----------
 //
@@ -100,24 +105,26 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体无法解析："+err.Error())
 		return
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 
-	if req.Remove {
-		if strings.TrimSpace(req.ID) == "" {
-			writeErr(w, http.StatusBadRequest, "缺少 id，不知道要删哪一张")
-			return
+	// 读-改-写在 updateConfig 的锁内完成：并发保存两张卡片时，后一次不会
+	// 用旧快照把前一次刚加的卡片盖掉。
+	var notFound bool
+	var badReq string
+	err := s.updateConfig(func(cfg *config.Config) error {
+		if req.Remove {
+			if strings.TrimSpace(req.ID) == "" {
+				badReq = "缺少 id，不知道要删哪一张"
+				return errAbort
+			}
+			list, found := config.RemoveProvider(cfg.Providers, req.ID)
+			if !found {
+				notFound = true
+				return errAbort
+			}
+			cfg.Providers = list
+			return nil
 		}
-		list, found := config.RemoveProvider(cfg.Providers, req.ID)
-		if !found {
-			writeErr(w, http.StatusNotFound, "没有这张卡片（可能已经被删掉了）")
-			return
-		}
-		cfg.Providers = list
-	} else {
+
 		p := config.Provider{
 			ID:               strings.TrimSpace(req.ID),
 			Name:             strings.TrimSpace(req.Name),
@@ -140,13 +147,22 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := p.Validate(); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
+			badReq = err.Error()
+			return errAbort
 		}
 		cfg.Providers = config.UpsertProvider(cfg.Providers, p)
+		return nil
+	})
+	if err == errAbort {
+		switch {
+		case badReq != "":
+			writeErr(w, http.StatusBadRequest, badReq)
+		case notFound:
+			writeErr(w, http.StatusNotFound, "没有这张卡片（可能已经被删掉了）")
+		}
+		return
 	}
-
-	if err := config.Save(cfg); err != nil {
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -159,6 +175,7 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "已保存，但重新注入失败："+syncErr.Error())
 		return
 	}
+	cfg, _ := config.Load()
 	views := make([]providerView, 0, len(cfg.Providers))
 	for _, p := range cfg.Providers {
 		views = append(views, toView(p))

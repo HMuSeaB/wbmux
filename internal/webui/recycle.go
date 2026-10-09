@@ -141,16 +141,14 @@ func (s *Server) handleRecycleAuto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 落盘。少了这一步，用户勾上开关、关掉界面再打开，发现自己被悄悄关掉��
+	// 落盘。少了这一步，用户勾上开关、关掉界面再打开，发现自己被悄悄关掉了
 	// ——而他的原意正是"别再往回收站里塞"。设置自己会消失比没这个设置更糟。
-	cfg, err := config.Load()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "读配置失败："+err.Error())
-		return
-	}
+	// 走 updateConfig：这是"读-改-写"，与别的设置写入口并发时会互相覆盖。
 	on := req.Enabled
-	cfg.AutoCleanRecycle = &on
-	if err := config.Save(cfg); err != nil {
+	if err := s.updateConfig(func(c *config.Config) error {
+		c.AutoCleanRecycle = &on
+		return nil
+	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
 		return
 	}

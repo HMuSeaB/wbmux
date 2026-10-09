@@ -158,15 +158,8 @@ func (s *Server) handleCheckinAuto(w http.ResponseWriter, r *http.Request) {
 //
 // 与领取不同：它改的是 wbmux 自己的配置文件，不碰账号，所以不需要"点两下"。
 func (s *Server) handleAutoCheckinToggle(w http.ResponseWriter, r *http.Request) {
-	cfg, err := config.Load()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		// 只读。
-	case http.MethodPost:
+	// GET 只需读；POST 走 updateConfig 的锁，避免与别的设置写入口并发覆盖。
+	if r.Method == http.MethodPost {
 		var req struct {
 			Enabled bool `json:"enabled"`
 		}
@@ -175,14 +168,24 @@ func (s *Server) handleAutoCheckinToggle(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		on := req.Enabled
-		cfg.AutoCheckin = &on
-		if err := config.Save(cfg); err != nil {
+		if err := s.updateConfig(func(cfg *config.Config) error {
+			cfg.AutoCheckin = &on
+			return nil
+		}); err != nil {
 			writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
 			return
 		}
 		s.logf("自动签到：已%s", map[bool]string{true: "打开", false: "关闭"}[on])
-	default:
+		writeJSON(w, map[string]any{"enabled": on})
+		return
+	}
+	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET 或 POST")
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"enabled": autoCheckinOn(cfg)})

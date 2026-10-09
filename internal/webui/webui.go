@@ -101,6 +101,18 @@ type Server struct {
 	mu         sync.Mutex
 	lastActive time.Time
 
+	// cfgMu 串行化本进程内"读设置 → 改字段 → 写设置"这一整段。
+	//
+	// 为什么需要：设置文件是单份 JSON，几个写入口（提供方卡片、签到开关、
+	// 回收站开关）都是 Load→改→Save 的读-改-写。两个请求并发时，后写的会用
+	// 它读到的那份旧快照整体覆盖前者刚保存的字段——用户看到的是"刚存的卡片
+	// 又把上一个设置改回去了"。config.Save 本身是原子的，但原子只保证"不写坏
+	// 文件"，不保证"不丢更新"。
+	//
+	// 只在 webui 进程内加锁；跨进程（CLI 与界面同时改）不管——那种场景本来就
+	// 该由用户避免，而引入文件锁的成本远大于收益。
+	cfgMu sync.Mutex
+
 	// proxyLog 是代理事件的环形缓冲（见 proxylog.go），proxyMu 保护它。
 	proxyLog []ProxyLogEntry
 	proxyMu  sync.Mutex
@@ -146,6 +158,23 @@ func (s *Server) intlCred(p *variant.Probe) (usage.ProxyCredentials, error) {
 		return s.intlCredFn(p)
 	}
 	return usage.IntlProxyCredentials(p)
+}
+
+// updateConfig 在锁内完成"读设置 → 交给 fn 改 → 写回"。
+//
+// 所有会改设置的入口都该走这里，避免并发读-改-写互相覆盖（见 cfgMu 注释）。
+// fn 返回错误时不写盘，设置保持原样。
+func (s *Server) updateConfig(fn func(*config.Config) error) error {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := fn(&cfg); err != nil {
+		return err
+	}
+	return config.Save(cfg)
 }
 
 // New 构造服务端，但尚未开始监听。
