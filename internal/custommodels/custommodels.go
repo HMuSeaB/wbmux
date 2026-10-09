@@ -16,6 +16,7 @@
 package custommodels
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -59,6 +60,22 @@ func isOwned(id string) bool {
 //   - 先剥掉此前注入的旧条目（按 ownedPrefixes 识别），用户自己的条目原样保留
 //   - 国际侧只注入限时免费模型（FreeNow）：测试与日常都零成本，不盲发计费模型
 //   - 写前备份原文件（models.json.wbmux-bak），写后校验可解析
+//   - **本轮两个来源都拿不到东西时，一个字节都不写**
+//
+// # 最后那条为什么是硬规则（2026-10-09 真实事故）
+//
+// 原实现无条件走"剥旧 → 重加 → 覆盖写"。国际侧凭据在一次客户端升级/重启的
+// 瞬间不可用，`intl` 为空；用户又没建过 BYOK 卡片，`providers` 也为空。
+// 于是"剥旧"把 ~/.workbuddy/models.json 里全部 wbmux-intl-* 条目删掉，"重加"
+// 一次都没进循环、什么都没补回来，最后照样覆盖写盘——用户的自定义模型清单
+// 被原地清空，客户端里表现为"升级完模型全没了"。
+//
+// 当时的"写前备份 + 写后校验"给了一种虚假的安全感：备份只是把即将被覆盖的
+// 旧文件复制一份（对"内容变空"毫无帮助），而写后校验 Unmarshal 的是我们自己
+// Marshal 出来的字节，恒为真、永不触发。两处都拦不住这次事故。
+//
+// 所以现在的判据很直白：**没东西可注入就什么都不做**。保留旧文件里已有的
+// 注入条目，比清空它们正确得多——凭据是暂时的，条目是持久的。
 //
 // chatURL 是代理的补全端点（http://127.0.0.1:<port>/v1/chat/completions），
 // apiKey 是代理的鉴权令牌（GUI 令牌，仅本机回环有效）。
@@ -73,15 +90,40 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		}
 	}
 
+	// 先算清"这一轮到底有没有东西可注入"，再决定碰不碰文件。
+	// 只要有一个来源可用，就该照常剥旧重加（用户删了卡片、模型下线都要立刻反映）。
+	if !hasAnythingToInject(intl, providers) {
+		return 0, nil
+	}
+
+	// 读旧清单。
+	//
+	// 三种情况要分开对待：
+	//   1. 正常数组 → 原样解析，用户条目保留；
+	//   2. 存在但没有可用的条目（`null`、对象、乱码、空文件）→ 客户端升级期
+	//      实测会把文件短暂写成 `null`。此时保留原文一份 .wbmux-corrupt 供
+	//      事后查看，然后只在其上追加注入条目；
+	//   3. 文件不存在 → 新客户端，正常从空清单建。
+	//
+	// 注意 `null` 是个陷阱：它 Unmarshal 成 nil 切片**且不报错**，所以判据
+	// 不能只看 err，得显式确认"是一个 JSON 数组"（探测首个非空白字节）。
 	var list []map[string]any
+	var rawOld []byte
 	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
-		if err := json.Unmarshal(raw, &list); err != nil {
-			// 文件损坏/格式变化：不覆盖用户数据，先备份再重来
-			_ = os.Rename(modelsJSONPath, modelsJSONPath+".wbmux-corrupt")
-			list = nil
+		rawOld = raw
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			if err := json.Unmarshal(raw, &list); err != nil {
+				list = nil
+			}
 		}
 	} else if !os.IsNotExist(err) {
+		// 权限、IO 之类的真错误：报出去，别猜。
 		return 0, err
+	}
+	if list == nil && len(rawOld) > 0 {
+		// 原文留档，不参与重建——用户自己的条目因此不丢。
+		_ = os.WriteFile(modelsJSONPath+".wbmux-corrupt", rawOld, 0o644)
 	}
 
 	// 剥旧 + 保留用户条目
@@ -170,24 +212,57 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		}
 	}
 
-	// 写前备份
-	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
-		_ = os.WriteFile(modelsJSONPath+".wbmux-bak", raw, 0o644)
-	}
 	out, err := json.MarshalIndent(kept, "", "  ")
 	if err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(modelsJSONPath, out, 0o644); err != nil {
-		return 0, err
-	}
-
-	// 写后校验：必须能原样解析回来，否则客户端会丢整个自定义清单
+	// 落盘前先自检：Marshal 出来的东西必须能解析回 JSON 数组。
+	// 这是对**输出**的体检，不是对磁盘的体检，但能挡住"kept 里混进
+	// 不可序列化值"这类编程错误——真出这种事，宁可不写也不能写坏清单。
 	var check []map[string]any
 	if err := json.Unmarshal(out, &check); err != nil {
-		return 0, fmt.Errorf("写后校验失败（已恢复备份）：%w", err)
+		return 0, fmt.Errorf("拒绝写入：生成的清单无法解析回 JSON（客户端会丢整个自定义清单）：%w", err)
+	}
+
+	// 写前备份：把**当前磁盘上的**原文件留一份（不是即将写入的 out）。
+	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
+		_ = os.WriteFile(modelsJSONPath+".wbmux-bak", raw, 0o644)
+	}
+
+	// 原子写：先写同目录临时文件，再 rename 覆盖。
+	// 直接把 out 写进 models.json 的话，写到一半崩溃/断电会留下半截 JSON，
+	// 客户端读不动就等于自定义模型全丢。tmp+rename 保证"要么旧的、要么新的"。
+	// （本项目 config.Save、instance.Claim 都是这个模式，这里跟上。）
+	tmp := modelsJSONPath + ".wbmux-tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, modelsJSONPath); err != nil {
+		_ = os.Remove(tmp)
+		return 0, err
 	}
 	return added, nil
+}
+
+// hasAnythingToInject 报告这一轮是否有东西可注入。
+//
+// 判据必须与 Sync 的循环保持一致，否则会出现"它说有、但循环一条都没加"
+// 的分叉——那正是清空事故的成因。国际侧看 FreeNow（Sync 只收限时免费），
+// 自备侧看是否有非空模型名。
+func hasAnythingToInject(intl []usage.LiveModel, providers []config.Provider) bool {
+	for _, m := range intl {
+		if m.FreeNow {
+			return true
+		}
+	}
+	for _, p := range providers {
+		for _, model := range p.Models {
+			if strings.TrimSpace(model) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // displayName 官方 name 优先（如 "Deepseek-V4.1-Flash"），退回 id。
@@ -206,7 +281,8 @@ func Remove(modelsJSONPath string) (int, error) {
 	}
 	var list []map[string]any
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return 0, err
+		// 解析不动就不动它——回滚操作没有"顺手覆盖用户文件"的授权。
+		return 0, fmt.Errorf("清单无法解析，未做改动：%w", err)
 	}
 	var kept []map[string]any
 	removed := 0
@@ -218,9 +294,21 @@ func Remove(modelsJSONPath string) (int, error) {
 		}
 		kept = append(kept, m)
 	}
+	if removed == 0 {
+		return 0, nil
+	}
 	out, err := json.MarshalIndent(kept, "", "  ")
 	if err != nil {
 		return 0, err
 	}
-	return removed, os.WriteFile(modelsJSONPath, out, 0o644)
+	// 与 Sync 同样的原子写：半截文件会让客户端丢整个清单。
+	tmp := modelsJSONPath + ".wbmux-tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, modelsJSONPath); err != nil {
+		_ = os.Remove(tmp)
+		return 0, err
+	}
+	return removed, nil
 }
