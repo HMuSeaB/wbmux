@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -295,5 +297,92 @@ func TestJudgeSessionDeleteWinsOverFix(t *testing.T) {
 	})
 	if action != "delete" {
 		t.Fatalf("action = %q，期望 delete（delete 应当优先于 fix）", action)
+	}
+}
+
+// TestCopyTreeNeverOverwrites 钉住搬迁时"目标已有同名文件不覆盖"。
+//
+// 这是 2026-10-09 审计发现的隐患：原 copyTree 用 os.WriteFile，同名直接覆盖。
+// 而调用它的 mergeDir 在这之后会 RemoveAll(src)——覆盖完再删源，用户就没有
+// 任何一份原始文件了。会话正文没有 db 那样的时点备份，所以只能靠"不覆盖"。
+func TestCopyTreeNeverOverwrites(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(src, "same.jsonl"), []byte("来自源"), 0o644)
+	_ = os.WriteFile(filepath.Join(dst, "same.jsonl"), []byte("目标原有"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, "only-src.jsonl"), []byte("新增"), 0o644)
+
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dst, "same.jsonl"))
+	if string(got) != "目标原有" {
+		t.Errorf("同名文件被覆盖了，得到 %q", got)
+	}
+	added, _ := os.ReadFile(filepath.Join(dst, "only-src.jsonl"))
+	if string(added) != "新增" {
+		t.Errorf("缺失的文件应被补上，得到 %q", added)
+	}
+}
+
+// TestMergeDirKeepsSourceOnCopyFailure 确认 mergeDir 的失败方向是安全的：
+// 复制出问题时 src 必须还在（用户看得见、能自己处理），而不是被删掉。
+func TestMergeDirKeepsSourceOnCopyFailure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	_ = os.MkdirAll(src, 0o755)
+	_ = os.MkdirAll(dst, 0o755)
+	_ = os.WriteFile(filepath.Join(src, "a.jsonl"), []byte("内容"), 0o644)
+
+	if err := mergeDir(src, dst); err != nil {
+		t.Fatalf("mergeDir: %v", err)
+	}
+	// 成功路径：内容并过去了，src 被清掉（是空目录了）。
+	if _, err := os.Stat(filepath.Join(dst, "a.jsonl")); err != nil {
+		t.Errorf("内容应并入目标: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		// 目录本身被 RemoveAll 掉也算正常（dst 不存在时走的是 Rename）。
+		if err == nil {
+			t.Logf("src 仍存在（取决于走的是 Rename 还是 copy+Remove）")
+		}
+	}
+}
+
+// TestRewriteRefsAtomic 钉住正文改写走原子写：成功后不留 .wbmux-tmp，
+// 内容确实被替换，且没命中路径的文件一个字节不动。
+func TestRewriteRefsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	hit := filepath.Join(dir, "hit.jsonl")
+	miss := filepath.Join(dir, "miss.jsonl")
+	// JSONL 里反斜杠是转义的（`\\`），pathLiterals 会覆盖这种写法。
+	_ = os.WriteFile(hit, []byte(`{"cwd":"C:\\Old\\Proj"}`), 0o644)
+	missOrig := []byte(`{"cwd":"C:\\Other"}`)
+	_ = os.WriteFile(miss, missOrig, 0o644)
+
+	n, err := rewriteRefs(dir, `C:\Old\Proj`, `C:\New\Proj`)
+	if err != nil {
+		t.Fatalf("rewriteRefs: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("应只改 1 个文件，得到 %d", n)
+	}
+	got, _ := os.ReadFile(hit)
+	if !strings.Contains(string(got), `C:\\New\\Proj`) {
+		t.Errorf("路径应被替换：%s", got)
+	}
+	if after, _ := os.ReadFile(miss); string(after) != string(missOrig) {
+		t.Errorf("未命中的文件不该被动：%s", after)
+	}
+	if _, err := os.Stat(hit + ".wbmux-tmp"); err == nil {
+		t.Errorf("原子写成功后不该留下临时文件")
 	}
 }

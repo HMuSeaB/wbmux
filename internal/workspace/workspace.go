@@ -558,8 +558,21 @@ func backupDB(p *variant.Probe, id variant.ID) (string, error) {
 	return dst, nil
 }
 
+// copyTree 把 from 目录的内容复制到 to，返回复制/跳过的文件数。
+//
+// 已存在的同名文件**不覆盖**：这是"把会话目录换个 slug"这种搬迁场景，
+// 目标目录里已有的同名文件要么是同一份内容的另一个副本，要么是客户端在新
+// 目录名下先开过的会话——两种情况都以"保住目标里那份"为准。覆盖用户的
+// 会话正文没有对的理由，而且覆盖之后源文件还在（mergeDir 之后才会删），
+// 出问题连"哪份对"都说不清。
 func copyTree(from, to string) error {
-	return filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
+	_, err := copyTreeCount(from, to)
+	return err
+}
+
+func copyTreeCount(from, to string) (int, error) {
+	n := 0
+	err := filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -571,11 +584,11 @@ func copyTree(from, to string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		info, err := d.Info()
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		raw, err := os.ReadFile(path)
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
@@ -583,19 +596,41 @@ func copyTree(from, to string) error {
 		if mode == 0 {
 			mode = 0o644
 		}
-		return os.WriteFile(target, raw, mode)
+		// O_EXCL：目标已存在就跳过，绝不覆盖。
+		f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			if os.IsExist(err) {
+				return nil
+			}
+			return err
+		}
+		if _, err := f.Write(raw); err != nil {
+			f.Close()
+			_ = os.Remove(target)
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		n++
+		return nil
 	})
+	return n, err
 }
 
 // mergeDir 把 src 的内容并入 dst 后删掉 src。
 //
 // dst 已存在时按文件逐个并而不是直接失败：同一个项目换盘之后，新 slug 目录
 // 可能已经因为别的原因存在了（比如新目录名下先开过一次会话），直接并更实用。
+//
+// 顺序是"先复制成功、再删 src"：copyTree 用 O_EXCL 绝不覆盖 dst 里已有的
+// 同名文件，所以最坏情况是 dst 多出几个文件、src 原样留着（用户看得见、
+// 也删得掉），而不是"dst 被半覆盖、src 已删"两头不靠。
 func mergeDir(src, dst string) error {
 	if !dirExists(dst) {
 		return os.Rename(src, dst)
 	}
-	if err := copyTree(src, dst); err != nil {
+	if _, err := copyTreeCount(src, dst); err != nil {
 		return err
 	}
 	return os.RemoveAll(src)
@@ -628,11 +663,20 @@ func pathLiterals(p string) []string {
 }
 
 // rewriteRefs 把会话正文里的旧路径换成新路径，返回改过的文件数。
+//
+// 这里是**原地改写用户会话正文**（projects/<slug>/*.jsonl），是整个 workspace
+// 里唯一会覆盖客户端正文文件的地方。两条纪律：
+//   - 原子写：先写同目录临时文件再 rename。写到一半崩溃会留下半截 JSONL，
+//     客户端读不动就等于这个会话废了——而正文没有 db 那样的时点备份兜底。
+//   - 只在内容真的变了才写：没命中旧路径的文件原样留着，少一次覆盖少一分险。
 func rewriteRefs(dir, from, to string) (int, error) {
 	if !dirExists(dir) {
 		return 0, nil
 	}
+	// 传规范化后的路径进 replacements：Unify 统一分隔符与盘符大小写，
+	// 剩下的多种写法（转义/正斜杠/大写盘符）由 pathLiterals 在内部展开。
 	fromU, toU := Unify(from), Unify(to)
+	pairs := replacements(fromU, toU)
 	n := 0
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -646,13 +690,24 @@ func rewriteRefs(dir, from, to string) (int, error) {
 		out := s
 		// 长到短依次替换：先换 `\\` 转义形式，再换单反斜杠，最后换正斜杠，
 		// 否则短形式会把长形式切碎，留下半截路径。
-		for _, pair := range replacements(fromU, toU) {
+		for _, pair := range pairs {
 			out = strings.ReplaceAll(out, pair[0], pair[1])
 		}
 		if out == s {
 			return nil
 		}
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		info, ierr := d.Info()
+		mode := os.FileMode(0o644)
+		if ierr == nil && info.Mode().Perm() != 0 {
+			mode = info.Mode().Perm()
+		}
+		// 原子写：临时文件与目标同目录（跨盘 rename 会失败）。
+		tmp := path + ".wbmux-tmp"
+		if err := os.WriteFile(tmp, []byte(out), mode); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			_ = os.Remove(tmp)
 			return err
 		}
 		n++
@@ -662,14 +717,66 @@ func rewriteRefs(dir, from, to string) (int, error) {
 }
 
 // replacements 给出"旧路径写法 → 新路径写法"的替换对，按旧串长度降序。
+//
+// 覆盖范围必须与 pathLiterals **完全一致**：检测用 pathLiterals（说"这个
+// 文件里有旧路径"），替换用这个函数（真去改）。两者一旦不一致，就会出现
+// "计划说有 N 个文件要改、实际一个都没改"——2026-10-09 审计发现原实现
+// 正是如此：pathLiterals 含盘符大写形式，而这里只从 Unify 的小写结果生成，
+// 于是文件里写的是 `C:\...`（大写盘符，旧记录里确实存在过）时，
+// containsPath 报 true、替换却匹配不上，静默漏改。
+//
+// 现在改成"与 pathLiterals 同源枚举"，并按形态（转义/普通/正斜杠 +
+// 盘符大小写）配对，避免大小写来回翻转。
 func replacements(from, to string) [][2]string {
-	pairs := [][2]string{
-		{strings.ReplaceAll(from, `\`, `\\`), strings.ReplaceAll(to, `\`, `\\`)},
-		{from, to},
-		{strings.ReplaceAll(from, `\`, "/"), strings.ReplaceAll(to, `\`, "/")},
+	fromForms := pathLiterals(from)
+	toForms := pathLiterals(to)
+	pairs := make([][2]string, 0, len(fromForms))
+	for _, f := range fromForms {
+		for _, t := range toForms {
+			if formOf(f) != formOf(t) {
+				continue
+			}
+			pairs = append(pairs, [2]string{f, t})
+		}
 	}
+	// 长的旧串先替换，否则短形式会把长形式切碎、留下半截路径。
 	sort.SliceStable(pairs, func(i, j int) bool { return len(pairs[i][0]) > len(pairs[j][0]) })
-	return pairs
+	return dedupePairs(pairs)
+}
+
+// formOf 把一种路径写法归成"形态"标签：转义反斜杠 / 正斜杠 / 普通反斜杠，
+// 外加盘符大小写。只有形态相同的旧新写法才该配对替换。
+func formOf(s string) string {
+	switch {
+	case strings.Contains(s, `\\`):
+		return "esc" + driveCaseTag(s)
+	case strings.Contains(s, "/"):
+		return "slash" + driveCaseTag(s)
+	default:
+		return "plain" + driveCaseTag(s)
+	}
+}
+
+// driveCaseTag 区分盘符是小写还是大写（无盘符的一律算小写）。
+func driveCaseTag(s string) string {
+	if len(s) >= 1 && s[0] >= 'A' && s[0] <= 'Z' {
+		return "-upper"
+	}
+	return "-lower"
+}
+
+// dedupePairs 去掉空替换与重复项。
+func dedupePairs(pairs [][2]string) [][2]string {
+	seen := map[[2]string]bool{}
+	out := pairs[:0]
+	for _, p := range pairs {
+		if p[0] == p[1] || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 func humanBytes(b int64) string {
