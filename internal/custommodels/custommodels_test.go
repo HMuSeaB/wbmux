@@ -29,10 +29,7 @@ func TestSyncCarriesOfficialCapabilities(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
-	var list []map[string]any
-	if err := json.Unmarshal(raw, &list); err != nil {
-		t.Fatalf("写后应可解析: %v", err)
-	}
+	list := mustParse(t, raw)
 	if len(list) != 1 {
 		t.Fatalf("应有 1 条，得到 %d", len(list))
 	}
@@ -68,6 +65,8 @@ func TestSyncAddsFreeOnlyAndPreservesUserEntries(t *testing.T) {
 	path := filepath.Join(dir, "models.json")
 	user := map[string]any{"id": "gpt-5.6-sol", "vendor": "Custom", "apiKey": "user-key"}
 	old := map[string]any{"id": IDPrefix + "stale", "vendor": "Custom"}
+	// 前置文件故意用**旧版裸数组**格式：新版客户端虽已改成对象，但用户
+	// 从旧版升上来时文件还是数组，读不动就等于把用户的自定义模型弄丢。
 	_ = os.WriteFile(path, mustJSON([]map[string]any{user, old}), 0o644)
 
 	added, err := Sync(path, "http://127.0.0.1:8817/v1/chat/completions", "tok",
@@ -79,10 +78,7 @@ func TestSyncAddsFreeOnlyAndPreservesUserEntries(t *testing.T) {
 		t.Fatalf("只应注入 1 个限时免费模型，得到 %d", added)
 	}
 	raw, _ := os.ReadFile(path)
-	var list []map[string]any
-	if err := json.Unmarshal(raw, &list); err != nil {
-		t.Fatalf("写后应可解析: %v", err)
-	}
+	list := mustParse(t, raw)
 	var ids []string
 	for _, m := range list {
 		ids = append(ids, m["id"].(string))
@@ -125,6 +121,18 @@ func TestSyncMissingFileCreatesIt(t *testing.T) {
 	}
 }
 
+// mustParse 按实现的同一套解析器读回，断言它认这份内容。
+// 用它而不是就地 json.Unmarshal，是为了让测试与实现同源——
+// 断言"我们自己写出去的东西自己读得动"，这正是客户端那边会做的事。
+func mustParse(t *testing.T, raw []byte) []map[string]any {
+	t.Helper()
+	list, ok := parseModelsJSON(raw)
+	if !ok {
+		t.Fatalf("写后应可解析回清单，实际：%s", raw)
+	}
+	return list
+}
+
 // mustJSON 序列化辅助（失败直接 panic——测试前置数据坏了就该炸）。
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
@@ -159,10 +167,7 @@ func TestSyncInjectsBYOKProviders(t *testing.T) {
 	if strings.Contains(string(raw), upstreamKey) {
 		t.Fatalf("上游 key 不该出现在客户端清单里：%s", raw)
 	}
-	var list []map[string]any
-	if err := json.Unmarshal(raw, &list); err != nil {
-		t.Fatalf("写后应可解析: %v", err)
-	}
+	var list = mustParse(t, raw)
 	byID := map[string]map[string]any{}
 	for _, m := range list {
 		byID[m["id"].(string)] = m
@@ -282,10 +287,7 @@ func TestSyncRecoversFromCorruptFile(t *testing.T) {
 				}
 			}
 			raw, _ := os.ReadFile(path)
-			var list []map[string]any
-			if err := json.Unmarshal(raw, &list); err != nil {
-				t.Fatalf("写后应可解析: %v", err)
-			}
+			list := mustParse(t, raw)
 			if len(list) != 1 || list[0]["id"] != IDPrefix+"hy3" {
 				t.Errorf("应只含注入条目：%v", list)
 			}
@@ -352,4 +354,128 @@ func keysOf(m map[string]map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestSyncWritesObjectFormat 钉住写出去的顶层形状必须是 `{"models":[...]}`。
+//
+// # 为什么（2026-10-16 用户报"ds4.1 的 1M 都到不了"）
+//
+// 客户端 5.8.3 起改了 models.json 的解析器：
+//
+//	parseModelsJson = t => (!t || typeof t !== "object" || Array.isArray(t))
+//	    ? {models: []} : {models: Array.isArray(t.models) ? t.models : []}
+//
+// **裸数组会被整个当成空清单**。后果不是"少几条模型"这么轻——条目里的
+// contextWindow 与 maxInputTokens 一起丢，客户端回落到内置默认上下文
+// （实测约 300k），长会话被提前压缩。wbmux 原来写的就是裸数组。
+func TestSyncWritesObjectFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	if _, err := Sync(path, "http://x/v1/chat/completions", "tok",
+		[]usage.LiveModel{lm("hy3", true)}, nil); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		t.Fatalf("顶层必须是对象（客户端新版只认这个），实际：%s", raw)
+	}
+	// 逐字段确认形状，别只嗅首字符。
+	var doc struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("应能按 {models:[...]} 解析：%v", err)
+	}
+	if len(doc.Models) != 1 || doc.Models[0]["id"] != IDPrefix+"hy3" {
+		t.Errorf("models 里应是注入条目：%v", doc.Models)
+	}
+}
+
+// TestSyncReadsLegacyArrayFormat 旧版裸数组仍要读得动。
+//
+// 用户从旧客户端升上来时，磁盘上的文件还是数组——读不动就等于把用户的
+// 自定义模型条目弄丢（它们是我们"保留"而不是"重写"的那部分）。
+func TestSyncReadsLegacyArrayFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	legacy := []map[string]any{
+		{"id": "gpt-5.6-sol", "vendor": "Custom", "apiKey": "user-key"},
+		{"id": IDPrefix + "stale", "vendor": "Custom"},
+	}
+	_ = os.WriteFile(path, mustJSON(legacy), 0o644) // 裸数组
+
+	added, err := Sync(path, "http://x/v1/chat/completions", "tok",
+		[]usage.LiveModel{lm("hy3", true)}, nil)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("应注入 1 条，得到 %d", added)
+	}
+	list := mustParse(t, mustRead(t, path))
+	var hasUser, hasStale, hasNew bool
+	for _, m := range list {
+		switch m["id"] {
+		case "gpt-5.6-sol":
+			hasUser = true
+			if m["apiKey"] != "user-key" {
+				t.Errorf("用户条目的 key 被改了：%v", m)
+			}
+		case IDPrefix + "stale":
+			hasStale = true
+		case IDPrefix + "hy3":
+			hasNew = true
+		}
+	}
+	if !hasUser {
+		t.Error("用户自己的条目必须保留")
+	}
+	if hasStale {
+		t.Error("旧的注入条目应被替换掉")
+	}
+	if !hasNew {
+		t.Error("新注入条目缺失")
+	}
+	// 读进来是数组，写出去应变成对象——升一次就迁移。
+	if !strings.HasPrefix(strings.TrimSpace(string(mustRead(t, path))), "{") {
+		t.Error("写回时应已迁移成对象格式")
+	}
+}
+
+// TestParseModelsJSONBothFormats 解析器两种形状都要认，坏内容要如实报 false。
+func TestParseModelsJSONBothFormats(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		ok   bool
+		n    int
+	}{
+		{"旧版裸数组", `[{"id":"a"},{"id":"b"}]`, true, 2},
+		{"新版对象", `{"models":[{"id":"a"}]}`, true, 1},
+		{"新版空清单", `{"models":[]}`, true, 0},
+		{"null", `null`, false, 0},
+		{"空文件", ``, false, 0},
+		{"对象但没有 models", `{"foo":1}`, false, 0},
+		{"模型不是数组", `{"models":"x"}`, false, 0},
+		{"乱码", `{oops`, false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := parseModelsJSON([]byte(c.in))
+			if ok != c.ok {
+				t.Fatalf("ok = %v，期望 %v", ok, c.ok)
+			}
+			if ok && len(got) != c.n {
+				t.Errorf("条数 = %d，期望 %d", len(got), c.n)
+			}
+		})
+	}
+}
+
+// mustRead 读文件，失败直接炸。
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读 %s: %v", path, err)
+	}
+	return raw
 }

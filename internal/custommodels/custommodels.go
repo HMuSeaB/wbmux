@@ -31,6 +31,23 @@ import (
 // 绝不动用户自己加的自定义模型。
 const IDPrefix = "wbmux-intl-"
 
+// modelsDoc 是 models.json 的**新版**文档形状。
+//
+// 客户端 5.8.3 起，解析器要求顶层是对象：
+//
+//	parseModelsJson = t => (!t || typeof t !== "object" || Array.isArray(t))
+//	    ? {models: []} : {models: Array.isArray(t.models) ? t.models : []}
+//
+// 也就是说**裸数组会被当成空清单**。后果不是"少几条模型"，而是
+// `contextWindow` / `maxInputTokens` 一起丢，客户端回落到内置默认上下文
+// （实测约 300k），用户看到"ds4.1 的 1M 都到不了"、长会话被提前压缩。
+//
+// 这里只用 Models 一个字段：`availableModels` 是客户端运行时的状态，
+// 由它自己填，不是我们该写的配置项。
+type modelsDoc struct {
+	Models []map[string]any `json:"models"`
+}
+
 // ownedPrefixes 是所有属于 wbmux 的条目前缀。
 //
 // 两个来源（借国际账号的免费模型、自备提供方）用不同前缀区分，代理靠它
@@ -96,27 +113,16 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		return 0, nil
 	}
 
-	// 读旧清单。
+	// 读旧清单。两种格式都认（新版对象 / 旧版裸数组）——见 parseModelsJSON。
 	//
-	// 三种情况要分开对待：
-	//   1. 正常数组 → 原样解析，用户条目保留；
-	//   2. 存在但没有可用的条目（`null`、对象、乱码、空文件）→ 客户端升级期
-	//      实测会把文件短暂写成 `null`。此时保留原文一份 .wbmux-corrupt 供
-	//      事后查看，然后只在其上追加注入条目；
-	//   3. 文件不存在 → 新客户端，正常从空清单建。
-	//
-	// 注意 `null` 是个陷阱：它 Unmarshal 成 nil 切片**且不报错**，所以判据
-	// 不能只看 err，得显式确认"是一个 JSON 数组"（探测首个非空白字节）。
+	// 读不出清单时（空文件、`null`、乱码）留一份原文 `.wbmux-corrupt` 供事后
+	// 查看，然后当作"没有旧清单"继续：注入照做，用户条目由客户端自己的
+	// 那份文件兜着。
 	var list []map[string]any
 	var rawOld []byte
 	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
 		rawOld = raw
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) > 0 && trimmed[0] == '[' {
-			if err := json.Unmarshal(raw, &list); err != nil {
-				list = nil
-			}
-		}
+		list, _ = parseModelsJSON(raw)
 	} else if !os.IsNotExist(err) {
 		// 权限、IO 之类的真错误：报出去，别猜。
 		return 0, err
@@ -212,16 +218,30 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		}
 	}
 
-	out, err := json.MarshalIndent(kept, "", "  ")
+	// 写出去的格式是**对象** `{"models":[...]}`：客户端 5.8.3 起只认这个
+	// （裸数组会被它的解析器当成空清单扔掉，见上面读旧清单的注释）。
+	// 对象格式对旧版客户端也读得动（旧版直接读 `.models` 或整份当数组与否
+	// 都不影响——实测旧版就是按数组读的，所以这里两头兼顾靠的是"读时都认、
+	// 写时用新格式"）。
+	doc := modelsDoc{Models: kept}
+	if doc.Models == nil {
+		// 空清单也写成 `[]` 而不是 `null`：客户端对 `null` 的容忍度未知，
+		// 而空数组是明确的"没有自定义模型"。
+		doc.Models = []map[string]any{}
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return 0, err
 	}
-	// 落盘前先自检：Marshal 出来的东西必须能解析回 JSON 数组。
+	// 落盘前先自检：Marshal 出来的东西必须能解析回 `{"models":[...]}`。
 	// 这是对**输出**的体检，不是对磁盘的体检，但能挡住"kept 里混进
 	// 不可序列化值"这类编程错误——真出这种事，宁可不写也不能写坏清单。
-	var check []map[string]any
+	var check modelsDoc
 	if err := json.Unmarshal(out, &check); err != nil {
 		return 0, fmt.Errorf("拒绝写入：生成的清单无法解析回 JSON（客户端会丢整个自定义清单）：%w", err)
+	}
+	if len(check.Models) != len(kept) {
+		return 0, fmt.Errorf("拒绝写入：写前 %d 条、回读 %d 条，数量对不上", len(kept), len(check.Models))
 	}
 
 	// 写前备份：把**当前磁盘上的**原文件留一份（不是即将写入的 out）。
@@ -279,10 +299,10 @@ func Remove(modelsJSONPath string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var list []map[string]any
-	if err := json.Unmarshal(raw, &list); err != nil {
+	list, ok := parseModelsJSON(raw)
+	if !ok {
 		// 解析不动就不动它——回滚操作没有"顺手覆盖用户文件"的授权。
-		return 0, fmt.Errorf("清单无法解析，未做改动：%w", err)
+		return 0, fmt.Errorf("清单无法解析，未做改动")
 	}
 	var kept []map[string]any
 	removed := 0
@@ -297,7 +317,10 @@ func Remove(modelsJSONPath string) (int, error) {
 	if removed == 0 {
 		return 0, nil
 	}
-	out, err := json.MarshalIndent(kept, "", "  ")
+	if kept == nil {
+		kept = []map[string]any{}
+	}
+	out, err := json.MarshalIndent(modelsDoc{Models: kept}, "", "  ")
 	if err != nil {
 		return 0, err
 	}
@@ -311,4 +334,40 @@ func Remove(modelsJSONPath string) (int, error) {
 		return 0, err
 	}
 	return removed, nil
+}
+
+// parseModelsJSON 解析 models.json，**两种格式都认**：
+//
+//	{"models":[...]}  客户端 5.8.3 起的格式（写出去一律用这个）
+//	[...]             旧格式，老客户端与旧文件
+//
+// 返回 ok=false 表示这份内容不是可用的清单（空文件、`null`、乱码、对象但
+// models 不是数组）。调用方据此决定"当空清单重建"还是"别碰它"——两条路径
+// 的取舍不同，所以这里不替调用方决定，只如实回答"能不能解析出清单"。
+//
+// `null` 是个陷阱：它能 Unmarshal 成 nil 切片**且不报错**，所以判据不能只
+// 看 err，得先看首字节。
+func parseModelsJSON(raw []byte) ([]map[string]any, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	switch trimmed[0] {
+	case '[':
+		var list []map[string]any
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, false
+		}
+		return list, true
+	case '{':
+		var doc modelsDoc
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return nil, false
+		}
+		if doc.Models == nil {
+			return nil, false
+		}
+		return doc.Models, true
+	}
+	return nil, false
 }
