@@ -542,3 +542,45 @@ func TestQuitInNormalMode(t *testing.T) {
 		t.Error("默认模式下应当在收到请求后关闭服务")
 	}
 }
+
+// TestChatMarksUpstream5xxAsUpstreamFault 上游自己挂掉（5xx）时，日志要
+// 标成"上游故障"而不是笼统的"拒绝"。
+//
+// 为什么值得单列：429/400 是用户侧的（该换模型 / 请求本身不对），5xx 是
+// 上游侧的——用户什么都不用改，等它恢复即可。混在一起都标 bad，用户会以为
+// 是自己哪里配错了（2026-10-15 用户看到 step-5-preview 报 500 就问
+// "是不是我哪里弄坏了"）。
+func TestChatMarksUpstream5xxAsUpstreamFault(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"code":50000,"msg":"internal error","displayMsg":{"zh":"服务暂时异常，请稍后重试。"}}`)
+	}))
+	defer up.Close()
+
+	var logs []string
+	srv := newProxyForTest(t, up.URL, &logs)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"wbmux-intl-x","messages":[{"role":"user","content":"x"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("上游 500 应原样透传，得到 %d", rec.Code)
+	}
+	// 断言界面真正取到的那份数据（proxyLogSnapshot），而不是另造一个接缝——
+	// 界面问"这条算什么"时看的就是这个 Level。
+	snap := srv.proxyLogSnapshot()
+	if len(snap) == 0 {
+		t.Fatal("应留下代理日志")
+	}
+	if got := snap[0].Level; got != "warn" {
+		t.Errorf("上游 5xx 应标成 warn，得到 %q", got)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "上游故障") {
+		t.Errorf("日志文案应说明这是上游故障，实际：%s", joined)
+	}
+	if !strings.Contains(joined, "服务暂时异常") {
+		t.Errorf("日志应带上上游的可读说明，实际：%s", joined)
+	}
+}

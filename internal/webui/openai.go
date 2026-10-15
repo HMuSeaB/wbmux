@@ -427,10 +427,19 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route ups
 		// 透传上游的真实状态码，而不是一律 502：502 等于告诉客户端
 		// "网关挂了"，客户端会据此触发模型故障转移，把用户的问题
 		// 从"模型名不对"带偏成"后端不稳"。
-		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
+		//
+		// 日志里把**上游 5xx** 和其余拒绝分开：429 是"你的额度/频率"
+		// （用户侧，该换模型或等恢复），400 是"请求本身不对"（用户侧），
+		// 而 5xx 是"上游自己挂了"——等它恢复即可，用户什么都不用改。
+		// 混在一起都标成 bad，用户会以为是自己哪里配错了，反复重试。
+		level, verdict := "bad", "拒绝"
+		if resp.StatusCode >= 500 {
+			level, verdict = "warn", "上游故障"
+		}
+		s.note(ProxyLogEntry{Level: level, Model: route.Model, Tools: up.Tools,
 			MS: time.Since(started).Milliseconds(),
-			Text: fmt.Sprintf("被%s拒绝 model=%s 上游 HTTP %d: %s",
-				route.Label, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
+			Text: fmt.Sprintf("被%s%s model=%s 上游 HTTP %d: %s",
+				route.Label, verdict, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
 		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 		return
 	}

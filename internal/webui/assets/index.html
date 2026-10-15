@@ -433,6 +433,7 @@
   .log-text { word-break: break-all; color: var(--ink); }
   .log-ok .log-text   { color: var(--ok); }
   .log-bad .log-text  { color: var(--bad); }
+  .log-warn .log-text { color: var(--warn); }
   .log-info .log-text { color: var(--ink-2); }
   /* ---- 提供方（BYOK）表单 ---- */
   /* 表单控件独立写一套：这里此前只有 checkbox，没有文本输入。 */
@@ -1296,13 +1297,18 @@
     var box = document.getElementById("log-body");
     clear(box);
     var list = res.entries || [];
-    var ok = 0, bad = 0;
+    var ok = 0, bad = 0, up = 0;
     list.forEach(function (e) {
       if (e.level === "ok") ok++;
+      else if (e.level === "warn") up++;
       else if (e.level === "bad") bad++;
     });
+    // 摘要里把"上游故障"单列出来：它是唯一一类"用户什么都不用改、
+    // 等对方恢复就行"的失败。混在"失败 N"里，用户会以为是自己配错了
+    // 而反复重试（2026-10-15 用户看到 step-5-preview 报 500 就是这么问的）。
     document.getElementById("log-summary").textContent = list.length
       ? "最近 " + list.length + " 条 · 成功 " + ok + " · 失败 " + bad
+        + (up ? " · 上游故障 " + up : "")
       : "";
 
     if (!list.length) {
