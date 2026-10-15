@@ -1022,10 +1022,15 @@
         det.appendChild(el("summary", {}, ["看看这几个的状态"]));
         var inner = el("div", { class: "desc" });
         state.quota.forEach(function (x) {
-          inner.appendChild(el("div", {
-            text: x.model + "：" + (x.state === "exhausted" ? "额度已尽" :
-              ("限流中" + (x.untilText ? "，" + x.untilText + " 恢复" : "")))
-          }));
+          var desc;
+          if (x.state === "exhausted") {
+            desc = "额度已尽（要充值，不会自己恢复）";
+          } else if (x.state === "upstream_error") {
+            desc = "上游故障（对方服务端 5xx，重试或换模型即可）";
+          } else {
+            desc = "限流中" + (x.untilText ? "，" + x.untilText + " 恢复" : "");
+          }
+          inner.appendChild(el("div", { text: x.model + "：" + desc }));
         });
         det.appendChild(inner);
         q.appendChild(det);
@@ -2957,7 +2962,7 @@
     // **只统计有观测源的那一侧（国际）**。本机代理只转发国际模型，国内侧
     // 没有观测源、永远显示"未验证"——把它计入"N 个未验证"会让这个数字
     // 恒等于国内侧的数量，既没信息量又像是出了问题。
-    var usable = 0, blocked = 0, unknown = 0, soonest = 0, cnUnverified = 0;
+    var usable = 0, blocked = 0, unknown = 0, soonest = 0, cnUnverified = 0, faulted = 0;
     free.forEach(function (f) {
       var q = byModel[f.id];
       if (q && q.state === "exhausted") { blocked++; return; }
@@ -2966,16 +2971,21 @@
         if (q.untilMs && (!soonest || q.untilMs < soonest)) soonest = q.untilMs;
         return;
       }
+      // 上游故障（5xx）：不算"被限"——限流是等/充值，这是对方挂了、重试即可。
+      if (q && q.state === "upstream_error") { faulted++; return; }
       if (f.side !== "intl") { cnUnverified++; return; }
       if (okSet[f.id]) { usable++; return; }
       unknown++;   // 国际侧但代理还没见它成功过
     });
 
     var verdict, cls;
-    if (blocked) {
+    if (blocked || faulted) {
       cls = usable || unknown ? "warn" : "bad";
       verdict = (usable ? usable + " 个可用 · " : "") +
-        (unknown ? unknown + " 个待验证 · " : "") + blocked + " 个被限";
+        (unknown ? unknown + " 个待验证 · " : "") +
+        (blocked ? blocked + " 个被限" : "") +
+        (blocked && faulted ? " · " : "") +
+        (faulted ? faulted + " 个上游故障" : "");
     } else if (unknown) {
       cls = "info";
       verdict = usable ? usable + " 个可用 · " + unknown + " 个待验证"
@@ -3013,6 +3023,11 @@
           ? countdown(q.untilMs) + "后可恢复（" + fmtClock(q.untilMs) + "）"
           : "被限流中，等重置";
         title = q.message || "";
+      } else if (q && q.state === "upstream_error") {
+        // 上游 5xx：**不是用户的错**，重试或换模型即可。文案要说清这一点，
+        // 否则看到"故障"第一反应还是"我哪儿配错了"。
+        icon = "pulse"; icoCls = "warn"; stateText = "上游故障，可重试";
+        title = (q.message || "") + "\n（上游服务端的问题，与你的配置/额度无关；重试或换一个模型）";
       } else if (f.side === "intl" && okSet[f.id]) {
         icon = "check"; icoCls = "ok"; stateText = "可用";
       } else if (f.side !== "intl") {
@@ -3046,7 +3061,12 @@
     if (blocked) {
       card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
         text: "「被限」是免费额度用完了，等它恢复即可（不影响账号），期间换上面可用的模型。" +
+          (faulted ? "「上游故障」是对方服务端的问题（5xx），重试或换模型即可，你这边不用改任何东西。" : "") +
           (unknown ? "「未验证」表示这些模型最近没被用过，点「一键测试」可以现场验一次。" : "") }));
+    } else if (faulted) {
+      card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+        text: "「上游故障」是对方服务端的问题（HTTP 5xx），与你的配置和额度都无关——" +
+          "重试一次通常就好，或者先换上面标「可用」的模型。" }));
     } else if (unknown) {
       card.appendChild(el("div", { class: "hint", style: "margin-top:8px",
         text: "「未验证」表示本机代理最近没见它成功过（刚重启也会这样）；" +

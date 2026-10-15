@@ -90,7 +90,7 @@ func TestLooksExhausted(t *testing.T) {
 }
 
 // TestObserveTracksOnlyRateLimit 只有 429 才算"被限"，成功要清零。
-func TestObserveTracksOnlyRateLimit(t *testing.T) {
+func TestObserveTracksRateLimitAndUpstreamFault(t *testing.T) {
 	s := newQuotaTestServer(t)
 
 	// 429 + 恢复时刻 → rate_limited 且带 UntilMs
@@ -115,15 +115,36 @@ func TestObserveTracksOnlyRateLimit(t *testing.T) {
 		t.Errorf("额度用尽那条不对：%+v", snap[1])
 	}
 
-	// 非 429 的错误不该被当成限流（400 模型名不对、500 上游故障）
+	// 400（模型名不对）不该被当成限流——那是调用方的错，报成限流会把排查带偏。
 	s.observe("gpt-6-astra", http.StatusBadRequest, "当前模型不可用")
-	s.observe("gpt-6-astra", http.StatusInternalServerError, "boom")
 	if len(s.quotaSnapshot()) != 2 {
-		t.Errorf("非 429 不该被记为限流：%+v", s.quotaSnapshot())
+		t.Errorf("400 不该被记为限流：%+v", s.quotaSnapshot())
+	}
+
+	// 但 5xx **要**单独记一笔（upstream_error）：那是上游自己挂了，
+	// 跟用户的配置/额度都无关。之前这里一律忽略，导致上游抽风在面板上
+	// 毫无痕迹（2026-10-15 用户连撞 4 次 step-5-preview 的 500 才发现）。
+	s.observe("step-5-preview", http.StatusInternalServerError, "服务暂时异常，请稍后重试。")
+	snap = s.quotaSnapshot()
+	var fault *ProxyQuota
+	for i := range snap {
+		if snap[i].Model == "step-5-preview" {
+			fault = &snap[i]
+		}
+	}
+	if fault == nil {
+		t.Fatalf("上游 5xx 应留下状态：%+v", snap)
+	}
+	if fault.State != "upstream_error" || fault.UntilMs != 0 {
+		t.Errorf("5xx 状态应为 upstream_error 且没有恢复时刻：%+v", *fault)
+	}
+	if len(snap) != 3 {
+		t.Errorf("应有 3 条状态（2 限流 + 1 上游故障），得到 %d", len(snap))
 	}
 
 	// 成功要清掉状态——否则模型恢复了面板还一直报限流。
 	s.observe("deepseek-v4.1-flash", http.StatusOK, "")
+	s.observe("step-5-preview", http.StatusOK, "")
 	snap = s.quotaSnapshot()
 	if len(snap) != 1 || snap[0].Model != "hy4-preview-f" {
 		t.Errorf("成功后应只剩 hy4 那条，得到 %+v", snap)
@@ -131,6 +152,7 @@ func TestObserveTracksOnlyRateLimit(t *testing.T) {
 
 	// 空模型名不该留下一堆空键。
 	s.observe("", http.StatusTooManyRequests, "x")
+	s.observe("", http.StatusInternalServerError, "x")
 	if len(s.quotaSnapshot()) != 1 {
 		t.Errorf("空模型名不该记账：%+v", s.quotaSnapshot())
 	}
@@ -175,6 +197,9 @@ func TestParseQuotaLog(t *testing.T) {
 		`2026-09-29 19:00:00  被国际后端拒绝 model=gpt-6-astra 上游 HTTP 429: Credits exhausted`,
 		`2026-09-29 19:01:00  被国际后端拒绝 model=glm-5.3 上游 HTTP 400: 当前模型不可用`,
 		`2026-09-29 19:02:00  转发失败 model=kimi-k3 经国际后端：dial tcp: timeout`,
+		// 上游故障：文案是"上游故障"而不是"拒绝"（2026-10-15 起区分），
+		// 恢复时也要认出来——重启不该把"它刚挂过"这件事丢掉。
+		`2026-09-29 19:03:00  被国际后端上游故障 model=step-5-preview 上游 HTTP 500: 服务暂时异常，请稍后重试。`,
 		"",
 	}, "\n")
 	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
@@ -211,6 +236,12 @@ func TestParseQuotaLog(t *testing.T) {
 		if _, ok := got[m]; ok {
 			t.Errorf("%s 不该被当成限流：%+v", m, got[m])
 		}
+	}
+	// 但 5xx 要恢复成 upstream_error（没有任何恢复时刻）。
+	if sf, ok := got["step-5-preview"]; !ok {
+		t.Error("上游 5xx 应从日志恢复成 upstream_error")
+	} else if sf.State != "upstream_error" || sf.UntilMs != 0 {
+		t.Errorf("step-5-preview 状态不对：%+v", sf)
 	}
 }
 
@@ -378,5 +409,74 @@ func TestQuotaWarnTextExhaustedHasNoTime(t *testing.T) {
 	}
 	if !strings.Contains(got, "m") {
 		t.Errorf("模型名没写进去：%s", got)
+	}
+}
+
+// TestBlocksInjectionOnlyForQuotaProblems 钉住"谁该阻止注入"这条界线。
+//
+// 配额类（限流 / 额度用尽）会持续一段时间，客户端握着这样一个条目会在
+// 用到一半被拒后自动切到付费模型——所以跳过注入。
+// 上游 5xx 是瞬时的（实测 step-5-preview 那天 48 成功 / 4 失败），
+// 为几次抖动把整个免费模型撤掉不划算，所以照常注入、面板如实标注。
+func TestBlocksInjectionOnlyForQuotaProblems(t *testing.T) {
+	cases := []struct {
+		state string
+		want  bool
+	}{
+		{"rate_limited", true},
+		{"exhausted", true},
+		{"upstream_error", false},
+		{"ok", false},
+	}
+	for _, c := range cases {
+		if got := (ProxyQuota{State: c.state}).BlocksInjection(); got != c.want {
+			t.Errorf("State=%q BlocksInjection() = %v，期望 %v", c.state, got, c.want)
+		}
+	}
+}
+
+// TestQuotaForStillReturnsUpstreamFault 上游故障仍要能被单点查询到——
+// 界面靠它显示"上游故障，可重试"，不能因为"不阻止注入"就把它藏起来。
+func TestQuotaForStillReturnsUpstreamFault(t *testing.T) {
+	s := newQuotaTestServer(t)
+	s.observe("step-5-preview", http.StatusInternalServerError, "服务暂时异常")
+	q := s.quotaFor("step-5-preview")
+	if q == nil {
+		t.Fatal("上游故障应能被 quotaFor 查到")
+	}
+	if q.State != "upstream_error" {
+		t.Errorf("状态不对：%+v", *q)
+	}
+	if q.BlocksInjection() {
+		t.Error("上游故障不该阻止注入")
+	}
+}
+
+// TestQuotaWarnTextSeparatesUpstreamFault 上游故障的措辞必须与"被限"分开。
+//
+// 混在一起会把人引到错误方向：被限是"等重置/充值"，上游故障是"重试就好"。
+func TestQuotaWarnTextSeparatesUpstreamFault(t *testing.T) {
+	// 只有上游故障：不该出现"收到拒绝后可能自动切到付费模型"那套限流措辞。
+	only := quotaWarnText([]ProxyQuota{{Model: "step-5-preview", State: "upstream_error"}})
+	if only == "" {
+		t.Fatal("上游故障也该有提示")
+	}
+	if strings.Contains(only, "被限") || strings.Contains(only, "付费模型") {
+		t.Errorf("上游故障的文案不该套用限流措辞：%s", only)
+	}
+	if !strings.Contains(only, "5xx") || !strings.Contains(only, "重试") {
+		t.Errorf("应说明是 5xx 且重试即可：%s", only)
+	}
+
+	// 两类同时存在：两段都要在，且各自说各自的。
+	both := quotaWarnText([]ProxyQuota{
+		{Model: "deepseek-v4.1-flash", State: "rate_limited", UntilText: "2026-10-15 23:00:00"},
+		{Model: "step-5-preview", State: "upstream_error"},
+	})
+	if !strings.Contains(both, "deepseek-v4.1-flash") || !strings.Contains(both, "step-5-preview") {
+		t.Errorf("两类都要提到：%s", both)
+	}
+	if !strings.Contains(both, "付费模型") {
+		t.Errorf("限流那段仍要说清故障转移到付费模型的风险：%s", both)
 	}
 }

@@ -39,10 +39,15 @@ import (
 type ProxyQuota struct {
 	// Model 是还原后的官方模型名（如 deepseek-v4.1-flash）。
 	Model string `json:"model"`
-	// State：ok / rate_limited / exhausted。
+	// State：ok / rate_limited / exhausted / upstream_error。
 	//
 	//   - rate_limited：频率/用量超限，**等到 UntilMs 就恢复**；
-	//   - exhausted：额度用尽，**不会自己恢复**，要充值（上游不给我们恢复时刻）。
+	//   - exhausted：额度用尽，**不会自己恢复**，要充值（上游不给我们恢复时刻）；
+	//   - upstream_error：上游自己挂了（5xx），**跟用户无关，重试/换模型即可**。
+	//     与限流的区别是处置方式：限流要等或充值，这个是对方的问题。
+	//     2026-10-15 加：step-5-preview 反复顶 500，之前面板对此**一言不发**
+	//     （observe 故意忽略非 429），用户只能在客户端里看见一句报错，
+	//     以为自己哪里配错了。
 	State string `json:"state"`
 	// UntilMs 是预计恢复时刻（毫秒）。仅 rate_limited 且上游给了时刻时非 0。
 	UntilMs int64 `json:"untilMs,omitempty"`
@@ -243,25 +248,35 @@ func parseQuotaLog(path string, now int64) quotaSeed {
 			ok[model] = true
 			continue
 		}
-		// 只认"被上游拒绝且是 429"。转发失败（网络）不是配额状态，
-		// 「收到请求」是在途，都不能改判断。
-		if !strings.Contains(line, "拒绝") {
+		// 只认"被上游拒绝/顶回来且带状态码"的两种：429（限流）与 5xx（上游故障）。
+		// 转发失败（网络）不是配额状态，「收到请求」是在途，都不能改判断。
+		//
+		// 两种文案都要认：429 写的是"被…拒绝"，5xx 写的是"被…上游故障"
+		// （2026-10-15 起区分开，见 openai.go forwardChat）。
+		if !strings.Contains(line, "拒绝") && !strings.Contains(line, "上游故障") {
 			continue
 		}
 		h := logHTTPRe.FindStringSubmatch(line)
-		if h == nil || h[1] != "429" {
+		if h == nil {
 			continue
 		}
 		msg := h[2]
-		q := ProxyQuota{Model: model, Message: cutStr(compactError(msg), 300)}
-		if looksExhausted(msg) {
-			q.State = "exhausted"
-		} else {
-			q.State = "rate_limited"
-			q.UntilMs, q.UntilText = parseResetAt(msg)
+		if h[1] == "429" {
+			q := ProxyQuota{Model: model, Message: cutStr(compactError(msg), 300)}
+			if looksExhausted(msg) {
+				q.State = "exhausted"
+			} else {
+				q.State = "rate_limited"
+				q.UntilMs, q.UntilText = parseResetAt(msg)
+			}
+			q.SeenMs = now
+			state[model] = q
+			continue
 		}
-		q.SeenMs = now
-		state[model] = q
+		if code, err := strconv.Atoi(h[1]); err == nil && code >= 500 {
+			state[model] = ProxyQuota{Model: model, State: "upstream_error",
+				SeenMs: now, Message: cutStr(compactError(msg), 300)}
+		}
 	}
 
 	var out quotaSeed
@@ -309,21 +324,33 @@ func (s *Server) observe(model string, status int, msg string) {
 		s.rate.seen[model] = true
 		return
 	}
-	// 只有 429 才是"限流"；其它错误（400 模型名不对、500 上游故障）
-	// 报成限流会把排查带偏。
-	if status != http.StatusTooManyRequests {
+	// 只有 429 是"限流"；400（模型名不对）报成限流会把排查带偏。
+	//
+	// 但 **5xx 要单独记一笔**：那是上游自己挂了，跟用户的配置/额度都无关，
+	// 等它恢复或换个模型就行。之前这里一律 return，结果上游抽风在面板上
+	// 毫无痕迹（2026-10-15 用户连着撞了 4 次 step-5-preview 的 500，
+	// 面板始终显示"可用"，只能靠翻日志才发现）。
+	if status == http.StatusTooManyRequests {
+		q := ProxyQuota{Model: model, SeenMs: time.Now().UnixMilli(),
+			Message: cutStr(compactError(msg), 300)}
+		if looksExhausted(msg) {
+			q.State = "exhausted"
+		} else {
+			q.State = "rate_limited"
+			q.UntilMs, q.UntilText = parseResetAt(msg)
+		}
+		s.rate.items[model] = q
 		return
 	}
-
-	q := ProxyQuota{Model: model, SeenMs: time.Now().UnixMilli(),
-		Message: cutStr(compactError(msg), 300)}
-	if looksExhausted(msg) {
-		q.State = "exhausted"
-	} else {
-		q.State = "rate_limited"
-		q.UntilMs, q.UntilText = parseResetAt(msg)
+	if status >= 500 {
+		// 没有恢复时刻——上游不给，也不该编一个。成功后由 observe(200) 清掉。
+		s.rate.items[model] = ProxyQuota{
+			Model:   model,
+			State:   "upstream_error",
+			SeenMs:  time.Now().UnixMilli(),
+			Message: cutStr(compactError(msg), 300),
+		}
 	}
-	s.rate.items[model] = q
 }
 
 // quotaWarnText 把"限流之后会发生什么"说清楚。
@@ -334,34 +361,62 @@ func (s *Server) observe(model string, status int, msg string) {
 //
 // wbmux 拦不住这个故障转移（那条路不经过代理），能做的就是把它说破，
 // 让人有机会主动换模型，而不是被动挨一刀。
+//
+// 上游 5xx（upstream_error）**要分开说**：它不是配额问题，处置也不同
+// （重试即可，不用等也不用充值）。混进"被限"那段会把用户引到错误的方向。
 func quotaWarnText(items []ProxyQuota) string {
-	var names, times []string
+	var names, times, faulted []string
 	for _, q := range items {
+		if q.State == "upstream_error" {
+			faulted = append(faulted, q.Model)
+			continue
+		}
 		names = append(names, q.Model)
 		if q.UntilText != "" {
 			times = append(times, q.Model+" "+q.UntilText+" 恢复")
 		}
 	}
-	if len(names) == 0 {
-		return ""
+	var parts []string
+	if len(names) > 0 {
+		// 这里不要写 Markdown 的 **强调**：这段是塞进 <div> 的纯文本，
+		// 星号会原样显示成星号。
+		s := "这些国际模型现在用不了：" + strings.Join(names, "、") + "。"
+		if len(times) > 0 {
+			s += "（" + strings.Join(times, "；") + "）"
+		}
+		s += " 客户端收到拒绝后可能自动切到别的模型继续，而国内客户端那边的" +
+			"备选常常是付费模型——这一下不走 wbmux，费用照记。要避开的话，" +
+			"先在客户端里手动选一个你认可的模型。"
+		parts = append(parts, s)
 	}
-	s := "这些国际模型现在用不了：" + strings.Join(names, "、") + "。"
-	if len(times) > 0 {
-		s += "（" + strings.Join(times, "；") + "）"
+	if len(faulted) > 0 {
+		parts = append(parts, "上游服务端刚才对 "+strings.Join(faulted, "、")+
+			" 报过 5xx（与你的配置和额度无关）。这种一般是瞬时的，重试即可；"+
+			"面板上的状态会在它下次成功后自动清掉。")
 	}
-	// 这里不要写 Markdown 的 **强调**：这段是塞进 <div> 的纯文本，
-	// 星号会原样显示成星号。
-	s += " 客户端收到拒绝后可能自动切到别的模型继续，而国内客户端那边的" +
-		"备选常常是付费模型——这一下不走 wbmux，费用照记。要避开的话，" +
-		"先在客户端里手动选一个你认可的模型。"
-	return s
+	return strings.Join(parts, " ")
 }
 
-// quotaFor 返回某个模型当前的限流状态；没有记录（即可用）时返回 nil。
+// BlocksInjection 报告这条状态是否该让 wbmux **停止把它注入**国内客户端。
+//
+// 只有"配额类"问题才阻止注入：限流（等到点自愈）与额度用尽（要充值）。
+// 理由是这两者都**会持续一段时间**——客户端手上如果握着这样一个条目，
+// 用到一半被上游拒，它会自己换个模型继续，而国内侧的备选常常是付费模型，
+// 用户会不知不觉挨一刀。
+//
+// 上游故障（5xx）**不阻止注入**：它是瞬时的。实测 step-5-preview 在
+// 2026-10-15 那天 48 次成功 / 4 次 500，也就是九成以上是好的；为了那几次
+// 抖动就把这个免费模型整个从客户端撤掉，代价比"偶尔重试一次"大得多。
+// 面板会如实显示"上游故障，可重试"，把选择权留给用户。
+func (q ProxyQuota) BlocksInjection() bool {
+	return q.State == "rate_limited" || q.State == "exhausted"
+}
+
+// quotaFor 返回某个模型当前的状态；没有记录（即可用）时返回 nil。
 //
 // 与 quotaSnapshot 的区别：那个是给界面列全量用的，这个是给"要不要注入"
 // 这种单点判断用的——返回 nil 而不是零值，调用方就不会把"没记录"和
-// "记录了但状态是 ok"搞混。
+// "记录了但状态是 ok"搞混。调用方要判断该不该因此跳过，用 BlocksInjection。
 func (s *Server) quotaFor(model string) *ProxyQuota {
 	model = strings.TrimSpace(model)
 	if model == "" {

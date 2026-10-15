@@ -807,10 +807,13 @@ func (s *Server) syncInto() (int, string, error) {
 	// 也不要注入了之后让他不知不觉挨一刀。
 	//
 	// 状态从 gui.log 里恢复（seedFromLog），所以跨重启仍然记得。
+	//
+	// 只有**配额类**问题才跳过注入（限流 / 额度用尽）；上游 5xx 这种瞬时
+	// 故障照常注入——见 ProxyQuota.BlocksInjection 的注释。
 	var skipped []string
 	var usable []usage.LiveModel
 	for _, m := range intl {
-		if q := s.quotaFor(m.ID); q != nil && q.State != "ok" {
+		if q := s.quotaFor(m.ID); q != nil && q.BlocksInjection() {
 			skipped = append(skipped, m.ID)
 			continue
 		}
