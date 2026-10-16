@@ -498,6 +498,9 @@
   .q-name { font-size: 13px; color: var(--ink); overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; }
   .q-meta { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+  /* 快到期（<7 天）时把这行标黄。只改字色、不加底色：这一行本身很小，
+     加底色会把整行压得更沉，反而不如字色明显。 */
+  .q-meta.warn-text { color: var(--warn); }
   .q-state { font-size: 12px; color: var(--ink-2); text-align: right;
              white-space: nowrap; }
   .q-state.ok   { color: var(--ok); }
@@ -3088,7 +3091,8 @@
         icon = "pulse"; icoCls = "dim"; stateText = "未验证";
       }
       var meta = [];
-      if (f.until) meta.push("免费至 " + shortDate(f.until));
+      var expiring = f.until && expiringSoon(f.until);
+      if (f.until) meta.push(freeUntil(f.until));
       if (f.label && !f.until) meta.push(f.label);
       card.appendChild(el("div", { class: "q-row", title: title }, [
         // 图标 + 来源标签同在第一列：`.q-row` 是写死的三列 grid，
@@ -3100,7 +3104,12 @@
         ]),
         el("div", { class: "q-main" }, [
           el("div", { class: "q-name", text: prettyModel(f.id), title: f.id }),
-          meta.length ? el("div", { class: "q-meta", text: meta.join(" · ") }) : null
+          // 快到期的那条标黄：活动是整批换的，看漏一个就突然少一个能用
+          // 的模型，而这类"还有几天"的信息不主动说出来没人会去算。
+          meta.length ? el("div", {
+            class: "q-meta" + (expiring ? " warn-text" : ""),
+            text: meta.join(" · ")
+          }) : null
         ]),
         el("span", { class: "q-state " + icoCls, text: stateText })
       ]));
@@ -3144,6 +3153,49 @@
     if (s.length < 10) return s;
     var now = new Date().getFullYear() + "-";
     return s.slice(0, 5) === now ? s.slice(5) : s;
+  }
+
+  // daysLeft 算"还有几天到期"，返回 null 表示算不出来或已经过了。
+  //
+  // 为什么单独写一个、不复用 countdown：`countdown` 是**分钟/小时**级的
+  // （给限流恢复用的），拿它算一个 10 天后的活动会得到"239 小时 30 分"，
+  // 反而看不出紧迫感。这里要的是"还剩 10 天"这种人话。
+  //
+  // 按**自然日**算而不是 24 小时整倍数：用户关心的是"到那天就没得用了"，
+  // 不是"还有 239 小时"。所以先把两个时刻都归到当天零点再相减。
+  function daysLeft(iso) {
+    var s = String(iso || "");
+    if (s.length < 10) return null;
+    // 只取日期部分（时区偏移那个 "+08:00" 在这里没意义，见下）。
+    var parts = s.slice(0, 10).split("-");
+    if (parts.length !== 3) return null;
+    var end = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (isNaN(end.getTime())) return null;
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.round((end - today) / 86400000);
+    return days;
+  }
+
+  // freeUntil 把到期日渲染成"还剩 N 天"或"今天最后一天"。
+  //
+  // 为什么值得专门渲染：这几个免费模型是按活动批次换的（2026-10-16 实测
+  // step-5-preview 只剩 10 天，另外两个到 11-01）。只写"免费至 10-26"
+  // 要用户自己心算还剩几天——而"还剩 3 天"和"还剩 30 天"是完全不同的决策
+  // 信息（前者该考虑换模型了）。所以把剩余天数直接算出来。
+  function freeUntil(iso) {
+    var d = daysLeft(iso);
+    if (d === null) return "免费至 " + shortDate(iso);
+    if (d < 0) return "已到期（" + shortDate(iso) + "）";
+    if (d === 0) return "今天最后一天";
+    if (d === 1) return "明天到期";
+    return shortDate(iso) + " 到期 · 还剩 " + d + " 天";
+  }
+
+  // 剩不到 7 天时标黄——够提前换模型，又不至于天天示警导致麻木。
+  function expiringSoon(iso) {
+    var d = daysLeft(iso);
+    return d !== null && d >= 0 && d < 7;
   }
 
   function renderUsage() {
@@ -3348,7 +3400,9 @@
         box.appendChild(el("div", { class: "note warn", style: "margin:4px 0",
           text: "· " + (p.label || "优惠活动") + "：" + (p.textZh || "") +
                 " · 适用 " + ((p.modelIds || []).map(function (m) { return prettyModel(m); }).join("、") || "全模型") +
-                (p.validUntil ? " · 至 " + p.validUntil.slice(0, 10) : "") }));
+                // 同样算剩余天数——活动文案里的官方日期是英文缩写（"Sep 11 – Oct 31"），
+                // 光看原文得自己折算。
+                (p.validUntil ? " · " + freeUntil(p.validUntil) : "") }));
       });
       (lv.packages || []).slice(0, 6).forEach(function (p) {
         var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
