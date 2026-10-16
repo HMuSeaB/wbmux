@@ -138,3 +138,51 @@ func TestLiveUpstreamStream(t *testing.T) {
 		t.Errorf("SSE 数据行被改动了：%s", cutStr(text, 300))
 	}
 }
+
+// TestLiveUpstreamIdentityHeaders 覆盖"渠道校验"这条路径的两种客户端。
+//
+// 2026-10-16 上游加了一道校验：请求缺一整套身份头就回
+// HTTP 400 code 11128 "conversation id missing"。官方客户端本来每次都带齐，
+// 但 wbmux 早先只带 4 个头，于是注入的模型集体报"没通过渠道校验"。
+//
+//	情形一（官方客户端）：它自己带的头必须被原样转发上去。
+//	情形二（第三方 OpenAI 客户端）：一个身份头都没有，靠 wbmux 补齐。
+//
+// 两个都得能过——否则"接自己的 key/第三方工具"那条用法就废了。
+func TestLiveUpstreamIdentityHeaders(t *testing.T) {
+	srv := liveGuard(t)
+
+	const cid = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	convHeaders := []string{
+		"X-Conversation-ID", "X-Parent-Conversation-ID", "X-Session-ID",
+		"X-Conversation-Request-ID", "X-Conversation-Message-ID",
+		"X-Request-ID", "X-Root-Request-ID", "X-Trace-ID",
+	}
+
+	cases := []struct {
+		name   string
+		withID bool
+	}{
+		{"官方客户端（自带身份头）", true},
+		{"第三方客户端（靠 wbmux 补）", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+				strings.NewReader(livePayload(false)))
+			if c.withID {
+				for _, h := range convHeaders {
+					req.Header.Set(h, cid)
+				}
+			}
+			rec := httptest.NewRecorder()
+			srv.handleOpenAIChat(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("状态码 %d（渠道校验没过？）：%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "choices") {
+				t.Errorf("响应里没有 choices：%s", rec.Body.String())
+			}
+		})
+	}
+}

@@ -584,3 +584,94 @@ func TestChatMarksUpstream5xxAsUpstreamFault(t *testing.T) {
 		t.Errorf("日志应带上上游的可读说明，实际：%s", joined)
 	}
 }
+
+// TestWithIdentityHeadersForwarded 客户端带的身份头要原样转发。
+//
+// 这些是**真实的会话标识**，上游可能拿它们做上下文关联——转发时必须
+// 保真，不能被我们换成自己生成的 id。
+func TestWithIdentityHeadersForwarded(t *testing.T) {
+	const cid = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	in := http.Header{}
+	for _, h := range requiredIdentityHeaders {
+		in.Set(h, cid)
+	}
+	in.Set("X-Agent-Intent", "craft")
+	in.Set("X-IDE-Name", "WorkBuddy")
+
+	out := map[string]string{}
+	withIdentityHeaders(in, out)
+
+	for _, h := range requiredIdentityHeaders {
+		if out[h] != cid {
+			t.Errorf("%s 应原样转发，得到 %q", h, out[h])
+		}
+	}
+	if out["X-Agent-Intent"] != "craft" || out["X-IDE-Name"] != "WorkBuddy" {
+		t.Errorf("可选头也应转发：%v", out)
+	}
+}
+
+// TestWithIdentityHeadersFillsMissing 客户端没带时要补齐必需的整套。
+//
+// 缺一个就 400（实测），所以第三方 OpenAI 客户端（不知道这套头）
+// 也必须能通过——否则"接自己的工具用"这条用法直接废掉。
+func TestWithIdentityHeadersFillsMissing(t *testing.T) {
+	out := map[string]string{}
+	withIdentityHeaders(http.Header{}, out)
+
+	for _, h := range requiredIdentityHeaders {
+		v := out[h]
+		if v == "" {
+			t.Errorf("%s 必须被补上", h)
+		}
+		// UUID v4 形态：8-4-4-4-12。上游对格式是否敏感没把握，
+		// 生成得像一点，别再赌一次。
+		if len(v) != 36 || strings.Count(v, "-") != 4 {
+			t.Errorf("%s 补的值不像 UUID：%q", h, v)
+		}
+	}
+	// 可选头**不**凭空造：X-Agent-Intent 是枚举词、X-IDE-Version 是版本号，
+	// 编假值既没意义又可能污染上游统计。
+	for _, h := range optionalIdentityHeaders {
+		if _, ok := out[h]; ok {
+			t.Errorf("可选头 %s 不该凭空虚造", h)
+		}
+	}
+}
+
+// TestWithIdentityHeadersPartialFill 部分缺失时：有的照抄，没的补。
+func TestWithIdentityHeadersPartialFill(t *testing.T) {
+	const cid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	in := http.Header{}
+	in.Set("X-Conversation-ID", cid) // 只带这一个
+
+	out := map[string]string{}
+	withIdentityHeaders(in, out)
+
+	if out["X-Conversation-ID"] != cid {
+		t.Errorf("客户端给的值必须保留，得到 %q", out["X-Conversation-ID"])
+	}
+	if out["X-Session-ID"] == "" || out["X-Session-ID"] == cid {
+		t.Errorf("其余缺失的应补成新的 id，得到 %q", out["X-Session-ID"])
+	}
+}
+
+// TestWithIdentityHeadersNeverForwardsAuth 绝不能把客户端的 Authorization 转上去。
+//
+// 客户端那枚令牌是发给**本机代理**的（wbmux 的 GUI 令牌），拿它去请求上游
+// 只会 401；上游要的凭据是 wbmux 从认证文件读出来另行设置的。
+func TestWithIdentityHeadersNeverForwardsAuth(t *testing.T) {
+	in := http.Header{}
+	in.Set("Authorization", "Bearer local-gui-token")
+	in.Set("Host", "127.0.0.1:8811")
+	in.Set("Content-Length", "123")
+
+	out := map[string]string{}
+	withIdentityHeaders(in, out)
+
+	for _, k := range []string{"Authorization", "Host", "Content-Length"} {
+		if _, ok := out[k]; ok {
+			t.Errorf("%s 不该被转发（白名单之外），得到 %q", k, out[k])
+		}
+	}
+}

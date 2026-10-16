@@ -3,6 +3,7 @@ package webui
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -312,6 +313,105 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- 上游的"渠道校验"要求的那套身份头 ----------
+//
+// 2026-10-16 上游加了一道渠道校验：请求缺了这套头就回
+//
+//	HTTP 400 {"code":11128,"msg":"conversation id missing",
+//	          "displayTips":{"zh":"这次调用没通过渠道校验，可能不是官方客户端发出的。"}}
+//
+// 实测（同一凭据、同一模型，只改头）：
+//
+//	整套 8 个 conversation 头 → 200；任意 2~4 个 → 400；
+//	只有 agent/IDE 那族       → 400
+//
+// 也就是说它要的是**完整的一套**——真客户端每次都带齐，少一个就露馅。
+//
+// # 为什么 wbmux 要自己补
+//
+// 官方客户端本来会在请求里带这串头（`app.asar.unpacked/cli/dist/
+// codebuddy-lite-wb.mjs` 里 `yc.*_HEADER` 的赋值，见下面 identityHeaders）。
+// 但 wbmux 转发时**只带 Authorization / X-User-Id / X-Product / User-Agent**，
+// 其余一概丢掉，于是注入的模型集体报"渠道校验不过"。
+//
+// 取值原则：**客户端发来的优先**。那是它真实的会话/请求标识，上游可能拿它
+// 做上下文关联，编一个假的会把关联打断。只有客户端没带（比如第三方 OpenAI
+// 客户端，它们不知道这套头）才补一个合法的随机 id——补是为了让这类用法
+// 也能用，不是为了让请求看起来像官方发的。
+// identityHeaders 分两类，处置不同：
+//
+//   - required：**实测必需要有的**。客户端没带就补一个随机 UUID——
+//     它们全都是"这次调用的标识"，UUID 形态与真值一致。
+//   - optional：官方请求里有、但实测单独缺了也能过校验。只做透传，
+//     **不凭空造**：像 X-Agent-Intent 是 `craft` 这种枚举词、X-IDE-Version
+//     是版本号，编一个假值既没意义又可能误导上游的统计。
+var (
+	requiredIdentityHeaders = []string{
+		"X-Conversation-ID",
+		"X-Parent-Conversation-ID",
+		"X-Session-ID",
+		"X-Conversation-Request-ID",
+		"X-Conversation-Message-ID",
+		"X-Request-ID",
+		"X-Root-Request-ID",
+		"X-Trace-ID",
+	}
+	optionalIdentityHeaders = []string{
+		"X-Agent-Intent",
+		"X-Agent-Type",
+		"X-Agent-Purpose",
+		"X-IDE-Type",
+		"X-IDE-Name",
+		"X-IDE-Version",
+		"X-Product-Version",
+		"X-Model-ID",
+	}
+)
+
+// withIdentityHeaders 把身份头补进 headers：客户端带了的照抄，必需品没带的补一个。
+//
+// 只认上面白名单里的名字——**不能无脑透传客户端的所有头**，因为其中包括
+// Authorization（那是客户端给本机代理的令牌，不该发给上游）、Content-Length、
+// Host 这类由 HTTP 栈自己管的头。白名单比黑名单安全：将来客户端新增一个
+// 我们没见过的头，最坏是少带一个，而不是把不该发的发出去。
+func withIdentityHeaders(in http.Header, out map[string]string) {
+	for _, name := range optionalIdentityHeaders {
+		if v := strings.TrimSpace(in.Get(name)); v != "" {
+			out[name] = v
+		}
+	}
+	// 缺的必需头补齐。整族缺位时共用同一个 id：上游只校验"在不在"，
+	// 而同一个请求用同一个标识在语义上也对。
+	fallback := ""
+	for _, name := range requiredIdentityHeaders {
+		if v := strings.TrimSpace(in.Get(name)); v != "" {
+			out[name] = v
+			continue
+		}
+		if fallback == "" {
+			fallback = newRequestID()
+		}
+		out[name] = fallback
+	}
+}
+
+// newRequestID 生成一个 UUID v4 形态的随机 id。
+//
+// 用 UUID 而不是"wbmux-1"这种：上游对格式是否敏感没有把握，而真客户端的
+// 这些头是 UUID（另外 X-Agent-Intent 等是短枚举词，见下）。宁可生成得像
+// 一点，也别在这上面再赌一次。
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// 随机源不可用极罕见；退化成时间戳。宁可格式差也不留空——
+		// 空值正是上游判"缺失"的依据。
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // 版本 4
+	b[8] = (b[8] & 0x3f) | 0x80 // 变体 10xx
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 // handleOpenAIChat 转发聊天补全。上游只支持流式，所以统一以流式
 // 请求上游：调用方要非流式就聚合，要流式就边收边转发。
 func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +486,9 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	}
 	headers["Accept"] = "text/event-stream"
 	headers["Content-Type"] = "application/json"
+	// 身份头必须和凭据一起带上，否则上游的渠道校验会直接 400（见
+	// withIdentityHeaders 的说明）。放在最后，避免上面的产品头被顶掉。
+	withIdentityHeaders(r.Header, headers)
 
 	out, err := json.Marshal(up.Body)
 	if err != nil {
