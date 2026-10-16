@@ -11,3 +11,8 @@ import "fmt"
 func Terminate(execName string) (int, error) {
 	return 0, fmt.Errorf("当前平台不支持关闭客户端进程（客户端只有 Windows 版）")
 }
+
+// TerminateAny 在非 Windows 平台同样不支持，理由见 Terminate。
+func TerminateAny(execNames ...string) (int, error) {
+	return 0, fmt.Errorf("当前平台不支持关闭客户端进程（客户端只有 Windows 版）")
+}

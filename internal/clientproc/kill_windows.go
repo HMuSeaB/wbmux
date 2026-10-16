@@ -32,6 +32,11 @@ func hideWindow(cmd *exec.Cmd) {
 }
 
 // pidsOf 列出某镜像名的所有 PID。
+//
+// 匹配用**精确相等**而不是前缀：`WorkBuddy` 是 `WorkBuddyAI` 的子串，
+// 前缀匹配会让"关国内版"顺手把国际版也列进来（反之亦然）。两个客户端
+// 可以同时开着，各用各的数据目录——误杀另一个等于把用户没在用的那个
+// 也关了，而它的界面和会话状态就白丢了。
 func pidsOf(execName string) []string {
 	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+execName, "/NH", "/FO", "CSV")
 	hideWindow(cmd)
@@ -43,18 +48,35 @@ func pidsOf(execName string) []string {
 	// CSV 每行形如 "WorkBuddy.exe","1234","Console","1","123,456 K"
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(strings.ToLower(line), strings.ToLower(`"`+execName+`"`)) {
+		fields := splitCSV(line)
+		if len(fields) < 2 {
 			continue
 		}
-		fields := strings.Split(line, `","`)
-		if len(fields) >= 2 {
-			pid := strings.Trim(strings.TrimSpace(fields[1]), `"`)
-			if pid != "" && pid != "0" {
-				pids = append(pids, pid)
-			}
+		if !strings.EqualFold(fields[0], execName) {
+			continue
+		}
+		if fields[1] != "" && fields[1] != "0" {
+			pids = append(pids, fields[1])
 		}
 	}
 	return pids
+}
+
+// splitCSV 拆 tasklist 的一行 CSV，去掉每个字段外层的引号。
+//
+// tasklist 的 CSV 不接受逗号以外的转义，这里够用；
+// **但要注意"没有匹配结果"时它不输出 CSV**，而是一句
+// "信息: 没有运行的任务匹配指定标准。" —— 那种行拆出来字段数不足，
+// 上面按 len(fields) 拦住即可。
+func splitCSV(line string) []string {
+	if line == "" {
+		return nil
+	}
+	parts := strings.Split(line, `","`)
+	for i := range parts {
+		parts[i] = strings.Trim(parts[i], `"`)
+	}
+	return parts
 }
 
 // Terminate 关掉某个客户端的所有进程。
@@ -62,41 +84,68 @@ func pidsOf(execName string) []string {
 // 返回"确实关掉了几个进程"。一个都没关到也算成功——用户可能自己已经关了，
 // 那种情况下调用方应该照常重新启动。
 func Terminate(execName string) (int, error) {
-	if !strings.HasSuffix(strings.ToLower(execName), ".exe") {
-		execName += ".exe"
-	}
+	return terminateByNames([]string{execName})
+}
 
-	pids := pidsOf(execName)
-	if len(pids) == 0 {
+// TerminateAny 关掉**正在运行的任意一个**客户端，返回关掉了几个进程。
+//
+// # 为什么需要它（2026-10-16 的真实故障）
+//
+// 「重启客户端」这个按钮的语义是"把我正在用的那个重启一下"，但实现是拿
+// **目标后端**的可执行名去 tasklist 里找。只要用户点的后端与实际在跑的
+// 那个不一致，就会"已关闭 0 个进程"——进程没关，新实例又被单实例锁挡住，
+// 表现成"点了重启但什么都没变"（用户原话："面板里面的重启根本没用"）。
+//
+// 而两个名字长得很像（`WorkBuddy` / `WorkBuddyAI`）正是最容易踩的雷：
+// 用户从界面上看不出自己点的是哪个后端，更看不出进程名对不上。
+//
+// 所以这里改成"按实际在跑的那个关"：把两侧的名字都试一遍，谁在跑关谁。
+// 返回顺序固定（调用方传进来的顺序），保证行为可预期。
+func TerminateAny(execNames ...string) (int, error) {
+	return terminateByNames(execNames)
+}
+
+// target 是一个"待关闭的进程"：它的镜像名 + PID。
+//
+// 记下镜像名是为了后面重试时按**原名**再查一次——不能拿别的名字去查，
+// 那会把另一个客户端的 PID 也算进来。
+type target struct{ name, pid string }
+
+func terminateByNames(candidates []string) (int, error) {
+	// 逐个候选名收集 PID，并记住"每个 PID 是用哪条规则找到的"——
+	// 后面重试时要按**原位图名**再查一次，不能拿别的名字去查
+	// （那会把另一个客户端的 PID 也算进来）。
+	var targets []target
+	for _, raw := range candidates {
+		name := raw
+		if !strings.HasSuffix(strings.ToLower(name), ".exe") {
+			name += ".exe"
+		}
+		for _, pid := range pidsOf(name) {
+			targets = append(targets, target{name: name, pid: pid})
+		}
+	}
+	if len(targets) == 0 {
 		return 0, nil
 	}
 
 	// 第一轮：不带 /F，相当于"请它自己退"。/T 带上整棵进程树。
-	// 用 /PID 逐个指定，避免 /IM 把同名进程全杀光（用户可能同时开了
-	// 国内版和国际版，名字不同，但保险起见按 PID 更精确）。
-	for _, pid := range pids {
-		c := exec.Command("taskkill", "/T", "/PID", pid)
+	// 用 /PID 逐个指定，避免 /IM 把同名进程全杀光。
+	for _, t := range targets {
+		c := exec.Command("taskkill", "/T", "/PID", t.pid)
 		hideWindow(c)
 		_ = c.Run()
 	}
 
 	// 给它一点时间落盘。客户端退出时要写会话文件和设置，
 	// 太急会正好打断这个过程。
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(pidsOf(execName)) == 0 {
-			return len(pids), nil
-		}
-		time.Sleep(400 * time.Millisecond)
+	if waitGone(targets, 6*time.Second) {
+		return len(targets), nil
 	}
 
 	// 第二轮：还不走就强杀。这一步会丢未落盘的内容，所以放最后。
-	left := pidsOf(execName)
-	if len(left) == 0 {
-		return len(pids), nil
-	}
-	for _, pid := range left {
-		c := exec.Command("taskkill", "/F", "/T", "/PID", pid)
+	for _, t := range aliveOf(targets) {
+		c := exec.Command("taskkill", "/F", "/T", "/PID", t.pid)
 		hideWindow(c)
 		_ = c.Run()
 	}
@@ -110,17 +159,50 @@ func Terminate(execName string) (int, error) {
 	// "重启失败"，可客户端其实已经关掉了，等于卡在半路。
 	//
 	// 所以改成"给一段窗口、期间反复确认"：只要在窗口内观察到它没了就算成功。
-	killDeadline := time.Now().Add(5 * time.Second)
-	for {
-		if len(pidsOf(execName)) == 0 {
-			return len(pids), nil
+	if waitGone(targets, 5*time.Second) {
+		return len(targets), nil
+	}
+
+	left := aliveOf(targets)
+	return len(targets), fmt.Errorf("还有 %d 个进程没关掉（可能被别的程序占用或需要管理员权限）", len(left))
+}
+
+// aliveOf 报告这批目标里还有哪些活着。
+//
+// 按**它自己的镜像名**重新查一次再比对 PID，而不是直接查名字计数：
+// 同名进程可能在我们动手期间被用户新开一个，那不是我们的目标。
+func aliveOf(targets []target) []target {
+	live := map[string]bool{}
+	for _, t := range targets {
+		live[t.name] = true
+	}
+	now := map[string]map[string]bool{}
+	for name := range live {
+		set := map[string]bool{}
+		for _, pid := range pidsOf(name) {
+			set[pid] = true
 		}
-		if !time.Now().Before(killDeadline) {
-			break
+		now[name] = set
+	}
+	var out []target
+	for _, t := range targets {
+		if now[t.name][t.pid] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// waitGone 在 window 时间内反复确认这批 PID 都没了。
+func waitGone(targets []target, window time.Duration) bool {
+	deadline := time.Now().Add(window)
+	for {
+		if len(aliveOf(targets)) == 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-
-	still := pidsOf(execName)
-	return len(pids), fmt.Errorf("还有 %d 个进程没关掉（可能被别的程序占用或需要管理员权限）", len(still))
 }

@@ -170,6 +170,22 @@ func All() []Backend {
 	return []Backend{backends[CN], backends[Intl]}
 }
 
+// ExecutableNames 返回两侧客户端在 Windows 上的主程序名（含 .exe）。
+//
+// 给「重启客户端」用：那个动作用户看不出自己点的是哪个后端，所以不该按
+// 目标名去猜，而该按**实际在跑的那个**关——两侧名字一起试。
+//
+// 顺序与 All 一致（国内在前），保证行为可预期。
+// 注意两个名字只差一个词尾（`WorkBuddy` / `WorkBuddyAI`），调用方做进程名
+// 匹配时必须**精确相等**，别用前缀，否则会把另一个也列进来。
+func ExecutableNames() []string {
+	out := make([]string, 0, len(backends))
+	for _, b := range All() {
+		out = append(out, b.WinExecutableName+".exe")
+	}
+	return out
+}
+
 // Get 按 ID 取档位描述。
 func Get(id ID) (Backend, error) {
 	b, ok := backends[id]

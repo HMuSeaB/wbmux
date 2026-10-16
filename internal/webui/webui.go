@@ -744,7 +744,17 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	killed, err := clientproc.Terminate(target.WinExecutableName)
+	// 关掉**实际在跑的那个**客户端，而不是按目标后端的名字去找。
+	//
+	// 2026-10-16 的真实故障：用户点「重启国际版」，但这台机器上跑的是
+	// `WorkBuddy.exe`（国内版的名字），而逻辑去找 `WorkBuddyAI.exe` ——
+	// 找不到，于是"已关闭 0 个进程"，旧实例继续占着单实例锁，新实例起不来。
+	// 用户看到的就是"点了重启但什么都没变"。
+	//
+	// 两个名字只差一个词尾（`WorkBuddy` / `WorkBuddyAI`），界面上既看不出
+	// 自己点的哪个后端，更看不出进程名对不上。所以这里不去猜，**按实际在跑
+	// 的那个关**：两侧的名字都试一遍，谁在跑关谁。
+	killed, err := clientproc.TerminateAny(variant.ExecutableNames()...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError,
 			"关闭客户端没成功："+err.Error()+"。为避免两个实例抢同一份数据，"+

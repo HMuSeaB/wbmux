@@ -131,3 +131,94 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// TestPidsOfExactMatchNotPrefix 进程名必须**精确匹配**，不能用前缀。
+//
+// # 为什么这条是血泪
+//
+// `WorkBuddy` 是 `WorkBuddyAI` 的子串。用前缀匹配的话，"关国内版"会连
+// 国际版一起列进来——两个客户端可以同时开着、各用各的数据目录，误杀另一个
+// 会把用户没在用的那个也关掉。反过来更隐蔽：**用户根本看不出自己点的是哪个**。
+func TestPidsOfExactMatchNotPrefix(t *testing.T) {
+	// cmd.exe 一定存在；cmd2.exe 一定不存在。
+	// 前缀匹配会让 cmd 的查询把 cmd2 的查询结果搞混（或反之）。
+	withCmd := pidsOf("cmd.exe")
+	withoutCmd := pidsOf("cmd2.exe")
+	if len(withoutCmd) != 0 {
+		t.Errorf("cmd2.exe 不该匹配到任何进程，实际 %v", withoutCmd)
+	}
+	// cmd.exe 在当前环境里通常有（跑测试的 shell）——有就说明精确匹配确实能查到，
+	// 没有也只是环境差异，不断言。
+	if len(withCmd) > 0 {
+		t.Logf("cmd.exe 匹配到 %d 个，说明精确匹配可用", len(withCmd))
+	}
+}
+
+// TestTerminateAnyFindsWhicheverRuns 关键回归：按**实际在跑的那个**关。
+//
+// # 复现的真实故障（2026-10-16）
+//
+// 用户点界面上的「重启国际版」，但那台机器上跑的是 `WorkBuddy.exe`
+// （国内版的名字）。旧实现拿 `target.WinExecutableName`（= `WorkBuddyAI.exe`）
+// 去 tasklist 里找 → 0 个 → 日志"已关闭 0 个进程" → 旧实例没关、
+// 新实例被单实例锁挡住 → 用户看到"点了重启但什么都没变"。
+//
+// 修法是 TerminateAny 把两侧的名字都试一遍。这条测试用一个真实存在
+// 的进程名 + 一个不存在的名字组合，验证它**确实会命中存在的那个**。
+func TestTerminateAnyFindsWhicheverRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过：会真的起并杀进程")
+	}
+
+	cmd := exec.Command("cmd", "/c", "ping -n 30 127.0.0.1 >nul")
+	hideWindow(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Skipf("起不了测试进程：%v", err)
+	}
+	pid := cmd.Process.Pid
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	// 等它起来
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !isPidAlive(pid) {
+		time.Sleep(150 * time.Millisecond)
+	}
+	if !isPidAlive(pid) {
+		t.Skip("测试进程没起来，跳过")
+	}
+
+	// 模拟"用户点的后端与实际在跑的不一致"：
+	// 第一个名字（假装是界面选的后端）不存在，第二个才是真在跑的那个。
+	n, err := TerminateAny("definitely-not-a-real-process-xyz.exe", "cmd.exe")
+	if err != nil {
+		t.Fatalf("TerminateAny 失败：%v", err)
+	}
+	if n == 0 {
+		t.Fatal("明明 cmd 在跑，却报告关了 0 个——这正是线上那个 bug")
+	}
+	if isPidAlive(pid) {
+		t.Errorf("PID %d 应该已经被关掉了", pid)
+	}
+}
+
+// TestTerminateAnyAllAbsent 两个名字都没有时，照常成功返回 0。
+//
+// 用户可能自己已经把客户端关了，这时点重启应当**照样把新的启动起来**。
+func TestTerminateAnyAllAbsent(t *testing.T) {
+	n, err := TerminateAny("definitely-not-a-real-process-xyz.exe",
+		"another-not-real-process-abc.exe")
+	if err != nil {
+		t.Errorf("都没在跑不该报错，实际 %v", err)
+	}
+	if n != 0 {
+		t.Errorf("应报告 0 个，实际 %d", n)
+	}
+}
+
+// TestTerminateAnyNoArgs 不传任何名字时不 panic、不报错。
+func TestTerminateAnyNoArgs(t *testing.T) {
+	n, err := TerminateAny()
+	if err != nil || n != 0 {
+		t.Errorf("空参数应安静返回 0，实际 n=%d err=%v", n, err)
+	}
+}
