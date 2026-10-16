@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/autoupdate"
 	"github.com/HMuSeaB/wbmux/internal/checkin"
 	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
@@ -264,7 +266,42 @@ func (s *Server) Start() error {
 	go func() { _ = s.http.Serve(ln) }()
 	go s.watchIdle()
 	s.resumeAutoClean()
+	s.applyAutoUpdatePolicy()
 	return nil
+}
+
+// applyAutoUpdatePolicy 压住客户端的"启动时静默自动更新"。
+//
+// 详见 internal/autoupdate 的包注释。一句话：客户端 5.8.3 的
+// `early-silent-startup-update`（窗口出现**之前**就跑、会直接静默装）读的是
+// `<数据目录>/app/app-config.json` 里的 userSetting —— **不是**我们
+// 2026-10-04 写的 settings.json。那个键的优先级最高，写上就等于把这条链路压住。
+//
+// 为什么值得做：wbmux 靠客户端未公开的配置行为工作，"客户端被悄悄升到新版本"
+// 恰恰是机制失效的主要来源。2026-10-15 那次升级就把 models.json 的格式改了，
+// 注入的模型集体读不到、上下文回落到 300k。
+//
+// 默认开（config.DisableAutoUpdate 为 nil 时按开处理）；用户显式关掉就不写。
+func (s *Server) applyAutoUpdatePolicy() {
+	if cfg, err := config.Load(); err == nil && cfg.DisableAutoUpdate != nil && !*cfg.DisableAutoUpdate {
+		return
+	}
+	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		p := filepath.Join(s.probe().DataDir(id), "app", "app-config.json")
+		// 只动**用户确实用过**的那一侧：app/ 目录存在才说明这个客户端跑过。
+		// 凭空给它建一份配置，等于替一个没装的客户端做决定。
+		if _, err := os.Stat(filepath.Dir(p)); err != nil {
+			continue
+		}
+		changed, err := autoupdate.Ensure(p)
+		if err != nil {
+			s.logf("关闭客户端自动更新失败（%s）：%s", id, compactError(err.Error()))
+			continue
+		}
+		if changed {
+			s.logf("已关闭客户端的启动静默自动更新（%s 的 app-config.json；下次启动客户端生效）", id)
+		}
+	}
 }
 
 // touch 记录一次活动，供空闲判定使用。
