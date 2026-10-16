@@ -330,3 +330,13 @@ func Save(c Config) error {
 	_ = os.Chmod(p, 0o600)
 	return nil
 }
+
+// DisableAutoUpdateOn 报告"是否要禁止客户端自动更新"。
+//
+// 默认（没设过）按**开启**处理，见 DisableAutoUpdate 字段的注释：
+// wbmux 靠客户端未公开的配置行为工作，"客户端被悄悄升级"正是机制失效的
+// 主要来源（2026-10-15 那次升级改了 models.json 格式，注入的模型集体失效）。
+// 想恢复官方行为，在界面里把这个开关关掉即可。
+func DisableAutoUpdateOn(cfg Config) bool {
+	return cfg.DisableAutoUpdate == nil || *cfg.DisableAutoUpdate
+}

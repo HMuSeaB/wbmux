@@ -59,7 +59,33 @@ func Ensure(appConfigPath string) (bool, error) {
 		}
 	}
 	doc[Key] = json.RawMessage("false")
+	return save(appConfigPath, doc, existed)
+}
 
+// Release 把 `startupForceAutoUpdate` 这个键**删掉**，交回客户端自己决定。
+//
+// 为什么不写 `true`：那是替用户做了"允许自动更新"这个决定。用户想表达的
+// 只是"这事我不管了"——删掉才等价于"没管过"，客户端会按它自己的优先级链
+// （远程下发 / 缓存默认 / 安装目录）去决定，将来官方改策略也能跟着走。
+//
+// 键本来就不在时返回 false（没东西可改）。
+func Release(appConfigPath string) (bool, error) {
+	doc, existed, err := load(appConfigPath)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := doc[Key]; !ok {
+		return false, nil
+	}
+	delete(doc, Key)
+	// 删完键之后如果文件空了、而原本就不存在，就没有写的必要；
+	// 但只要文件存在过，就该把"删掉键"这个结果落盘。
+	return save(appConfigPath, doc, existed)
+}
+
+// save 把一个文档原子地写到 path。existed 表示原文件是否已存在
+// （决定要不要留备份）。
+func save(path string, doc map[string]json.RawMessage, existed bool) (bool, error) {
 	out, err := marshal(doc)
 	if err != nil {
 		return false, err
@@ -68,22 +94,22 @@ func Ensure(appConfigPath string) (bool, error) {
 	// 写前备份。只备份"本来就存在"的文件——文件不存在时没有可备份的内容，
 	// 凭空造一个 .bak 反而让人以为原来有配置。
 	if existed {
-		if raw, err := os.ReadFile(appConfigPath); err == nil {
-			_ = os.WriteFile(appConfigPath+".wbmux-bak", raw, 0o644)
+		if raw, err := os.ReadFile(path); err == nil {
+			_ = os.WriteFile(path+".wbmux-bak", raw, 0o644)
 		}
 	}
 
 	// 原子写：先写同目录临时文件再 rename。直接覆盖的话，写到一半崩溃会留下
 	// 半截 JSON，客户端读不动就可能把整份应用配置重置掉。
 	// （本项目 config.Save / custommodels.Sync 都是这个模式，这里跟上。）
-	if err := os.MkdirAll(filepath.Dir(appConfigPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
 	}
-	tmp := appConfigPath + ".wbmux-tmp"
+	tmp := path + ".wbmux-tmp"
 	if err := os.WriteFile(tmp, out, 0o644); err != nil {
 		return false, err
 	}
-	if err := os.Rename(tmp, appConfigPath); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return false, err
 	}

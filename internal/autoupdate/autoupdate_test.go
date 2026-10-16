@@ -211,3 +211,75 @@ func TestEnabled(t *testing.T) {
 		t.Errorf("应报 false/true，得到 %v/%v", v, ok)
 	}
 }
+
+// TestReleaseRemovesKey 取消勾选时把键**删掉**，而不是写成 true。
+//
+// 写 true 等于替用户做了"允许自动更新"这个决定，而用户想表达的只是
+// "这事我不管了"——删掉才等价于"没管过"，客户端会按它自己的优先级链决定，
+// 将来官方改策略也能跟着走。
+func TestReleaseRemovesKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "app-config.json")
+	_ = os.WriteFile(p, []byte(`{"startupForceAutoUpdate":false,"locale":"zh-CN"}`), 0o644)
+
+	changed, err := Release(p)
+	if err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if !changed {
+		t.Fatal("应报告改动")
+	}
+	doc := readDoc(t, p)
+	if _, ok := doc[Key]; ok {
+		t.Errorf("键应被删掉，实际还在：%v", doc[Key])
+	}
+	if doc["locale"] != "zh-CN" {
+		t.Errorf("别的键必须保留，得到 %v", doc["locale"])
+	}
+}
+
+// TestReleaseNoKeyIsNoop 键本来就不在时，一个字节都不动。
+func TestReleaseNoKeyIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "app-config.json")
+	body := "{\n  \"locale\": \"zh-CN\"\n}\n"
+	_ = os.WriteFile(p, []byte(body), 0o644)
+
+	changed, err := Release(p)
+	if err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if changed {
+		t.Error("键本来就不在，不该报告改动")
+	}
+	if raw, _ := os.ReadFile(p); string(raw) != body {
+		t.Errorf("不该动文件，实际：%s", raw)
+	}
+}
+
+// TestReleaseThenEnsureRoundTrip 关掉再打开要能来回。
+//
+// 这条覆盖用户真实操作：勾上→取消→再勾上。
+func TestReleaseThenEnsureRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "app-config.json")
+
+	if _, err := Ensure(p); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := Enabled(p); !ok || v {
+		t.Fatalf("Ensure 后应为 false/true，得到 %v/%v", v, ok)
+	}
+	if _, err := Release(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Enabled(p); ok {
+		t.Error("Release 后该键应不存在")
+	}
+	if _, err := Ensure(p); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := Enabled(p); !ok || v {
+		t.Errorf("再 Ensure 后应为 false/true，得到 %v/%v", v, ok)
+	}
+}

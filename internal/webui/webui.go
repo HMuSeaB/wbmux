@@ -18,14 +18,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/HMuSeaB/wbmux/internal/autoupdate"
 	"github.com/HMuSeaB/wbmux/internal/checkin"
 	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
@@ -255,6 +253,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/checkin/claim", s.guard(s.handleCheckinClaim))
 	mux.HandleFunc("/api/checkin/auto", s.guard(s.handleCheckinAuto))
 	mux.HandleFunc("/api/checkin/auto-toggle", s.guard(s.handleAutoCheckinToggle))
+	mux.HandleFunc("/api/client-update", s.guard(s.handleClientUpdatePolicy))
 	mux.HandleFunc("/api/workspace", s.guard(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
@@ -281,26 +280,15 @@ func (s *Server) Start() error {
 // 恰恰是机制失效的主要来源。2026-10-15 那次升级就把 models.json 的格式改了，
 // 注入的模型集体读不到、上下文回落到 300k。
 //
-// 默认开（config.DisableAutoUpdate 为 nil 时按开处理）；用户显式关掉就不写。
+// 默认开（config.DisableAutoUpdate 为 nil 时按开处理）；用户在界面上关掉就不写。
 func (s *Server) applyAutoUpdatePolicy() {
-	if cfg, err := config.Load(); err == nil && cfg.DisableAutoUpdate != nil && !*cfg.DisableAutoUpdate {
+	if cfg, err := config.Load(); err == nil && !config.DisableAutoUpdateOn(cfg) {
 		return
 	}
-	for _, id := range []variant.ID{variant.CN, variant.Intl} {
-		p := filepath.Join(s.probe().DataDir(id), "app", "app-config.json")
-		// 只动**用户确实用过**的那一侧：app/ 目录存在才说明这个客户端跑过。
-		// 凭空给它建一份配置，等于替一个没装的客户端做决定。
-		if _, err := os.Stat(filepath.Dir(p)); err != nil {
-			continue
-		}
-		changed, err := autoupdate.Ensure(p)
-		if err != nil {
-			s.logf("关闭客户端自动更新失败（%s）：%s", id, compactError(err.Error()))
-			continue
-		}
-		if changed {
-			s.logf("已关闭客户端的启动静默自动更新（%s 的 app-config.json；下次启动客户端生效）", id)
-		}
+	if n, err := s.applyClientUpdatePolicy(true); err != nil {
+		s.logf("关闭客户端自动更新失败：%s", compactError(err.Error()))
+	} else if n > 0 {
+		s.logf("已关闭客户端的启动静默自动更新（改动了 %d 侧；下次启动客户端生效）", n)
 	}
 }
 

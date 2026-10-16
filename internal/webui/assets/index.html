@@ -870,6 +870,31 @@
       交给系统任务计划程序，它同样是幂等的：签过就如实回报，不会重复领也不会报错。
     </p>
   </section>
+  <section>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>客户端自动更新</h2>
+    <p class="sub">
+      客户端的<strong>启动静默更新</strong>会在窗口出现之前就把新版本装上，你连提示都看不到。
+      这对 wbmux 是实打实的风险：<strong>2026-10-15 那次升级改了
+      <code>models.json</code> 的格式</strong>，注入的模型集体读不到、上下文被压回 300k，
+      而升级时你什么都没看到。
+    </p>
+    <label class="check">
+      <input type="checkbox" id="chk-client-update">
+      <span>禁止客户端自动更新
+        <span class="desc" id="client-update-state"></span>
+      </span>
+    </label>
+    <p class="sub" style="margin-top:10px">
+      关掉的是"自动"，<strong>不影响你在客户端里手动检查更新</strong>——想升随时能升，
+      只是不会再被动地半夜换版本。
+    </p>
+    <p class="sub">
+      原理是往客户端的 <code>app/app-config.json</code> 写一个键。那是客户端自己
+      优先级最高的设置层，<strong>不需要管理员权限、也不会被更新覆盖</strong>。
+      取消勾选会把这个键<strong>删掉</strong>（而不是写成"允许"），交回客户端自己决定。
+    </p>
+    <div id="client-update-note" style="margin-top:10px"></div>
+  </section>
     </div>
     <div data-page="recycle" hidden>
   <section>
@@ -2101,6 +2126,29 @@
     else if (data.skipped === "disabled") cls = "note";
     box.appendChild(el("div", { class: cls, text: note }));
   }
+
+  // renderClientUpdateState 把"当前是开还是关"写在开关旁边。
+  // 单独一个函数是因为它有两处调用（首次读、每次切换后）。
+  function renderClientUpdateState(on) {
+    var s = document.getElementById("client-update-state");
+    if (!s) return;
+    s.textContent = on ? "（已禁止；客户端不会再自己升级）"
+                       : "（未禁止；客户端可能自行升级）";
+  }
+
+  // 首次进入时读一次开关状态。读不到就保持不勾、并把原因说出来——
+  // 界面上显示一个假的勾比不显示更糟。
+  function loadClientUpdateState() {
+    api("/api/client-update").then(function (d) {
+      document.getElementById("chk-client-update").checked = !!(d && d.enabled);
+      renderClientUpdateState(!!(d && d.enabled));
+    }).catch(function (e) {
+      // 读失败就让它保持未知状态，并说明白。
+      // 不勾不表示"没禁止"，而是"读不到"——这句必须写清楚。
+      renderClientUpdateState(false);
+    });
+  }
+  loadClientUpdateState();
 
   // loadCheckinStatus 是**只读**重查，给「刷新状态」按钮用。
   function loadCheckinStatus() {
@@ -3408,6 +3456,34 @@
       toast("保存失败：" + e.message, "bad");
       // 存失败就把勾还原，别让界面显示一个并不生效的状态。
       document.getElementById("chk-checkin-auto").checked = !on;
+    });
+  });
+
+  // 客户端自动更新开关。状态在打开这一页时读一次——它要读 wbmux 的配置，
+  // 没必要在启动时就跑。
+  document.getElementById("chk-client-update").addEventListener("change", function () {
+    var cb = this;
+    var on = this.checked;
+    var box = document.getElementById("client-update-note");
+    api("/api/client-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: on })
+    }).then(function (res) {
+      toast(on ? "已禁止客户端自动更新" : "已交回客户端自己决定", "ok");
+      if (box) {
+        clear(box);
+        // 后端会回话"动了几侧"：某侧客户端从没跑过时它不会动手
+        // （不替没装的客户端做决定），这里如实说清，别让人以为没生效。
+        var t = res && res.note ? res.note
+              : (on ? "已写入客户端设置；下次启动客户端生效。"
+                    : "已把那个键删掉，客户端会按它自己的策略决定。");
+        box.appendChild(el("div", { class: "note", text: t }));
+      }
+      renderClientUpdateState(on);
+    }).catch(function (e) {
+      toast("保存失败：" + e.message, "bad");
+      cb.checked = !on;   // 存失败就还原，别显示一个并不生效的状态
     });
   });
 
