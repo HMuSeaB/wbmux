@@ -3308,39 +3308,118 @@
 
   var usageData = null;
 
-  // showTokenImportModal 弹出免装国际客户端录入凭据的模态窗口。
+  // showTokenImportModal 弹出免装国际客户端录入凭据的模态窗口（支持官方拟真一键登录与手动导入）。
   function showTokenImportModal(side) {
     side = side || "intl";
     var existing = document.getElementById("token-import-modal");
     if (existing) existing.remove();
 
     var overlay = el("div", { class: "modal-overlay", id: "token-import-modal" });
-    var card = el("div", { class: "modal-card" });
+    var card = el("div", { class: "modal-card", style: "max-width:540px" });
 
     // Head
     var head = el("div", { class: "modal-head" }, [
       el("div", { class: "modal-title" }, [
         el("svg", { class: "ico ico-sm", html: '<use href="#i-layers"/>' }),
-        "免装国际端 · 录入 AccessToken 凭据"
+        "国际版凭据录入 · 多方式获取"
       ]),
       el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal })
     ]);
 
+    // Tab 导航栏
+    var currentTab = "auto"; // "auto" | "manual"
+    var tabAuto = el("button", {
+      class: "pill ok",
+      style: "cursor:pointer;font-size:12px;padding:6px 14px;border:1px solid rgba(16,185,129,0.35);background:rgba(16,185,129,0.12)",
+      text: "⚡ 官方拟真一键获取 (推荐)"
+    });
+    var tabManual = el("button", {
+      class: "pill",
+      style: "cursor:pointer;font-size:12px;padding:6px 14px;border:1px solid var(--g4);background:transparent",
+      text: "📋 手动粘贴 Token (备用)"
+    });
+    var tabNav = el("div", { style: "display:flex;gap:10px;margin-bottom:14px" }, [tabAuto, tabManual]);
+
     // Body
     var body = el("div", { class: "modal-body" });
+    body.appendChild(tabNav);
 
-    // 引导提示卡
+    // ================== Pane 1: 拟真自动登录 ==================
+    var paneAuto = el("div", { style: "display:flex;flex-direction:column;gap:12px" });
+    var introCard = el("div", {
+      style: "background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.22);border-radius:var(--r-sm);padding:12px 14px;font-size:12.5px;line-height:1.6;color:var(--ink-2)"
+    }, [
+      el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:6px;display:flex;align-items:center;gap:6px" }, [
+        el("span", { style: "font-size:14px", text: "🌐" }),
+        "全拟真协议流程（免抓包 · 免开 F12 · 免装客户端）"
+      ]),
+      el("div", { text: "1. 点击下方按钮，wbmux 将向官方申请原生授权并在默认浏览器中唤起登录页；" }),
+      el("div", { text: "2. 在官方页面完成登录（支持微信扫码、邮箱、密码等任意方式）；" }),
+      el("div", { text: "3. wbmux 后台安全捕获真实 AccessToken 与 RefreshToken，自动纳管入库并激活！" })
+    ]);
+    paneAuto.appendChild(introCard);
+
+    // 动作与状态区
+    var authActionBox = el("div", { style: "display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px;background:rgba(255,255,255,0.02);border:1px solid var(--g5);border-radius:var(--r-sm)" });
+
+    var btnLaunchAuth = el("button", {
+      class: "btn-hero",
+      style: "width:100%;justify-content:center;padding:10px 18px;font-size:13.5px;font-weight:600",
+      text: "🚀 启动官方正规登录获取"
+    });
+    authActionBox.appendChild(btnLaunchAuth);
+
+    // 等待中状态盒子
+    var waitingBox = el("div", {
+      style: "display:none;width:100%;flex-direction:column;align-items:center;gap:10px;text-align:center"
+    });
+    var spinner = el("div", {
+      style: "width:28px;height:28px;border:3px solid rgba(99,102,241,0.2);border-top-color:var(--brand);border-radius:50%;animation:spin 1s linear infinite"
+    });
+    var waitingText = el("div", {
+      style: "font-size:13px;font-weight:600;color:var(--ink-1)",
+      text: "正在等待您在浏览器中完成登录…"
+    });
+    var countdownText = el("div", {
+      style: "font-size:11.5px;color:var(--ink-3);font-family:var(--mono)",
+      text: "有效等待时间：05:00"
+    });
+    var btnReopen = el("button", {
+      class: "ghost",
+      style: "font-size:11.5px;padding:4px 10px",
+      text: "再次打开官方登录页 ↗"
+    });
+    var btnCopyLink = el("button", {
+      class: "ghost",
+      style: "font-size:11.5px;padding:4px 10px",
+      text: "复制登录链接"
+    });
+    var linksRow = el("div", { style: "display:flex;gap:8px;margin-top:4px" }, [btnReopen, btnCopyLink]);
+
+    waitingBox.appendChild(spinner);
+    waitingBox.appendChild(waitingText);
+    waitingBox.appendChild(countdownText);
+    waitingBox.appendChild(linksRow);
+    authActionBox.appendChild(waitingBox);
+
+    // 成功/失败反馈盒子
+    var resultBox = el("div", { style: "display:none;width:100%;font-size:12.5px;text-align:center;padding:8px 0" });
+    authActionBox.appendChild(resultBox);
+
+    paneAuto.appendChild(authActionBox);
+
+    // ================== Pane 2: 手动输入 Token ==================
+    var paneManual = el("div", { style: "display:none;flex-direction:column;gap:12px" });
     var guideBox = el("div", {
       style: "background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.22);border-radius:var(--r-sm);padding:10px 12px;font-size:12px;line-height:1.5;color:var(--ink-2)"
     }, [
-      el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:4px", text: "💡 极速获取 Token 指引（无需下载客户端）：" }),
+      el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:4px", text: "💡 手动提取 Token 指引：" }),
       el("div", { text: "1. 浏览器打开并登录国际官网 codebuddy.ai；" }),
       el("div", { text: "2. 按 F12 打开开发者工具 → 切换到「网络 (Network)」标签；" }),
-      el("div", { text: "3. 刷新页面，在任一 API 请求的标头（Headers）中找到 Authorization，复制 Bearer 后面的 Token。" })
+      el("div", { text: "3. 复制任意 API 请求头中的 Bearer Token。" })
     ]);
-    body.appendChild(guideBox);
+    paneManual.appendChild(guideBox);
 
-    // Token 输入框
     var tokenLabel = el("label", { style: "font-size:12px;font-weight:600;color:var(--ink-2);display:flex;flex-direction:column;gap:5px" }, [
       "AccessToken (必填)：",
       el("textarea", {
@@ -3350,11 +3429,10 @@
         style: "width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11.5px;padding:8px;background:rgba(0,0,0,0.3);border:1px solid var(--g4);border-radius:var(--r-sm);color:var(--ink-1);resize:vertical"
       })
     ]);
-    body.appendChild(tokenLabel);
+    paneManual.appendChild(tokenLabel);
 
-    // UID 可选输入
     var uidLabel = el("label", { style: "font-size:12px;font-weight:600;color:var(--ink-2);display:flex;flex-direction:column;gap:5px" }, [
-      "UID (可选，留空将自动从 Token 或官方响应提取)：",
+      "UID (可选，留空将自动从 Token 提取)：",
       el("input", {
         id: "inp-import-uid",
         type: "text",
@@ -3362,36 +3440,171 @@
         style: "width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;padding:6px 8px;background:rgba(0,0,0,0.3);border:1px solid var(--g4);border-radius:var(--r-sm);color:var(--ink-1)"
       })
     ]);
-    body.appendChild(uidLabel);
+    paneManual.appendChild(uidLabel);
 
-    // 防风控说明
+    var btnSubmitManual = el("button", {
+      class: "primary",
+      style: "width:100%;justify-content:center;padding:8px;margin-top:4px",
+      text: "验证并保存凭据"
+    });
+    var manualStatusBox = el("div", { style: "display:none;font-size:12px;margin-top:2px" });
+    paneManual.appendChild(btnSubmitManual);
+    paneManual.appendChild(manualStatusBox);
+
+    body.appendChild(paneAuto);
+    body.appendChild(paneManual);
+
+    // 防风控标识提示
     var securityNote = el("div", {
-      style: "font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px"
+      style: "font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;margin-top:12px"
     }, [
       el("svg", { class: "ico ico-sm", html: '<use href="#i-check"/>' }),
-      "已启用 Telemetry Guardian：自动生成设备指纹与拟真 UA，确保账号安全。"
+      "已启用 Telemetry Guardian：自动生成稳定机器指纹与高拟真 UA，确保账号安全。"
     ]);
     body.appendChild(securityNote);
 
-    // 状态反馈区域
-    var statusBox = el("div", { id: "import-status-box", style: "display:none;font-size:12px;margin-top:2px" });
-    body.appendChild(statusBox);
+    // Tab 切换逻辑
+    tabAuto.onclick = function () {
+      currentTab = "auto";
+      tabAuto.style.background = "rgba(16,185,129,0.12)";
+      tabAuto.style.borderColor = "rgba(16,185,129,0.35)";
+      tabAuto.className = "pill ok";
+      tabManual.style.background = "transparent";
+      tabManual.style.borderColor = "var(--g4)";
+      tabManual.className = "pill";
+      paneAuto.style.display = "flex";
+      paneManual.style.display = "none";
+    };
+    tabManual.onclick = function () {
+      currentTab = "manual";
+      tabManual.style.background = "rgba(99,102,241,0.12)";
+      tabManual.style.borderColor = "rgba(99,102,241,0.35)";
+      tabManual.className = "pill ok";
+      tabAuto.style.background = "transparent";
+      tabAuto.style.borderColor = "var(--g4)";
+      tabAuto.className = "pill";
+      paneAuto.style.display = "none";
+      paneManual.style.display = "flex";
+    };
 
-    // Foot
-    var btnCancel = el("button", { class: "ghost", text: "取消", onclick: closeModal });
-    var btnSubmit = el("button", { class: "primary", text: "验证并保存凭据" });
-    btnSubmit.onclick = function () {
+    // ================== 拟真登录流程状态管理 ==================
+    var activePollTimer = null;
+    var activeCountTimer = null;
+    var currentAuthURL = "";
+
+    function stopAuthTimers() {
+      if (activePollTimer) {
+        clearInterval(activePollTimer);
+        activePollTimer = null;
+      }
+      if (activeCountTimer) {
+        clearInterval(activeCountTimer);
+        activeCountTimer = null;
+      }
+    }
+
+    btnLaunchAuth.onclick = function () {
+      btnLaunchAuth.disabled = true;
+      btnLaunchAuth.textContent = "正在向官方申请授权…";
+      resultBox.style.display = "none";
+
+      api("/api/auth/start", { method: "POST" }).then(function (res) {
+        if (!res.ok || !res.state || !res.authUrl) {
+          throw new Error("官方返回异常授权数据");
+        }
+        currentAuthURL = res.authUrl;
+        btnLaunchAuth.style.display = "none";
+        waitingBox.style.display = "flex";
+
+        // 尝试自动弹出浏览器打开官方登录页
+        try {
+          window.open(res.authUrl, "_blank");
+        } catch (e) {
+          console.warn("未能自动唤起新窗口，请手动点击按钮打开", e);
+        }
+
+        // 绑定辅助按钮
+        btnReopen.onclick = function () {
+          window.open(currentAuthURL, "_blank");
+        };
+        btnCopyLink.onclick = function () {
+          navigator.clipboard.writeText(currentAuthURL).then(function () {
+            toast("登录链接已复制到剪贴板", "ok");
+          });
+        };
+
+        // 倒计时
+        var remainingSec = 300;
+        function updateCount() {
+          var m = Math.floor(remainingSec / 60);
+          var s = remainingSec % 60;
+          countdownText.textContent = "有效等待时间：" + (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+          if (remainingSec <= 0) {
+            stopAuthTimers();
+            waitingBox.style.display = "none";
+            btnLaunchAuth.style.display = "block";
+            btnLaunchAuth.disabled = false;
+            btnLaunchAuth.textContent = "重新启动官方登录获取";
+            resultBox.style.display = "block";
+            resultBox.className = "note bad";
+            resultBox.textContent = "等待超时（5分钟），请重新点击发起。";
+          }
+          remainingSec--;
+        }
+        updateCount();
+        activeCountTimer = setInterval(updateCount, 1000);
+
+        // 轮询官方登录态
+        activePollTimer = setInterval(function () {
+          api("/api/auth/poll?state=" + encodeURIComponent(res.state)).then(function (pollRes) {
+            if (pollRes.status === "success") {
+              stopAuthTimers();
+              waitingBox.style.display = "none";
+              resultBox.style.display = "block";
+              resultBox.className = "note ok";
+              resultBox.textContent = "🎉 官方授权成功！已纳管并激活账号：" + (pollRes.nickname || pollRes.uid);
+              toast("官方拟真授权成功！已设为当前活跃账号", "ok");
+              setTimeout(function () {
+                closeModal();
+                loadUsage(true, true);
+              }, 1200);
+            } else if (pollRes.status === "failed" || pollRes.status === "expired") {
+              stopAuthTimers();
+              waitingBox.style.display = "none";
+              btnLaunchAuth.style.display = "block";
+              btnLaunchAuth.disabled = false;
+              btnLaunchAuth.textContent = "重新启动官方登录获取";
+              resultBox.style.display = "block";
+              resultBox.className = "note bad";
+              resultBox.textContent = pollRes.message || "登录流程已结束，请重新发起";
+            }
+          }).catch(function (err) {
+            console.warn("轮询暂无响应:", err);
+          });
+        }, 2000);
+
+      }).catch(function (err) {
+        btnLaunchAuth.disabled = false;
+        btnLaunchAuth.textContent = "重新启动官方登录获取";
+        resultBox.style.display = "block";
+        resultBox.className = "note bad";
+        resultBox.textContent = "启动登录失败：" + err.message;
+      });
+    };
+
+    // 手动验证并保存
+    btnSubmitManual.onclick = function () {
       var tok = (document.getElementById("inp-import-token").value || "").trim();
       var uid = (document.getElementById("inp-import-uid").value || "").trim();
       if (!tok) {
         toast("请先粘贴 AccessToken", "bad");
         return;
       }
-      btnSubmit.disabled = true;
-      btnSubmit.textContent = "正在官方链路验证…";
-      statusBox.style.display = "block";
-      statusBox.className = "hint";
-      statusBox.textContent = "正在校验 Token 有效性并初始化机器指纹…";
+      btnSubmitManual.disabled = true;
+      btnSubmitManual.textContent = "正在官方链路验证…";
+      manualStatusBox.style.display = "block";
+      manualStatusBox.className = "hint";
+      manualStatusBox.textContent = "正在校验 Token 有效性并初始化机器指纹…";
 
       api("/api/credentials/import", {
         method: "POST",
@@ -3401,14 +3614,16 @@
         closeModal();
         loadUsage(true, true);
       }).catch(function (e) {
-        statusBox.className = "note bad";
-        statusBox.textContent = "验证失败：" + e.message;
-        btnSubmit.disabled = false;
-        btnSubmit.textContent = "重新验证并保存";
+        manualStatusBox.className = "note bad";
+        manualStatusBox.textContent = "验证失败：" + e.message;
+        btnSubmitManual.disabled = false;
+        btnSubmitManual.textContent = "重新验证并保存";
       });
     };
 
-    var foot = el("div", { class: "modal-foot" }, [btnCancel, btnSubmit]);
+    // Foot
+    var btnClose = el("button", { class: "ghost", text: "关闭", onclick: closeModal });
+    var foot = el("div", { class: "modal-foot", style: "justify-content:flex-end" }, [btnClose]);
 
     card.appendChild(head);
     card.appendChild(body);
@@ -3420,6 +3635,7 @@
     };
 
     function closeModal() {
+      stopAuthTimers();
       overlay.classList.remove("open");
       setTimeout(function () { overlay.remove(); }, 200);
     }
@@ -3428,6 +3644,7 @@
     overlay.offsetHeight;
     overlay.classList.add("open");
   }
+
 
   // showAccountsManagerModal 弹出国际版多账号管理与一键切换窗口。
   function showAccountsManagerModal(side) {

@@ -285,6 +285,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/accounts/list", s.guard(s.handleAccountsList))
 	mux.HandleFunc("/api/accounts/switch", s.guard(s.handleAccountSwitch))
 	mux.HandleFunc("/api/accounts/delete", s.guard(s.handleAccountDelete))
+	mux.HandleFunc("/api/auth/start", s.guard(s.handleAuthStart))
+	mux.HandleFunc("/api/auth/poll", s.guard(s.handleAuthPoll))
 
 	s.http = &http.Server{
 		Handler:           mux,
@@ -1384,6 +1386,49 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	usage.InvalidateLiveCache(side)
 	writeJSON(w, map[string]any{"ok": true})
 }
+
+// handleAuthStart 发起官方原生拟真登录授权流程。
+func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	mgr := credential.GetDefaultFlowManager(s.probe())
+	flow, err := mgr.StartLoginFlow(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"state":   flow.State,
+		"authUrl": flow.AuthURL,
+	})
+}
+
+// handleAuthPoll 轮询官方登录授权状态。
+func (s *Server) handleAuthPoll(w http.ResponseWriter, r *http.Request) {
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	if state == "" {
+		writeErr(w, http.StatusBadRequest, "state 不能为空")
+		return
+	}
+	mgr := credential.GetDefaultFlowManager(s.probe())
+	res, err := mgr.PollLoginStatus(r.Context(), state)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if res.Status == "success" {
+		usage.InvalidateLiveCache(variant.Intl)
+		s.note(ProxyLogEntry{
+			Level: "info",
+			Text:  fmt.Sprintf("官方拟真授权成功，已纳管并激活账号：%s (%s)", res.Nickname, res.UID),
+		})
+	}
+	writeJSON(w, res)
+}
+
 
 
 

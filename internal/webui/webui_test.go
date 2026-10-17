@@ -546,4 +546,35 @@ func TestHandleAccountsAPI(t *testing.T) {
 	}
 }
 
+func TestHandleAuthFlowAPI(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. GET /api/auth/start 拒绝
+	rStartGet := e.do(t, "GET", "/api/auth/start", "", true)
+	if rStartGet.code != 405 {
+		t.Errorf("GET /api/auth/start 应返回 405，得到 %d", rStartGet.code)
+	}
+
+	// 2. GET /api/auth/poll 缺少 state 参数返回 400
+	rPollNoState := e.do(t, "GET", "/api/auth/poll", "", true)
+	if rPollNoState.code != 400 {
+		t.Errorf("缺少 state 参数应返回 400，得到 %d", rPollNoState.code)
+	}
+
+	// 3. GET /api/auth/poll 不存在的 state 返回 200 且 status="expired"
+	rPollExpired := e.do(t, "GET", "/api/auth/poll?state=test_non_existent", "", true)
+	if rPollExpired.code != 200 {
+		t.Errorf("GET /api/auth/poll 预期 200，得到 %d", rPollExpired.code)
+	}
+	var pollRes struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	rPollExpired.decode(t, &pollRes)
+	if pollRes.Status != "expired" {
+		t.Errorf("预期 status 为 'expired'，得到 %s", pollRes.Status)
+	}
+}
+
+
 
