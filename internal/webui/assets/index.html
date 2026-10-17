@@ -2460,6 +2460,7 @@
         renderAutoNote(data, atBoot);
         if (data.status) {
           renderCheckin(checkinLast);
+          if (usageData) renderUsage();
         } else {
           clear(box);
           box.appendChild(el("div", { class: "note warn",
@@ -3274,7 +3275,14 @@
     return h > 0 ? h + " 小时 " + m + " 分" : m + " 分钟";
   }
 
-  function loadUsage(silent) {
+  var lastUsageScanAt = 0;
+  function loadUsage(silent, force) {
+    var now = Date.now();
+    if (!silent && !force && (now - lastUsageScanAt < 15000)) {
+      toast("资产数据已是最新（15s 防刷保护）", "ok");
+      return Promise.resolve();
+    }
+    lastUsageScanAt = now;
     var box = document.getElementById("usage-body");
     var btn = document.getElementById("btn-usage-scan");
     if (!silent) {
@@ -3761,7 +3769,7 @@
         btnCheckinAction.textContent = "打卡中…";
         api("/api/checkin/claim", { method: "POST" }).then(function (r) {
           toast("签到成功 +" + (r.credit || 10) + " 积分", "ok");
-          loadUsage(true);
+          loadUsage(true, true);
         }).catch(function (e) {
           toast(e.message, "bad");
           showPage("checkin");
@@ -4265,16 +4273,8 @@
   updateTelemetryBadge();
   setInterval(updateTelemetryBadge, 60000);
 
-  // 页面进入时自适应加载额度与资产数据
+  // 页面进入时加载额度与资产数据（单次初始化，后台挂机零请求以绝风控隐患）
   loadUsage(false);
-  // 每 45 秒后台静默轮询保鲜
-  setInterval(function () {
-    if (!document.hidden) loadUsage(true);
-  }, 45000);
-  // 从后台标签页切回前台时立即静默保鲜
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) loadUsage(true);
-  });
 })();
 </script>
 </body>

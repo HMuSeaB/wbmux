@@ -156,8 +156,8 @@ func IntlEndpoint() string { return liveEndpoint[variant.Intl] }
 func IntlCommonHeaders() map[string]string { return liveCommonHeaders(variant.Intl) }
 
 // liveCacheTTL 内的重复请求直接用缓存：面板每点一次就打一轮官方接口，
-// 没必要；60 秒内的重复点击共用一份数据。
-const liveCacheTTL = 60 * time.Second
+// 没必要；提升至 5 分钟安全长缓存，防范高频查询导致的风控限流或封禁。
+const liveCacheTTL = 5 * time.Minute
 
 var liveCache = struct {
 	sync.Mutex
