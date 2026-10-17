@@ -16,28 +16,34 @@ import (
 
 // Account 代表多账号凭据库中保存的一个账号条目。
 type Account struct {
-	ID        string `json:"id"`
-	Side      string `json:"side"`
-	UID       string `json:"uid"`
-	Nickname  string `json:"nickname"`
-	Token     string `json:"token"`
-	Domain    string `json:"domain"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-	Active    bool   `json:"active"`
+	ID               string `json:"id"`
+	Side             string `json:"side"`
+	UID              string `json:"uid"`
+	Nickname         string `json:"nickname"`
+	Token            string `json:"token"`
+	RefreshToken     string `json:"refreshToken,omitempty"`
+	ExpiresAt        int64  `json:"expiresAt,omitempty"`        // 毫秒时间戳
+	RefreshExpiresAt int64  `json:"refreshExpiresAt,omitempty"` // 毫秒时间戳
+	Domain           string `json:"domain"`
+	CreatedAt        int64  `json:"createdAt"`
+	UpdatedAt        int64  `json:"updatedAt"`
+	Active           bool   `json:"active"`
 }
 
 // RedactedAccount 供前端展示的安全账号视图，对 Token 进行了脱敏掩码。
 type RedactedAccount struct {
-	ID        string `json:"id"`
-	Side      string `json:"side"`
-	UID       string `json:"uid"`
-	Nickname  string `json:"nickname"`
-	Domain    string `json:"domain"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-	Active    bool   `json:"active"`
-	TokenMask string `json:"tokenMask"`
+	ID               string `json:"id"`
+	Side             string `json:"side"`
+	UID              string `json:"uid"`
+	Nickname         string `json:"nickname"`
+	Domain           string `json:"domain"`
+	CreatedAt        int64  `json:"createdAt"`
+	UpdatedAt        int64  `json:"updatedAt"`
+	Active           bool   `json:"active"`
+	TokenMask        string `json:"tokenMask"`
+	HasRefreshToken  bool   `json:"hasRefreshToken"`
+	ExpiresAt        int64  `json:"expiresAt,omitempty"`
+	RefreshExpiresAt int64  `json:"refreshExpiresAt,omitempty"`
 }
 
 // Redact 返回用于安全展示的脱敏账号对象。
@@ -50,15 +56,18 @@ func (a Account) Redact() RedactedAccount {
 		mask = "******"
 	}
 	return RedactedAccount{
-		ID:        a.ID,
-		Side:      a.Side,
-		UID:       a.UID,
-		Nickname:  a.Nickname,
-		Domain:    a.Domain,
-		CreatedAt: a.CreatedAt,
-		UpdatedAt: a.UpdatedAt,
-		Active:    a.Active,
-		TokenMask: mask,
+		ID:               a.ID,
+		Side:             a.Side,
+		UID:              a.UID,
+		Nickname:         a.Nickname,
+		Domain:           a.Domain,
+		CreatedAt:        a.CreatedAt,
+		UpdatedAt:        a.UpdatedAt,
+		Active:           a.Active,
+		TokenMask:        mask,
+		HasRefreshToken:  strings.TrimSpace(a.RefreshToken) != "",
+		ExpiresAt:        a.ExpiresAt,
+		RefreshExpiresAt: a.RefreshExpiresAt,
 	}
 }
 
@@ -105,15 +114,18 @@ func listAccountsLocked(p *variant.Probe, side variant.ID) ([]Account, error) {
 				name = "默认账号"
 			}
 			initAcc := Account{
-				ID:        "acc_default",
-				Side:      string(side),
-				UID:       curr.UID,
-				Nickname:  name,
-				Token:     curr.Token,
-				Domain:    curr.Domain,
-				CreatedAt: time.Now().UnixMilli(),
-				UpdatedAt: time.Now().UnixMilli(),
-				Active:    true,
+				ID:               "acc_default",
+				Side:             string(side),
+				UID:              curr.UID,
+				Nickname:         name,
+				Token:            curr.Token,
+				RefreshToken:     curr.RefreshToken,
+				ExpiresAt:        curr.ExpiresAtMs,
+				RefreshExpiresAt: curr.RefreshExpiresAtMs,
+				Domain:           curr.Domain,
+				CreatedAt:        time.Now().UnixMilli(),
+				UpdatedAt:        time.Now().UnixMilli(),
+				Active:           true,
 			}
 			list = append(list, initAcc)
 			_ = saveListLocked(side, list)
@@ -161,6 +173,15 @@ func SaveAccount(p *variant.Probe, side variant.ID, acc Account, setAsActive boo
 			if acc.CreatedAt == 0 {
 				acc.CreatedAt = list[i].CreatedAt
 			}
+			if acc.RefreshToken == "" && list[i].RefreshToken != "" {
+				acc.RefreshToken = list[i].RefreshToken
+			}
+			if acc.ExpiresAt == 0 && list[i].ExpiresAt != 0 {
+				acc.ExpiresAt = list[i].ExpiresAt
+			}
+			if acc.RefreshExpiresAt == 0 && list[i].RefreshExpiresAt != 0 {
+				acc.RefreshExpiresAt = list[i].RefreshExpiresAt
+			}
 			if setAsActive {
 				acc.Active = true
 			} else {
@@ -196,10 +217,13 @@ func SaveAccount(p *variant.Probe, side variant.ID, acc Account, setAsActive boo
 	// 若激活该账号，原子同步写入官方凭据文件
 	if setAsActive && p != nil {
 		cred := Credential{
-			Token:    acc.Token,
-			UID:      acc.UID,
-			Nickname: acc.Nickname,
-			Domain:   acc.Domain,
+			Token:              acc.Token,
+			RefreshToken:       acc.RefreshToken,
+			UID:                acc.UID,
+			Nickname:           acc.Nickname,
+			Domain:             acc.Domain,
+			ExpiresAtMs:        acc.ExpiresAt,
+			RefreshExpiresAtMs: acc.RefreshExpiresAt,
 		}
 		if err := Write(p, side, cred); err != nil {
 			return nil, fmt.Errorf("写入官方凭据失败: %w", err)
@@ -239,10 +263,13 @@ func SwitchAccount(p *variant.Probe, side variant.ID, accountID string) (*Accoun
 
 	if p != nil {
 		cred := Credential{
-			Token:    target.Token,
-			UID:      target.UID,
-			Nickname: target.Nickname,
-			Domain:   target.Domain,
+			Token:              target.Token,
+			RefreshToken:       target.RefreshToken,
+			UID:                target.UID,
+			Nickname:           target.Nickname,
+			Domain:             target.Domain,
+			ExpiresAtMs:        target.ExpiresAt,
+			RefreshExpiresAtMs: target.RefreshExpiresAt,
 		}
 		if err := Write(p, side, cred); err != nil {
 			return nil, fmt.Errorf("切换写出官方凭据失败: %w", err)
@@ -279,10 +306,13 @@ func DeleteAccount(p *variant.Probe, side variant.ID, accountID string) error {
 		newList[0].Active = true
 		if p != nil {
 			cred := Credential{
-				Token:    newList[0].Token,
-				UID:      newList[0].UID,
-				Nickname: newList[0].Nickname,
-				Domain:   newList[0].Domain,
+				Token:              newList[0].Token,
+				RefreshToken:       newList[0].RefreshToken,
+				UID:                newList[0].UID,
+				Nickname:           newList[0].Nickname,
+				Domain:             newList[0].Domain,
+				ExpiresAtMs:        newList[0].ExpiresAt,
+				RefreshExpiresAtMs: newList[0].RefreshExpiresAt,
 			}
 			_ = Write(p, side, cred)
 		}

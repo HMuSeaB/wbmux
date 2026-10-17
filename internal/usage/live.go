@@ -98,6 +98,10 @@ type LiveAccount struct {
 	// UnsealedBy 是解开信封时借用的客户端主程序，供界面如实说明
 	// "数据是从哪来的"。为空表示没走解密。
 	UnsealedBy string `json:"unsealedBy,omitempty"`
+	// HasRefreshToken 表示当前活跃凭据是否支持长效自动无感保鲜。
+	HasRefreshToken bool `json:"hasRefreshToken,omitempty"`
+	// ExpiresAt 是当前 AccessToken 的到期毫秒时间戳。
+	ExpiresAt int64 `json:"expiresAt,omitempty"`
 }
 
 // liveEndpoint 与两侧产品配置的 endpoint 字段一致（产品身份字段，不改）。
@@ -316,6 +320,8 @@ func fetchLiveAccount(probe *variant.Probe, id variant.ID) *LiveAccount {
 	acc.Nickname = cred.Nickname
 	acc.CredKind = credKindOf(cred)
 	acc.UnsealedBy = cred.UnsealedBy
+	acc.HasRefreshToken = strings.TrimSpace(cred.RefreshToken) != ""
+	acc.ExpiresAt = cred.ExpiresAtMs
 	if err != nil {
 		// 这里如实回 credKindOf 的判定：还是信封就是 envelope，
 		// 界面据此提示"要装/修客户端"，而不是笼统一句读不到。

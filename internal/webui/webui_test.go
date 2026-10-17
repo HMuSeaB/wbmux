@@ -544,6 +544,18 @@ func TestHandleAccountsAPI(t *testing.T) {
 	if rSwitchGet.code != 405 {
 		t.Errorf("GET 应返回 405，得到 %d", rSwitchGet.code)
 	}
+
+	// 4. 刷新账号测试：GET 返回 405
+	rRefreshGet := e.do(t, "GET", "/api/accounts/refresh", "", true)
+	if rRefreshGet.code != 405 {
+		t.Errorf("GET /api/accounts/refresh 应返回 405，得到 %d", rRefreshGet.code)
+	}
+
+	// 5. 刷新不存在账号返回 400
+	rRefreshBad := e.do(t, "POST", "/api/accounts/refresh", `{"side":"intl","id":"acc_non_exist"}`, true)
+	if rRefreshBad.code != 400 {
+		t.Errorf("刷新不存在账号应返回 400，得到 %d", rRefreshBad.code)
+	}
 }
 
 func TestHandleAuthFlowAPI(t *testing.T) {

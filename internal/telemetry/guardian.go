@@ -28,9 +28,10 @@ type Guardian struct {
 	homeDir    string
 	goos       string
 	endpoint   string
-	credGetter func() (token, uid string, err error)
-	status     Status
-	client     *http.Client
+	credGetter     func() (token, uid string, err error)
+	tokenRefresher func(ctx context.Context) (bool, error)
+	status         Status
+	client         *http.Client
 }
 
 // NewGuardian 创建一个心跳守护器实例。
@@ -57,8 +58,18 @@ func (g *Guardian) GetStatus() Status {
 	return g.status
 }
 
+// SetTokenRefresher 设置在心跳前执行的令牌保鲜检查回调。
+func (g *Guardian) SetTokenRefresher(fn func(ctx context.Context) (bool, error)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.tokenRefresher = fn
+}
+
 // PingOnce 发送一次轻量级心跳与配置刷新。
 func (g *Guardian) PingOnce(ctx context.Context) error {
+	if g.tokenRefresher != nil {
+		_, _ = g.tokenRefresher(ctx)
+	}
 	if g.credGetter == nil {
 		return fmt.Errorf("未配置凭据获取器")
 	}

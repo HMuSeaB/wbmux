@@ -3691,18 +3691,59 @@
             style: "background:rgba(255,255,255,0.025);border:1px solid " + (a.active ? "rgba(16,185,129,0.35)" : "var(--g5)") +
                    ";border-radius:var(--r-sm);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;transition:all .15s"
           });
-          var left = el("div", { style: "display:flex;flex-direction:column;gap:3px;overflow:hidden" }, [
-            el("div", { style: "display:flex;align-items:center;gap:8px" }, [
-              el("span", { style: "font-weight:600;font-size:13px;color:var(--ink-1)", text: a.nickname || a.uid }),
-              a.active ? el("span", { class: "pill ok", text: "当前活跃" }) : null
-            ]),
+          var tagPills = [];
+          if (a.active) {
+            tagPills.push(el("span", { class: "pill ok", text: "当前活跃" }));
+          }
+          if (a.hasRefreshToken) {
+            tagPills.push(el("span", { class: "pill", style: "background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.38);color:#a5b4fc", text: "⚡ 自动无感保鲜" }));
+          }
+          if (a.expiresAt > 0) {
+            var rem = a.expiresAt - Date.now();
+            if (rem > 0) {
+              var days = Math.ceil(rem / 86400000);
+              tagPills.push(el("span", { class: "pill ok", style: "font-size:10.5px;padding:1px 6px", text: "剩 " + days + " 天" }));
+            } else {
+              tagPills.push(el("span", { class: "pill bad", style: "font-size:10.5px;padding:1px 6px", text: "已到期" }));
+            }
+          }
+
+          var left = el("div", { style: "display:flex;flex-direction:column;gap:4px;overflow:hidden" }, [
+            el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
+              el("span", { style: "font-weight:600;font-size:13px;color:var(--ink-1)", text: a.nickname || a.uid })
+            ].concat(tagPills)),
             el("div", { style: "font-size:11.5px;color:var(--ink-3);font-family:var(--mono)" }, [
               "UID: " + (a.uid ? (a.uid.length > 20 ? a.uid.slice(0, 18) + "…" : a.uid) : "未知"),
               " · Token: " + (a.tokenMask || "******")
             ])
           ]);
 
-          var right = el("div", { style: "display:flex;align-items:center;gap:8px;flex-shrink:0" });
+          var right = el("div", { style: "display:flex;align-items:center;gap:6px;flex-shrink:0" });
+          if (a.hasRefreshToken) {
+            var btnRefresh = el("button", {
+              class: "ghost",
+              style: "padding:3px 8px;font-size:11px;color:#a5b4fc",
+              text: "保鲜",
+              title: "使用 RefreshToken 立即无感换新 AccessToken",
+              onclick: function () {
+                btnRefresh.disabled = true;
+                btnRefresh.textContent = "保鲜中…";
+                api("/api/accounts/refresh", {
+                  method: "POST",
+                  body: JSON.stringify({ side: side, id: a.id })
+                }).then(function () {
+                  toast("已成功为「" + (a.nickname || a.uid) + "」保鲜换新 Token", "ok");
+                  renderList();
+                  loadUsage(true, true);
+                }).catch(function (e) {
+                  toast("保鲜失败：" + e.message, "bad");
+                  btnRefresh.disabled = false;
+                  btnRefresh.textContent = "保鲜";
+                });
+              }
+            });
+            right.appendChild(btnRefresh);
+          }
           if (!a.active) {
             var btnSwitch = el("button", {
               class: "ghost",
@@ -4365,7 +4406,8 @@
         ]),
         el("div", { class: "dash-user-badge" }, [
           intlAcc,
-          el("span", { class: "pill " + (intlLv.ok ? "ok" : "ghost"), text: intlLv.ok ? "实时通路" : "未录入" })
+          el("span", { class: "pill " + (intlLv.ok ? "ok" : "ghost"), text: intlLv.ok ? "实时通路" : "未录入" }),
+          (intlLv.ok && intlLv.hasRefreshToken) ? el("span", { class: "pill ok", style: "background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.38);color:#a5b4fc", text: "⚡ 自动无感保鲜" }) : null
         ])
       ]),
       el("div", { style: "display:flex;gap:6px;align-items:center" }, [

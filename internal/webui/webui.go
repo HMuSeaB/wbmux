@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -216,6 +217,17 @@ func New(opts Options) (*Server, error) {
 			return c.Token, c.UID, nil
 		},
 	)
+	srv.guardian.SetTokenRefresher(func(ctx context.Context) (bool, error) {
+		refreshed, didRefresh, err := credential.RefreshActiveIfNeeded(ctx, probeHTTPClient(), srv.probe(), variant.Intl, 2*time.Hour)
+		if didRefresh && refreshed != nil {
+			srv.note(ProxyLogEntry{
+				Level: "info",
+				Text:  fmt.Sprintf("遥测守护已自动为活跃账号静默保鲜续期：%s (%s)", refreshed.Nickname, refreshed.UID),
+			})
+			usage.InvalidateLiveCache(variant.Intl)
+		}
+		return didRefresh, err
+	})
 	return srv, nil
 }
 
@@ -285,6 +297,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/accounts/list", s.guard(s.handleAccountsList))
 	mux.HandleFunc("/api/accounts/switch", s.guard(s.handleAccountSwitch))
 	mux.HandleFunc("/api/accounts/delete", s.guard(s.handleAccountDelete))
+	mux.HandleFunc("/api/accounts/refresh", s.guard(s.handleAccountRefresh))
 	mux.HandleFunc("/api/auth/start", s.guard(s.handleAuthStart))
 	mux.HandleFunc("/api/auth/poll", s.guard(s.handleAuthPoll))
 
@@ -1385,6 +1398,40 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	usage.InvalidateLiveCache(side)
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleAccountRefresh 使用 RefreshToken 刷新指定账号（或当前激活账号）的 AccessToken。
+func (s *Server) handleAccountRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Side string `json:"side"`
+		ID   string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析")
+		return
+	}
+	side := variant.ID(strings.TrimSpace(req.Side))
+	if side == "" {
+		side = variant.Intl
+	}
+	acc, err := credential.RefreshAccount(r.Context(), probeHTTPClient(), s.probe(), side, strings.TrimSpace(req.ID))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "刷新失败: "+err.Error())
+		return
+	}
+	usage.InvalidateLiveCache(side)
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Text:  fmt.Sprintf("已成功刷新并保鲜账号：%s (%s)", acc.Nickname, acc.UID),
+	})
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"account": acc.Redact(),
+	})
 }
 
 // handleAuthStart 发起官方原生拟真登录授权流程。

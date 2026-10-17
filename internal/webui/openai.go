@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -503,14 +504,14 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	for k, v := range headers {
 		req2.Header.Set(k, v)
 	}
-	s.forwardChat(w, req2, route, up, time.Now())
+	s.forwardChat(w, req2, out, route, up, time.Now())
 }
 
 // forwardChat 发出去、按结果回给客户端，并在两种结局上各记一条日志。
 //
 // 抽出来是因为"内置后端"与"自备提供方"两条路的后半段完全一样：
 // 都是流式转发/聚合、都要透传上游状态码、都要在日志里写清楚是谁拒绝的。
-func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route upstreamRoute, up upstreamRequest, started time.Time) {
+func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody []byte, route upstreamRoute, up upstreamRequest, started time.Time) {
 	resp, err := probeHTTPClient().Do(req)
 	if err != nil {
 		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
@@ -521,6 +522,54 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, route ups
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && route.Provider == nil {
+			// 尝试使用 RefreshToken 无感刷新并透明重试一次
+			newAcc, errRefresh := credential.RefreshAccount(req.Context(), probeHTTPClient(), s.probe(), variant.Intl, "active")
+			if errRefresh == nil && newAcc != nil && newAcc.Token != "" {
+				s.note(ProxyLogEntry{
+					Level: "warn",
+					Model: route.Model,
+					Text:  fmt.Sprintf("上游 401 令牌过期，已自动通过 RefreshToken 无感保鲜并重试请求 (UID: %s)", newAcc.UID),
+				})
+				usage.InvalidateLiveCache(variant.Intl)
+				reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
+				if errReq == nil {
+					for k, v := range req.Header {
+						reqRetry.Header[k] = v
+					}
+					reqRetry.Header.Set("Authorization", "Bearer "+newAcc.Token)
+					if newAcc.UID != "" {
+						reqRetry.Header.Set("X-User-Id", newAcc.UID)
+					}
+					respRetry, errRetry := probeHTTPClient().Do(reqRetry)
+					if errRetry == nil && respRetry.StatusCode == http.StatusOK {
+						defer respRetry.Body.Close()
+						s.observe(route.Model, http.StatusOK, "")
+						var sent int64
+						if up.ClientStream {
+							sent = s.streamChatThrough(w, respRetry.Body)
+						} else {
+							sent = s.aggregateChat(w, respRetry.Body)
+						}
+						s.note(ProxyLogEntry{
+							Level:  "ok",
+							Model:  route.Model,
+							Tools:  up.Tools,
+							Stream: up.ClientStream,
+							MS:     time.Since(started).Milliseconds(),
+							Text: fmt.Sprintf("重试转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
+								route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
+								describeBytes(sent), time.Since(started).Round(time.Millisecond)),
+						})
+						return
+					}
+					if errRetry == nil {
+						_ = respRetry.Body.Close()
+					}
+				}
+			}
+		}
+
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		msg := upstreamMessage(body)
 		// 记下"这个模型此刻不能用"——面板据此告诉用户现在能切哪个、

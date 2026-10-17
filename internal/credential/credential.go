@@ -59,6 +59,9 @@ type Credential struct {
 	ExpiresAtMs        int64 `json:"expiresAt,omitempty"`
 	RefreshExpiresAtMs int64 `json:"refreshExpiresAt,omitempty"`
 
+	// RefreshToken 是刷新令牌（若已知），可用于长效无感保鲜换新。
+	RefreshToken string `json:"refreshToken,omitempty"`
+
 	// Sealed 表示磁盘上原本是加密信封。
 	Sealed bool `json:"sealed,omitempty"`
 	// Unsealed 表示信封是被我们借客户端运行时当场解开的（不是文件里就是明文）。
@@ -160,6 +163,7 @@ func Read(p *variant.Probe, id variant.ID) (Credential, error) {
 type doc struct {
 	Auth struct {
 		AccessToken      json.RawMessage `json:"accessToken"`
+		RefreshToken     json.RawMessage `json:"refreshToken,omitempty"`
 		Domain           string          `json:"domain"`
 		ExpiresAt        int64           `json:"expiresAt"`
 		RefreshExpiresAt int64           `json:"refreshExpiresAt"`
@@ -193,6 +197,10 @@ func parse(raw []byte) (Credential, error) {
 			return c, fmt.Errorf("凭据文件里 accessToken 是空串")
 		}
 		c.Token = token
+		var refToken string
+		if err := json.Unmarshal(d.Auth.RefreshToken, &refToken); err == nil {
+			c.RefreshToken = strings.TrimSpace(refToken)
+		}
 		return c, nil
 	}
 
@@ -584,6 +592,7 @@ func Write(p *variant.Probe, id variant.ID, cred Credential) error {
 
 	type authSection struct {
 		AccessToken      string `json:"accessToken"`
+		RefreshToken     string `json:"refreshToken,omitempty"`
 		Domain           string `json:"domain"`
 		ExpiresAt        int64  `json:"expiresAt"`
 		RefreshExpiresAt int64  `json:"refreshExpiresAt"`
@@ -600,6 +609,7 @@ func Write(p *variant.Probe, id variant.ID, cred Credential) error {
 	}{
 		Auth: authSection{
 			AccessToken:      token,
+			RefreshToken:     cred.RefreshToken,
 			Domain:           domain,
 			ExpiresAt:        expiresAt,
 			RefreshExpiresAt: refreshExpiresAt,

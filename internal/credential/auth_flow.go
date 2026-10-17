@@ -305,11 +305,23 @@ func (m *LoginFlowManager) PollLoginStatus(ctx context.Context, state string) (*
 		domain = OfficialAuthDomain
 	}
 
+	nowMs := time.Now().UnixMilli()
+	var expiresAt, refreshExpiresAt int64
+	if tokenRes.Data.ExpiresIn > 0 {
+		expiresAt = nowMs + tokenRes.Data.ExpiresIn*1000
+	}
+	if tokenRes.Data.RefreshExpiresIn > 0 {
+		refreshExpiresAt = nowMs + tokenRes.Data.RefreshExpiresIn*1000
+	}
+
 	acc := Account{
-		UID:      uid,
-		Nickname: nickname,
-		Token:    accessToken,
-		Domain:   domain,
+		UID:              uid,
+		Nickname:         nickname,
+		Token:            accessToken,
+		RefreshToken:     strings.TrimSpace(tokenRes.Data.RefreshToken),
+		ExpiresAt:        expiresAt,
+		RefreshExpiresAt: refreshExpiresAt,
+		Domain:           domain,
 	}
 
 	saved, err := SaveAccount(m.probe, variant.Intl, acc, true)
