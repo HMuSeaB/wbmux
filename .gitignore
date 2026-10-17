@@ -25,3 +25,9 @@ __pycache__/
 *.swp
 .DS_Store
 Thumbs.db
+
+# 本地私有研究与备份工件
+reverse.md
+*.bak
+/.antigravity_docs/
+
