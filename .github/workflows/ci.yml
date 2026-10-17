@@ -3,7 +3,17 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.antigravity_docs/**'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - '.antigravity_docs/**'
+      - 'docs/**'
+      - 'LICENSE'
 
 permissions:
   contents: read

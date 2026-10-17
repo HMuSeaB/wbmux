@@ -100,19 +100,74 @@
     color: var(--ink-3); letter-spacing: 0;
   }
 
-  .nav { display: flex; flex-direction: column; gap: 1px; margin-top: 22px; }
+  .nav { display: flex; flex-direction: column; gap: 1px; margin-top: 14px; overflow-y: auto; flex: 1; padding-right: 2px; }
+  .nav::-webkit-scrollbar { width: 4px; }
+  .nav::-webkit-scrollbar-thumb { background: var(--g4); border-radius: 4px; }
+  .nav-group { margin-top: 12px; display: flex; flex-direction: column; gap: 1px; }
+  .nav-group:first-child { margin-top: 0; }
+  .nav-group-title {
+    padding: 6px 10px 4px;
+    font-size: 10.5px;
+    font-weight: 650;
+    color: var(--ink-3);
+    letter-spacing: .4px;
+    text-transform: uppercase;
+  }
   .nav-item {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 10px; border-radius: var(--r-sm);
+    padding: 7px 10px; border-radius: var(--r-sm);
     font-size: 13px; color: var(--ink-2);
     cursor: pointer; user-select: none;
-    transition: background .1s, color .1s;
+    transition: background .12s ease, color .12s ease;
   }
-  .nav-item .ico { color: var(--ink-3); transition: color .1s; }
+  .nav-item .ico { color: var(--ink-3); transition: color .12s ease; }
   .nav-item:hover { color: var(--ink); background: var(--g2); }
   .nav-item:hover .ico { color: var(--ink-2); }
-  .nav-item.active { color: var(--ink); background: var(--g3); font-weight: 550; }
+  .nav-item.active { color: #fff; background: var(--g3); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
   .nav-item.active .ico { color: var(--brand); }
+  .nav-badge {
+    margin-left: auto; font-size: 10.5px; padding: 1px 6px;
+    border-radius: 10px; background: var(--g4); color: var(--ink-3);
+    font-family: var(--mono);
+  }
+  .nav-badge.ok { background: rgba(74, 157, 106, 0.2); color: var(--ok); }
+
+  /* ---------- 主动作看板 (Hero Card) ---------- */
+  .hero-card {
+    background: linear-gradient(145deg, #161920 0%, #111317 100%);
+    border: 1px solid var(--g5);
+    border-radius: var(--r-lg);
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    position: relative;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.3);
+  }
+  .hero-card-head {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+  }
+  .hero-title {
+    font-size: 14.5px; font-weight: 650; color: #fff; display: flex; align-items: center; gap: 8px;
+  }
+  .hero-badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 12px;
+    background: rgba(99, 179, 196, 0.15); color: var(--brand);
+    font-weight: 550; border: 1px solid rgba(99, 179, 196, 0.3);
+  }
+  .hero-desc {
+    color: var(--ink-2); font-size: 13px; line-height: 1.6; margin-bottom: 14px;
+  }
+  .hero-actions {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .btn-hero {
+    background: var(--brand); color: #0b0c0e; font-weight: 650;
+    border: none; padding: 8px 16px; border-radius: var(--r-sm);
+    font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    transition: transform .1s, filter .1s;
+  }
+  .btn-hero:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .btn-hero:active { transform: translateY(0); }
+
 
   .sidebar-foot {
     margin-top: auto; display: flex; flex-direction: column; gap: 8px;
@@ -527,22 +582,33 @@
     <p class="brand-sub ver" id="side-msg"
        style="min-height:16px;margin:-2px 0 0;font-size:11.5px;color:var(--ink-3)"></p>
     <nav class="nav">
-      <!-- 每日签到既是侧栏第一项，也是**默认落地页**（见下面它的 section
-           没有 hidden）。用户的原话是"一打开 wbmux 就签上了，而不是切换
-           到那个 tab"——只把它排到第一位不够，那不解决"打开看到的是别的页"。
-           断一天连签就归零，所以把"今天签没签"摆在开门第一眼。 -->
-      <div class="nav-item active" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</div>
-      <div class="nav-item" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>状态与额度</div>
-      <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
-      <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>提供方</div>
-      <div class="nav-item" data-page="compact"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>压缩阈值</div>
-      <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>切换与双开</div>
-      <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>历史搬运</div>
-      <div class="nav-item" data-page="sessions"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>会话中心</div>
-      <div class="nav-item" data-page="workspace"><svg class="ico" aria-hidden="true"><use href="#i-folder"/></svg>工作区</div>
-      <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>体检</div>
-      <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
-      <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
+      <div class="nav-group">
+        <div class="nav-group-title">模型与代理</div>
+        <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>概览与额度</div>
+        <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>自定义模型 (BYOK)</div>
+        <div class="nav-item" data-page="compact"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>上下文保活 (1M)</div>
+        <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">客户端管理</div>
+        <div class="nav-item" data-page="switch"><svg class="ico" aria-hidden="true"><use href="#i-swap"/></svg>双开与启动</div>
+        <div class="nav-item" data-page="doctor"><svg class="ico" aria-hidden="true"><use href="#i-pulse"/></svg>环境体检</div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">会话与数据</div>
+        <div class="nav-item" data-page="migrate"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>跨端历史搬运</div>
+        <div class="nav-item" data-page="sessions"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>会话中心</div>
+        <div class="nav-item" data-page="workspace"><svg class="ico" aria-hidden="true"><use href="#i-folder"/></svg>工作区</div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">辅助工具箱</div>
+        <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到<span class="nav-badge" id="nav-checkin-badge">自动</span></div>
+        <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
+        <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
+      </div>
     </nav>
     <div class="sidebar-foot">
       <span class="foot-note" id="settings-note"></span>
@@ -562,9 +628,47 @@
     </div>
   </aside>
   <main class="main">
-    <div data-page="status" hidden>
+    <div data-page="status">
+      <!-- 1.0 核心主路径引导看板 (Hero Card) -->
+      <div class="hero-card">
+        <div class="hero-card-head">
+          <div class="hero-title">
+            <svg class="ico" style="color:var(--brand)" aria-hidden="true"><use href="#i-server"/></svg>
+            无缝模式：国际免费大模型快速注入
+          </div>
+          <span class="hero-badge">强烈推荐</span>
+        </div>
+        <div class="hero-desc">
+          将国际端限时免费的顶级模型（DeepSeek-V4.1-Flash / Hy4 preview 等 0.00x 费率）一键注入国内客户端自定义模型清单。<br>
+          国内客户端继续使用小程序远程控制，同时零成本享受国际大模型。注入后点击重启客户端即可生效。
+        </div>
+        <div class="hero-actions">
+          <button class="btn-hero" id="btn-inject" title="把国际限时免费模型注入国内客户端（经本机代理转发、扣国际额度）">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-up"/></svg>
+            一键注入免费模型到国内端
+          </button>
+          <button class="ghost" id="btn-hero-restart" title="重启国内客户端使新注入的模型生效">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>
+            重启客户端生效
+          </button>
+          <button class="ghost" id="btn-hero-both" title="两侧各用各的安装同时启动（国内管小程序，国际用模型）">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-swap"/></svg>
+            双开两侧客户端
+          </button>
+          <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证通路与扣费">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
+            一键测试通路
+          </button>
+          <span class="hint" id="usage-note" style="margin:0"></span>
+        </div>
+        <div id="probe-body" style="margin-top:10px"></div>
+      </div>
+
   <section id="usage-sec">
-    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-gauge"/></svg>额度与计费</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h2 style="margin:0"><svg class="ico-sm" aria-hidden="true"><use href="#i-gauge"/></svg>额度与计费</h2>
+      <button class="ghost" id="btn-usage-scan" style="padding:4px 10px;font-size:12px"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>刷新额度</button>
+    </div>
     <details class="fold" style="margin-bottom:10px">
       <summary>三种用法、怎么分清当前窗口、扣哪个额度</summary>
       <div class="desc" style="margin-top:6px">
@@ -578,15 +682,6 @@
       按会话文件所在的数据目录判断归属。<strong>频率超限</strong>等重置即可；
       <strong>额度用尽</strong>要充值，不会自己恢复。
     </p>
-    <div class="row" style="margin-top:12px">
-      <button id="btn-usage-scan">查看额度与消耗</button>
-      <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证后端通路与计费归属；优先用限时免费模型，基本零成本"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>一键测试</button>
-      <button class="ghost" id="btn-inject" title="把国际限时免费模型注入国内客户端的自定义模型清单（经本机代理转发、扣国际额度）；注入后重启国内客户端生效"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-up"/></svg>注入国际模型到国内客户端</button>
-      <span class="hint" id="usage-note" style="margin:0"></span>
-    </div>
-    <div id="probe-body" style="margin-top:8px"></div>
-    <div class="row" style="margin-top:4px">
-    </div>
     <div id="usage-body" style="margin-top:12px"></div>
   </section>
 
@@ -828,7 +923,7 @@
   </section>
 
     </div>
-    <div data-page="checkin">
+    <div data-page="checkin" hidden>
   <section>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到</h2>
     <p class="sub">
@@ -2067,6 +2162,28 @@
   // "页面自己在自动签"——两者性质不同，不该共用一个入口。
   //
   // atBoot 为 true 表示是**打开界面时**自动跑的（不是用户切到这一页）。
+  // updateCheckinBadge 同步更新侧边栏上的签到徽章状态
+  function updateCheckinBadge(data) {
+    var b = document.getElementById("nav-checkin-badge");
+    if (!b) return;
+    if (!data) {
+      b.textContent = "未连接";
+      b.className = "nav-badge";
+      return;
+    }
+    var st = data.status || {};
+    if (st.todayCheckedIn || (data.skipped && /今日已签|已领过|已签/.test(data.note || ""))) {
+      b.textContent = "已签";
+      b.className = "nav-badge ok";
+    } else if (st.active === false) {
+      b.textContent = "未开";
+      b.className = "nav-badge";
+    } else {
+      b.textContent = "待签";
+      b.className = "nav-badge";
+    }
+  }
+
   // 两种情况都照常签，区别只在提示语：打开界面时用户可能压根没在看这一页，
   // 得在页面上留一句"刚才是自动签的"，免得他以为要手动补一次。
   function loadCheckin(atBoot) {
@@ -2090,6 +2207,7 @@
         // 自动签到的回话形状与 /api/checkin 一致（都带 status/label），
         // 额外多了 skipped / note 说明"这次做了什么"。
         checkinLast = { side: data.side, label: data.label, status: data.status };
+        updateCheckinBadge(data);
         renderAutoNote(data, atBoot);
         if (data.status) {
           renderCheckin(checkinLast);
@@ -2103,6 +2221,7 @@
       })
       .catch(function (e) {
         checkinLast = null;
+        updateCheckinBadge(null);
         clear(box);
         box.appendChild(el("div", { class: "note bad", text: "自动签到失败：" + e.message }));
       })
@@ -2185,6 +2304,7 @@
   }
 
   function renderCheckin(data) {
+    updateCheckinBadge(data);
     var box = document.getElementById("checkin-body");
     var st = (data && data.status) || {};
     clear(box);
@@ -3471,6 +3591,10 @@
   document.getElementById("btn-probe").addEventListener("click", runProbe);
   document.getElementById("btn-inject").addEventListener("click", runInject);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
+  var btnHeroBoth = document.getElementById("btn-hero-both");
+  if (btnHeroBoth) btnHeroBoth.addEventListener("click", launchBoth);
+  var btnHeroRestart = document.getElementById("btn-hero-restart");
+  if (btnHeroRestart) btnHeroRestart.addEventListener("click", restartClient);
   document.getElementById("btn-quit").addEventListener("click", quit);
   // 侧边栏的启动按钮跟页面里那个是同一个动作，只是位置常驻。
   document.getElementById("btn-launch-side").addEventListener("click", launch);
