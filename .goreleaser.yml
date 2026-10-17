@@ -66,30 +66,42 @@ checksum:
   name_template: checksums.txt
 
 changelog:
-  sort: asc
+  sort: desc
   filters:
-    # 面向用户的变更清单只留 feat / fix。构建、文档、测试、CI 这些
-    # 对使用者没有意义，混在里面只会淹掉真正要看的条目。
     exclude:
       - '^chore'
       - '^docs'
       - '^test'
       - '^ci'
       - '^build'
-      - '^refactor'
       - typo
+  groups:
+    - title: '🚀 新特性 (Features)'
+      regexp: '^.*?feat(\([a-zA-Z0-9_\-\.]+\))??!?:'
+      order: 0
+    - title: '🐛 Bug 修复 (Bug Fixes)'
+      regexp: '^.*?fix(\([a-zA-Z0-9_\-\.]+\))??!?:'
+      order: 1
+    - title: '⚡ 优化与重构 (Refactoring & Perf)'
+      regexp: '^.*?(refactor|perf)(\([a-zA-Z0-9_\-\.]+\))??!?:'
+      order: 2
+    - title: '📦 其他更新 (Others)'
+      order: 999
 
 release:
-  # 保持草稿：发布前需要人工过一眼，确认变更清单与已知限制都还准确。
-  # 要正式发布：gh release edit <tag> --draft=false
-  draft: true
+  # 自动发布为公开版本
+  draft: false
   header: |
-    下载对应平台的 zip，解压后把 `wbmux` 放进 `PATH` 即可。零运行时依赖。
+    ### 📦 下载与安装指引
+    下载对应平台的 zip，解压后把 `wbmux`（Windows 为 `wbmux.exe`）放进常用目录或系统 `PATH` 即可。零运行时依赖。
+    - **Windows**：下载 `windows_amd64.zip`；
+    - **macOS**：Apple Silicon (M系列) 下载 `darwin_arm64.zip`，Intel 芯片下载 `darwin_amd64.zip`；
+    - **Linux**：下载 `linux_amd64.zip`。
 
-    **该下哪个**：Windows 一律 `windows_amd64`；macOS 看芯片（Apple Silicon /
-    M 系列 → `darwin_arm64`，Intel → `darwin_amd64`）；Linux → `linux_amd64`。
-    没有 32 位版，也没有 Windows / Linux 的 arm64 版（原因见
-    [`.goreleaser.yml`](https://github.com/HMuSeaB/wbmux/blob/main/.goreleaser.yml)）。
+  footer: |
+    ---
+    <details>
+    <summary><b>📖 运行机制、使用帮助与已知限制（点击展开）</b></summary>
 
     ```
     wbmux gui          # 打开图形界面（双击 wbmux.exe 同此）
@@ -103,43 +115,19 @@ release:
     wbmux shortcut     # 在桌面创建启动快捷方式
     ```
 
-    > **图形界面**由内嵌网页提供，只在 `127.0.0.1` 上监听，用系统浏览器
-    > （优先 Edge / Chrome 的 `--app=` 模式）打开。**默认不自动退出**——
-    > 它同时是注入到国内客户端的那些模型的转发服务，自己退掉会让它们全部
-    > 报 502。想让它空闲就退用 `--idle 30m`；退出口是托盘右键或界面里的
-    > 「关闭界面」。
+    > **图形界面**由内嵌网页提供，只在 `127.0.0.1` 上监听，用系统浏览器（优先 Edge / Chrome 的 `--app=` 模式）打开。**默认不自动退出**——它同时是注入到国内客户端的那些模型的转发服务。想让它空闲就退用 `--idle 30m`；退出口是托盘右键或界面里的「关闭界面」。
 
-    > **签到**（新）：只对国内账号有意义，国际侧没开这个活动。领取会**改账号
-    > 状态**，所以不会自动执行——界面进页面只查询、领取要你亲手点按钮；
-    > 命令行默认也只查，要领必须敲 `checkin claim`。它是幂等的：今天签过会
-    > 如实回报「已签过」，不会重复领，也不算失败。国内版 5.6+ 的凭据是加密
-    > 信封，读它需要本机装着国内版客户端（wbmux 会借客户端自己的运行时解）。
+    > **签到**：只对国内账号有意义，国际侧没开这个活动。自动签到仅在未签时领取，开机或进界面自动执行；命令行默认也只查，要领必须敲 `checkin claim`。
 
-    > **历史搬运**：搬五类东西——会话、附件、内容与配置、技能、记忆。
-    > 默认只读，加 `--yes` 才执行；绝不覆盖目标端已有内容，写索引前会先整份
-    > 备份目标端数据库。
-    >
-    > 会话里的图片存的是绝对路径，所以迁移会同时搬走被引用到的图片，并**把
-    > 会话内的路径改写到目标端数据目录**——这样删掉来源端目录后图还在。代价是
-    > 副本与原文件不再逐字节一致。
-    >
-    > 设备绑定的东西（`keyblob`、`device-id`、`edge-sync-mapping*.db`）与缓存
-    > 一律不搬，用白名单把"内容"和"设备"分开。
+    > **历史搬运**：搬五类东西——会话、附件、内容与配置、技能、记忆。默认只读，加 `--yes` 才执行；绝不覆盖目标端已有内容。设备绑定数据（`keyblob`、`device-id`）与缓存一律不搬。
 
-    > **已知限制**：远程控制里的微信系渠道（小程序 / 微信客服 / 微信 bot）
-    > 走目标后端的代理接口，切到国际后端后会失效，且入口仍会显示
-    > （看得见、点不动）。Slack / Discord / Telegram 等直连型渠道不受影响。
-    > 详见 [README 的「已知限制」](https://github.com/HMuSeaB/wbmux#已知限制)。
+    > **已知限制**：远程控制里的微信系渠道（小程序 / 微信客服 / 微信 bot）走目标后端的代理接口，切到国际后端后会失效。Slack / Discord / Telegram 等直连型渠道不受影响。详见 [README](https://github.com/HMuSeaB/wbmux)。
 
-    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；签到的凭据
-    > 解密链路只在 Windows 上跑通；未确认启动后的客户端真的连上目标后端；
-    > 未完成一次真实登录。
+    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；签到的凭据解密链路只在 Windows 上跑通。
 
-  footer: |
+    </details>
+
     ---
 
-    **本项目是非官方的第三方工具**，与 WorkBuddy、CodeBuddy、腾讯及其关联方
-    不存在隶属、授权或背书关系。它依赖客户端未公开的配置加载行为，该行为
-    可能在任何版本中变化或移除。
+    **本项目是非官方的第三方工具**，与 WorkBuddy、CodeBuddy、腾讯及其关联方不存在隶属、授权或背书关系。它依赖客户端未公开的配置加载行为，该行为可能在任何版本中变化或移除。升级客户端后建议运行 `wbmux doctor` 确认机制仍然有效。
 
-    升级客户端后建议运行 `wbmux doctor` 确认机制仍然有效。
