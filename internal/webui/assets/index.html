@@ -3429,6 +3429,151 @@
     overlay.classList.add("open");
   }
 
+  // showAccountsManagerModal 弹出国际版多账号管理与一键切换窗口。
+  function showAccountsManagerModal(side) {
+    side = side || "intl";
+    var existing = document.getElementById("accounts-manager-modal");
+    if (existing) existing.remove();
+
+    var overlay = el("div", { class: "modal-overlay", id: "accounts-manager-modal" });
+    var card = el("div", { class: "modal-card", style: "max-width:560px" });
+
+    // Head
+    var head = el("div", { class: "modal-head" }, [
+      el("div", { class: "modal-title" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-layers"/>' }),
+        "国际版多账号管理 (Multi-Account Vault)"
+      ]),
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal })
+    ]);
+
+    // Body
+    var body = el("div", { class: "modal-body" });
+    var listBox = el("div", { style: "display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto" });
+    body.appendChild(listBox);
+
+    listBox.appendChild(el("div", { class: "hint", text: "正在读取已保存账号…" }));
+
+    function renderList() {
+      clear(listBox);
+      api("/api/accounts/list?side=" + side).then(function (res) {
+        var accs = res.accounts || [];
+        if (!accs.length) {
+          listBox.appendChild(el("div", { class: "hint", text: "当前暂无已保存账号，可点击下方「+ 添加新账号」录入。" }));
+          return;
+        }
+        accs.forEach(function (a) {
+          var row = el("div", {
+            style: "background:rgba(255,255,255,0.025);border:1px solid " + (a.active ? "rgba(16,185,129,0.35)" : "var(--g5)") +
+                   ";border-radius:var(--r-sm);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;transition:all .15s"
+          });
+          var left = el("div", { style: "display:flex;flex-direction:column;gap:3px;overflow:hidden" }, [
+            el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+              el("span", { style: "font-weight:600;font-size:13px;color:var(--ink-1)", text: a.nickname || a.uid }),
+              a.active ? el("span", { class: "pill ok", text: "当前活跃" }) : null
+            ]),
+            el("div", { style: "font-size:11.5px;color:var(--ink-3);font-family:var(--mono)" }, [
+              "UID: " + (a.uid ? (a.uid.length > 20 ? a.uid.slice(0, 18) + "…" : a.uid) : "未知"),
+              " · Token: " + (a.tokenMask || "******")
+            ])
+          ]);
+
+          var right = el("div", { style: "display:flex;align-items:center;gap:8px;flex-shrink:0" });
+          if (!a.active) {
+            var btnSwitch = el("button", {
+              class: "ghost",
+              style: "padding:3px 10px;font-size:11px",
+              text: "设为当前",
+              onclick: function () {
+                btnSwitch.disabled = true;
+                btnSwitch.textContent = "切换中…";
+                api("/api/accounts/switch", {
+                  method: "POST",
+                  body: JSON.stringify({ side: side, id: a.id })
+                }).then(function () {
+                  toast("已切换至 " + (a.nickname || a.uid), "ok");
+                  renderList();
+                  loadUsage(true, true);
+                }).catch(function (e) {
+                  toast("切换失败：" + e.message, "bad");
+                  btnSwitch.disabled = false;
+                  btnSwitch.textContent = "设为当前";
+                });
+              }
+            });
+            right.appendChild(btnSwitch);
+          }
+
+          var btnDel = el("button", {
+            class: "ghost",
+            style: "padding:3px 8px;font-size:11px;color:var(--bad)",
+            text: "删除",
+            onclick: function () {
+              if (!confirm("确定从本地移除账号「" + (a.nickname || a.uid) + "」吗？")) return;
+              api("/api/accounts/delete", {
+                method: "POST",
+                body: JSON.stringify({ side: side, id: a.id })
+              }).then(function () {
+                toast("账号已移除", "ok");
+                renderList();
+                loadUsage(true, true);
+              }).catch(function (e) {
+                toast("删除失败：" + e.message, "bad");
+              });
+            }
+          });
+          right.appendChild(btnDel);
+
+          row.appendChild(left);
+          row.appendChild(right);
+          listBox.appendChild(row);
+        });
+      }).catch(function (e) {
+        clear(listBox);
+        listBox.appendChild(el("div", { class: "note bad", text: "读取账号失败：" + e.message }));
+      });
+    }
+
+    renderList();
+
+    // Foot
+    var btnAdd = el("button", {
+      class: "btn-hero",
+      style: "padding:5px 14px;font-size:12px;height:auto",
+      text: "+ 添加新账号",
+      onclick: function () {
+        closeModal();
+        showTokenImportModal(side);
+      }
+    });
+    var btnClose = el("button", { class: "ghost", text: "关闭", onclick: closeModal });
+    var foot = el("div", { class: "modal-foot", style: "justify-content:space-between" }, [
+      el("div", { style: "font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:5px" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-check"/>' }),
+        "切换后，无缝模型注入与遥测心跳将即刻自动生效。"
+      ]),
+      el("div", { style: "display:flex;gap:8px" }, [btnAdd, btnClose])
+    ]);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    card.appendChild(foot);
+    overlay.appendChild(card);
+
+    overlay.onclick = function (e) {
+      if (e.target === overlay) closeModal();
+    };
+
+    function closeModal() {
+      overlay.classList.remove("open");
+      setTimeout(function () { overlay.remove(); }, 200);
+    }
+
+    document.body.appendChild(overlay);
+    overlay.offsetHeight;
+    overlay.classList.add("open");
+  }
+
   // 档位 id → 显示名。注意 /api/state 里那个字段叫 displayName，不叫 name。
   // 优先用它（客户端自己的叫法），拿不到再退回固定说法。
   function sideLabel(id) {
@@ -4003,7 +4148,14 @@
         el("button", {
           class: "ghost",
           style: "padding:2px 8px;font-size:11px",
-          text: intlLv.ok ? "更换 Token" : "录入 Token",
+          text: "切换账号 ▾",
+          title: "管理并切换已保存的多个国际账号",
+          onclick: function () { showAccountsManagerModal("intl"); }
+        }),
+        el("button", {
+          class: "ghost",
+          style: "padding:2px 8px;font-size:11px",
+          text: intlLv.ok ? "添加/更换" : "录入 Token",
           onclick: function () { showTokenImportModal("intl"); }
         }),
         el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/plan", target: "_blank", rel: "noreferrer",

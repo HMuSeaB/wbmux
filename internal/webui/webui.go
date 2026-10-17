@@ -282,6 +282,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
 	mux.HandleFunc("/api/telemetry", s.guard(s.handleTelemetry))
 	mux.HandleFunc("/api/credentials/import", s.guard(s.handleCredentialImport))
+	mux.HandleFunc("/api/accounts/list", s.guard(s.handleAccountsList))
+	mux.HandleFunc("/api/accounts/switch", s.guard(s.handleAccountSwitch))
+	mux.HandleFunc("/api/accounts/delete", s.guard(s.handleAccountDelete))
 
 	s.http = &http.Server{
 		Handler:           mux,
@@ -1270,8 +1273,15 @@ func (s *Server) handleCredentialImport(w http.ResponseWriter, r *http.Request) 
 		cred.Nickname = strings.TrimSpace(req.Nickname)
 	}
 
-	// 写入磁盘官方凭据路径
-	if err := credential.Write(s.probe(), targetID, *cred); err != nil {
+	// 存入多账号保险库，并激活该账号
+	acc := credential.Account{
+		UID:      cred.UID,
+		Nickname: cred.Nickname,
+		Token:    cred.Token,
+		Domain:   cred.Domain,
+	}
+	savedAcc, err := credential.SaveAccount(s.probe(), targetID, acc, true)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "保存凭据失败: "+err.Error())
 		return
 	}
@@ -1287,10 +1297,93 @@ func (s *Server) handleCredentialImport(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]any{
 		"ok":       true,
 		"side":     string(targetID),
+		"id":       savedAcc.ID,
 		"uid":      cred.UID,
 		"nickname": cred.Nickname,
-		"note":     "凭据导入成功并已通过官方链路校验！",
+		"note":     "凭据导入成功并已纳管至多账号库！",
 	})
 }
+
+// handleAccountsList 返回指定档位已保存的全部脱敏账号列表。
+func (s *Server) handleAccountsList(w http.ResponseWriter, r *http.Request) {
+	side := variant.ID(strings.TrimSpace(r.URL.Query().Get("side")))
+	if side == "" {
+		side = variant.Intl
+	}
+	accounts, err := credential.ListAccounts(s.probe(), side)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "获取账号列表失败: "+err.Error())
+		return
+	}
+	redacted := make([]credential.RedactedAccount, 0, len(accounts))
+	for _, a := range accounts {
+		redacted = append(redacted, a.Redact())
+	}
+	writeJSON(w, map[string]any{
+		"side":     string(side),
+		"accounts": redacted,
+	})
+}
+
+// handleAccountSwitch 切换当前活跃账号。
+func (s *Server) handleAccountSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Side string `json:"side"`
+		ID   string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析")
+		return
+	}
+	side := variant.ID(strings.TrimSpace(req.Side))
+	if side == "" {
+		side = variant.Intl
+	}
+	acc, err := credential.SwitchAccount(s.probe(), side, strings.TrimSpace(req.ID))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	usage.InvalidateLiveCache(side)
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Text:  fmt.Sprintf("已切换至账号：%s (%s)", acc.Nickname, acc.UID),
+	})
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"account": acc.Redact(),
+	})
+}
+
+// handleAccountDelete 移除指定账号。
+func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Side string `json:"side"`
+		ID   string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析")
+		return
+	}
+	side := variant.ID(strings.TrimSpace(req.Side))
+	if side == "" {
+		side = variant.Intl
+	}
+	if err := credential.DeleteAccount(s.probe(), side, strings.TrimSpace(req.ID)); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	usage.InvalidateLiveCache(side)
+	writeJSON(w, map[string]any{"ok": true})
+}
+
 
 

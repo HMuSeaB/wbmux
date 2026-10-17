@@ -512,3 +512,38 @@ func TestHandleCredentialImportValidation(t *testing.T) {
 	}
 }
 
+func TestHandleAccountsAPI(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 获取账号列表
+	rList := e.do(t, "GET", "/api/accounts/list?side=intl", "", true)
+	if rList.code != 200 {
+		t.Fatalf("GET /api/accounts/list 预期 200，得到 %d", rList.code)
+	}
+	var out struct {
+		Side     string `json:"side"`
+		Accounts []struct {
+			ID        string `json:"id"`
+			Active    bool   `json:"active"`
+			TokenMask string `json:"tokenMask"`
+		} `json:"accounts"`
+	}
+	rList.decode(t, &out)
+	if out.Side != "intl" {
+		t.Errorf("Side 预期 intl，得到 %s", out.Side)
+	}
+
+	// 2. 切换未知账号应返回 400
+	rSwitchBad := e.do(t, "POST", "/api/accounts/switch", `{"side":"intl","id":"acc_non_exist"}`, true)
+	if rSwitchBad.code != 400 {
+		t.Errorf("切换不存在账号应返回 400，得到 %d", rSwitchBad.code)
+	}
+
+	// 3. 错误请求方法
+	rSwitchGet := e.do(t, "GET", "/api/accounts/switch", "", true)
+	if rSwitchGet.code != 405 {
+		t.Errorf("GET 应返回 405，得到 %d", rSwitchGet.code)
+	}
+}
+
+
