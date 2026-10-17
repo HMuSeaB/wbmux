@@ -727,6 +727,87 @@
     word-break: break-all;
     user-select: all;
   }
+  /* ---------- 顶层资产 KPI 透视栏 ---------- */
+  .kpi-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .kpi-card {
+    background: linear-gradient(145deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.01) 100%);
+    border: 1px solid var(--g5);
+    border-radius: var(--r-md);
+    padding: 13px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+  }
+  .kpi-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255,255,255,0.18);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+  }
+  .kpi-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+  }
+  .kpi-val-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 2px 0;
+  }
+  .kpi-num {
+    font-size: 24px;
+    font-weight: 750;
+    font-family: var(--mono);
+    color: #fff;
+    line-height: 1.1;
+  }
+  .kpi-unit {
+    font-size: 12px;
+    color: var(--ink-2);
+    font-family: var(--mono);
+  }
+  .kpi-foot {
+    font-size: 11px;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1.4;
+  }
+  .kpi-foot b {
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .bar-fill.cn {
+    background: linear-gradient(90deg, #2563eb, #38bdf8) !important;
+  }
+  .bar-fill.intl {
+    background: linear-gradient(90deg, #059669, #10b981) !important;
+  }
+  .pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 6px var(--ok);
+    display: inline-block;
+    animation: pdot 2s infinite ease-in-out;
+  }
+  @keyframes pdot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
 
 </style>
 </head>
@@ -3193,16 +3274,26 @@
     return h > 0 ? h + " 小时 " + m + " 分" : m + " 分钟";
   }
 
-  function loadUsage() {
+  function loadUsage(silent) {
     var box = document.getElementById("usage-body");
-    clear(box);
-    box.appendChild(el("div", { class: "hint", text: "正在读取限流记录与消耗数据（消耗要走一次数据库桥接，稍慢）…" }));
+    var btn = document.getElementById("btn-usage-scan");
+    if (!silent) {
+      if (btn) btn.classList.add("loading");
+      if (!usageData && box) {
+        clear(box);
+        box.appendChild(el("div", { class: "hint", text: "正在读取双端资产与额度数据…" }));
+      }
+    }
     return api("/api/usage").then(function (u) {
       usageData = u;
       renderUsage();
     }).catch(function (e) {
-      clear(box);
-      box.appendChild(el("div", { class: "note bad", text: "读取失败：" + e.message }));
+      if (!silent && box) {
+        clear(box);
+        box.appendChild(el("div", { class: "note bad", text: "读取失败：" + e.message }));
+      }
+    }).finally(function () {
+      if (btn) btn.classList.remove("loading");
     });
   }
 
@@ -3521,14 +3612,92 @@
     note.textContent = "限流记录 " + limits.length + " · 会话消耗 " + costs.length +
       (costs.length >= 300 ? "（取前 300）" : "");
 
-    // ① 先给结论：现在能不能用（以代理实时观察为准）
-    box.appendChild(quotaNowCard());
+    var cnLv = live["cn"] || {};
+    var intlLv = live["intl"] || {};
+    var ckSt = (checkinLast && checkinLast.status) || {};
+
+    // 统计国内积分与包
+    var cnPkgs = cnLv.packages || [];
+    var cnRemainSum = 0, cnTotalSum = 0;
+    cnPkgs.forEach(function (p) {
+      cnRemainSum += (p.remain || 0);
+      cnTotalSum += (p.total || 0);
+    });
+
+    // 统计国际积分与包
+    var intlPkgs = intlLv.packages || [];
+    var intlRemainSum = 0, intlTotalSum = 0;
+    intlPkgs.forEach(function (p) {
+      intlRemainSum += (p.remain || 0);
+      intlTotalSum += (p.total || 0);
+    });
+    var intlPct = intlTotalSum > 0 ? Math.round(intlRemainSum / intlTotalSum * 100) : (intlRemainSum > 0 ? 100 : 0);
+
+    // 统计限免模型与最早到期
+    var promoItems = intlLv.promos || [];
+    var minDays = null;
+    var promoModelNames = [];
+    promoItems.forEach(function (p) {
+      (p.modelIds || []).forEach(function (m) {
+        if (promoModelNames.indexOf(m) < 0) promoModelNames.push(m);
+      });
+      var d = daysLeft(p.validUntil);
+      if (d !== null && d >= 0) {
+        if (minDays === null || d < minDays) minDays = d;
+      }
+    });
+
+    // ① 顶层三联 KPI 资产透视栏
+    var kpiBar = el("div", { class: "kpi-bar" });
+
+    // KPI 1: 国内资产 (CodeBuddy)
+    var cnKpiTitle = el("div", { class: "kpi-head" }, [
+      el("span", { text: "🇨🇳 国内端额度" }),
+      el("span", { class: "pill " + (cnLv.ok ? "ok" : "ghost"), text: cnLv.ok ? (cnLv.credKind === "unsealed" ? "凭据已解密" : "在线") : "待探测" })
+    ]);
+    var cnKpiVal = el("div", { class: "kpi-val-row" }, [
+      el("span", { class: "kpi-num", text: cnTotalSum > 0 ? cnRemainSum.toLocaleString() : (cnLv.ok ? "包月尊享" : "未登录") }),
+      el("span", { class: "kpi-unit", text: cnTotalSum > 0 ? "积分" : "无限使用" })
+    ]);
+    var cnKpiFoot = el("div", { class: "kpi-foot" }, [
+      el("span", { text: ckSt.todayCheckedIn ? ("✅ 今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "⚠️ 今日未打卡 (可领积分)" })
+    ]);
+    kpiBar.appendChild(el("div", { class: "kpi-card" }, [cnKpiTitle, cnKpiVal, cnKpiFoot]));
+
+    // KPI 2: 国际资产 (WorkBuddy AI)
+    var intlKpiTitle = el("div", { class: "kpi-head" }, [
+      el("span", { text: "🌐 国际端积分" }),
+      el("span", { class: "pill " + (intlLv.ok ? "ok" : "ghost"), text: intlLv.ok ? "实时链路" : "待探测" })
+    ]);
+    var intlKpiVal = el("div", { class: "kpi-val-row" }, [
+      el("span", { class: "kpi-num", text: intlTotalSum > 0 ? intlRemainSum.toFixed(1) : (intlLv.ok ? "活跃通道" : "未探测") }),
+      el("span", { class: "kpi-unit", text: intlTotalSum > 0 ? ("点 · " + intlPct + "%") : "" })
+    ]);
+    var intlKpiFoot = el("div", { class: "kpi-foot" }, [
+      el("span", { text: intlTotalSum > 0 ? ("周期总额 " + intlTotalSum.toFixed(1) + " · 额度正常") : (intlLv.ok ? "海外账户已就绪" : "客户端登录后就绪") })
+    ]);
+    kpiBar.appendChild(el("div", { class: "kpi-card" }, [intlKpiTitle, intlKpiVal, intlKpiFoot]));
+
+    // KPI 3: 限免模型与健康度
+    var promoKpiTitle = el("div", { class: "kpi-head" }, [
+      el("span", { text: "🔥 限免大模型矩阵" }),
+      el("span", { class: "pill ok", text: "0.00x 费率" })
+    ]);
+    var promoKpiVal = el("div", { class: "kpi-val-row" }, [
+      el("span", { class: "kpi-num", text: promoModelNames.length ? (promoModelNames.length + " 款在保") : (promoItems.length ? "官方限免中" : "常规计费") }),
+      el("span", { class: "kpi-unit", text: "全天免费" })
+    ]);
+    var promoKpiFoot = el("div", { class: "kpi-foot" }, [
+      el("span", { text: minDays !== null ? ("⏳ 最近模型剩余 " + minDays + " 天到期") : "支持 DeepSeek / Hy4 等模型" })
+    ]);
+    kpiBar.appendChild(el("div", { class: "kpi-card" }, [promoKpiTitle, promoKpiVal, promoKpiFoot]));
+
+    box.appendChild(kpiBar);
 
     // ② 双端资产与限免仪表盘 (Dashboard Grid: 左右双卡片并排)
     var grid = el("div", { class: "dash-grid" });
 
     // --- 左卡片：国内端 CodeBuddy ---
-    var cnLv = live["cn"] || {};
     var cnCard = el("div", { class: "dash-card" });
     var cnAcc = cnLv.nickname || (cnLv.uid ? cnLv.uid.slice(0, 10) + "…" : "未登录/未探测");
     var cnCredPill = cnLv.credKind === "unsealed"
@@ -3555,9 +3724,8 @@
     // 国内积分包
     var cnSecPackages = el("div", {});
     cnSecPackages.appendChild(el("div", { class: "dash-sec-title", text: "积分包余量" }));
-    var cnPkgs = cnLv.packages || [];
     if (!cnPkgs.length) {
-      cnSecPackages.appendChild(el("div", { class: "hint", text: "暂无有效积分包数据" }));
+      cnSecPackages.appendChild(el("div", { class: "hint", text: "包月制无独立积分包消耗限制，全功能畅用。" }));
     } else {
       cnPkgs.slice(0, 5).forEach(function (p) {
         var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
@@ -3572,23 +3740,35 @@
     }
     cnCard.appendChild(cnSecPackages);
 
-    // 国内每日签到状态挂件
+    // 国内每日签到状态挂件（带就地打卡）
     var cnCheckinSec = el("div", {
       style: "background:rgba(255,255,255,0.02);border:1px solid var(--g4);border-radius:var(--r-sm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between;"
     });
-    var ckSt = (checkinLast && checkinLast.status) || {};
     var isSigned = ckSt.todayCheckedIn;
     cnCheckinSec.appendChild(el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)" }, [
       el("svg", { class: "ico ico-sm", html: '<use href="#i-calendar"/>' }),
       el("span", { text: isSigned ? ("今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "每日签到：顺手打卡领积分" })
     ]));
-    var btnCheckinJump = el("button", {
-      class: "ghost",
-      style: "padding:2px 8px;font-size:11px",
-      text: isSigned ? "查看明细" : "去签到"
+    var btnCheckinAction = el("button", {
+      class: isSigned ? "ghost" : "btn-hero",
+      style: "padding:3px 10px;font-size:11px;height:auto",
+      text: isSigned ? "查看明细" : "一键打卡"
     });
-    btnCheckinJump.onclick = function () { showPage("checkin"); };
-    cnCheckinSec.appendChild(btnCheckinJump);
+    btnCheckinAction.onclick = function () {
+      if (isSigned) {
+        showPage("checkin");
+      } else {
+        btnCheckinAction.textContent = "打卡中…";
+        api("/api/checkin/claim", { method: "POST" }).then(function (r) {
+          toast("签到成功 +" + (r.credit || 10) + " 积分", "ok");
+          loadUsage(true);
+        }).catch(function (e) {
+          toast(e.message, "bad");
+          showPage("checkin");
+        });
+      }
+    };
+    cnCheckinSec.appendChild(btnCheckinAction);
     cnCard.appendChild(cnCheckinSec);
 
     // 国内模型库概览折叠
@@ -3599,7 +3779,6 @@
     grid.appendChild(cnCard);
 
     // --- 右卡片：国际端 WorkBuddy AI ---
-    var intlLv = live["intl"] || {};
     var intlCard = el("div", { class: "dash-card" });
     var intlAcc = intlLv.nickname || (intlLv.uid ? intlLv.uid.slice(0, 10) + "…" : "未登录/未探测");
     intlCard.appendChild(el("div", { class: "dash-card-head" }, [
@@ -3624,7 +3803,6 @@
     // 国际积分包
     var intlSecPackages = el("div", {});
     intlSecPackages.appendChild(el("div", { class: "dash-sec-title", text: "国际积分包余量" }));
-    var intlPkgs = intlLv.packages || [];
     if (!intlPkgs.length) {
       intlSecPackages.appendChild(el("div", { class: "hint", text: "暂无有效积分包数据" }));
     } else {
@@ -3645,7 +3823,6 @@
     var promoSec = el("div", {});
     promoSec.appendChild(el("div", { class: "dash-sec-title", text: "限时免费大模型 (0.00x)" }));
     var promoList = el("div", { class: "promo-list" });
-    var promoItems = intlLv.promos || [];
     if (!promoItems.length) {
       promoList.appendChild(el("div", { class: "hint", text: "当前无官方限免公告" }));
     } else {
@@ -4087,6 +4264,17 @@
   }
   updateTelemetryBadge();
   setInterval(updateTelemetryBadge, 60000);
+
+  // 页面进入时自适应加载额度与资产数据
+  loadUsage(false);
+  // 每 45 秒后台静默轮询保鲜
+  setInterval(function () {
+    if (!document.hidden) loadUsage(true);
+  }, 45000);
+  // 从后台标签页切回前台时立即静默保鲜
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) loadUsage(true);
+  });
 })();
 </script>
 </body>
