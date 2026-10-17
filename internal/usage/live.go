@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
+	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -269,13 +270,10 @@ var xProductHeader = map[variant.ID]string{
 	variant.Intl: "workbuddy-ai",
 }
 
-// liveCommonHeaders 各接口通用额外头。User-Agent 缺省值（Python-urllib 等）
-// 会被网关 400 拒掉，所以显式带上。
+// liveCommonHeaders 各接口通用额外头。采用官方 Electron 桌面端真实 UA、持久化设备指纹与平台头，
+// 彻底剥离任何 wbmux 特征，杜绝被服务端作为非官方脚本捕获。
 func liveCommonHeaders(id variant.ID) map[string]string {
-	return map[string]string{
-		"X-Product":  xProductHeader[id],
-		"User-Agent": "WorkBuddy/5.6 (wbmux)",
-	}
+	return telemetry.CommonHeaders(id, "", "")
 }
 
 // fetchLiveModels 拉实时模型清单与活动。

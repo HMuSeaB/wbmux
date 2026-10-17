@@ -798,7 +798,13 @@
             <svg class="ico" style="color:var(--brand)" aria-hidden="true"><use href="#i-server"/></svg>
             无缝模式：国际免费大模型快速注入
           </div>
-          <span class="hero-badge">强烈推荐</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="hero-badge" id="telemetry-badge" style="background:rgba(74,157,106,0.18);color:var(--ok);border:1px solid rgba(74,157,106,0.3)" title="后台自适应遥测守护进行中：自动上报活跃心跳与持久化设备指纹，杜绝被服务端风控判定脱机">
+              <span class="status-pill status-pill-active" style="width:6px;height:6px;display:inline-block"></span>
+              🛡️ 遥测守护在线
+            </span>
+            <span class="hero-badge">强烈推荐</span>
+          </div>
         </div>
         <div class="hero-desc">
           将国际端限时免费的顶级模型（DeepSeek-V4.1-Flash / Hy4 preview 等 0.00x 费率）一键注入国内客户端自定义模型清单。<br>
@@ -4060,6 +4066,27 @@
         '</div></div>';
     });
   }, 60000);
+
+  // 定期检查遥测守护状态并刷新徽章提示
+  function updateTelemetryBadge() {
+    api("/api/telemetry").then(function (st) {
+      var badge = document.getElementById("telemetry-badge");
+      if (!badge) return;
+      if (st.running) {
+        var hint = "后台自适应遥测守护中 (已上报 " + st.totalPings + " 次活跃心跳)";
+        if (st.lastPingAt) {
+          var dt = new Date(st.lastPingAt);
+          hint += " · 最近心跳：" + dt.toLocaleTimeString();
+        }
+        if (st.deviceId) {
+          hint += " · 设备指纹：" + st.deviceId.substring(0, 8) + "…";
+        }
+        badge.title = hint;
+      }
+    }).catch(function () {});
+  }
+  updateTelemetryBadge();
+  setInterval(updateTelemetryBadge, 60000);
 })();
 </script>
 </body>

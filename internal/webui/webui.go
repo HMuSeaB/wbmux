@@ -10,6 +10,7 @@
 package webui
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -31,6 +32,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/doctor"
 	"github.com/HMuSeaB/wbmux/internal/migrate"
 	"github.com/HMuSeaB/wbmux/internal/runner"
+	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -123,6 +125,9 @@ type Server struct {
 	// "现在恢复了吗"；只有真正跟上游说话的代理知道。
 	rate rateState
 
+	// guardian 负责后台自适应遥测与活跃心跳守护，防服务端风控。
+	guardian *telemetry.Guardian
+
 	done     chan struct{}
 	doneOnce sync.Once
 
@@ -187,13 +192,30 @@ func New(opts Options) (*Server, error) {
 		}
 		token = hex.EncodeToString(buf[:])
 	}
-	return &Server{
+	p := opts.Probe
+	if p == nil {
+		p = variant.DefaultProbe()
+	}
+	srv := &Server{
 		opts:       opts,
 		token:      token,
 		lastActive: time.Now(),
 		done:       make(chan struct{}),
 		logFn:      opts.Logf,
-	}, nil
+	}
+	srv.guardian = telemetry.NewGuardian(
+		p.Home,
+		p.GOOS,
+		srv.upstreamBase(),
+		func() (string, string, error) {
+			c, err := srv.intlCred(srv.probe())
+			if err != nil {
+				return "", "", err
+			}
+			return c.Token, c.UID, nil
+		},
+	)
+	return srv, nil
 }
 
 // Start 开始监听。
@@ -257,6 +279,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/workspace", s.guard(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
+	mux.HandleFunc("/api/telemetry", s.guard(s.handleTelemetry))
 
 	s.http = &http.Server{
 		Handler:           mux,
@@ -264,6 +287,7 @@ func (s *Server) Start() error {
 	}
 	go func() { _ = s.http.Serve(ln) }()
 	go s.watchIdle()
+	go s.startTelemetryGuardian()
 	s.resumeAutoClean()
 	s.applyAutoUpdatePolicy()
 	return nil
@@ -1179,3 +1203,26 @@ func NormalizeAddr(addr string) (string, error) {
 	}
 	return addr, nil
 }
+
+// startTelemetryGuardian 在后台启动遥测自适应守护循环。
+func (s *Server) startTelemetryGuardian() {
+	if s.guardian == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-s.done
+		cancel()
+	}()
+	s.guardian.Start(ctx)
+}
+
+// handleTelemetry 返回当前遥测守护状态。
+func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	if s.guardian == nil {
+		writeJSON(w, map[string]any{"running": false})
+		return
+	}
+	writeJSON(w, s.guardian.GetStatus())
+}
+

@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
+	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -404,8 +405,8 @@ func post(d Deps, id variant.ID, path string) (envelope, error) {
 	req.Header.Set("X-User-Id", cred.UID)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	// 网关会把缺省 UA（Python-urllib 之类）当爬虫拒掉，必须显式带一个。
-	req.Header.Set("User-Agent", "WorkBuddy")
+	// 显式采用官方真实客户端拟真 UA，避免非官方脚本特征
+	req.Header.Set("User-Agent", telemetry.UserAgent(""))
 
 	resp, err := d.http().Do(req)
 	if err != nil {
