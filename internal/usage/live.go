@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -183,6 +184,128 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 	}
 	return out
 }
+
+// InvalidateLiveCache 使指定档位的实时账号缓存失效。在导入新凭据后调用。
+func InvalidateLiveCache(id variant.ID) {
+	liveCache.Lock()
+	defer liveCache.Unlock()
+	delete(liveCache.data, id)
+	delete(liveCache.at, id)
+}
+
+// ValidateAndProbeToken 使用真实 UA 与设备指纹向官方 /v3/config 发起一次探测，
+// 校验 Token 的合法性，并解析出可用模型与账号信息。
+func ValidateAndProbeToken(id variant.ID, token, uid string) (*credential.Credential, error) {
+	token = strings.TrimSpace(token)
+	token = strings.TrimPrefix(token, "Bearer ")
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("Token 不能为空")
+	}
+
+	endpoint, ok := liveEndpoint[id]
+	if !ok {
+		return nil, fmt.Errorf("不支持的后端档位: %s", id)
+	}
+
+	if uid == "" {
+		uid = extractUIDFromJWT(token)
+	}
+
+	hdr := liveCommonHeaders(id)
+	// 发起最小探测请求：GET /v3/config
+	data, err := liveJSON(endpoint, "/v3/config", http.MethodGet, token, uid, nil, hdr)
+	if err != nil {
+		return nil, fmt.Errorf("Token 验证失败: %w", err)
+	}
+
+	var cfg struct {
+		Models []struct {
+			ModelId string `json:"modelId"`
+		} `json:"models"`
+		Account struct {
+			UID      string `json:"uid"`
+			Nickname string `json:"nickname"`
+		} `json:"account"`
+		User struct {
+			UID      string `json:"uid"`
+			Nickname string `json:"nickname"`
+		} `json:"user"`
+	}
+	_ = json.Unmarshal(data, &cfg)
+
+	finalUID := uid
+	if cfg.Account.UID != "" {
+		finalUID = cfg.Account.UID
+	} else if cfg.User.UID != "" {
+		finalUID = cfg.User.UID
+	}
+	if finalUID == "" {
+		finalUID = "imported-user"
+	}
+
+	nickname := cfg.Account.Nickname
+	if nickname == "" {
+		nickname = cfg.User.Nickname
+	}
+	if nickname == "" {
+		nickname = "WebUser"
+	}
+
+	domain := "www.workbuddy.ai"
+	if id == variant.CN {
+		domain = "www.codebuddy.cn"
+	}
+
+	return &credential.Credential{
+		Token:              token,
+		UID:                finalUID,
+		Nickname:           nickname,
+		Domain:             domain,
+		ExpiresAtMs:        time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+		RefreshExpiresAtMs: time.Now().Add(60 * 24 * time.Hour).UnixMilli(),
+	}, nil
+}
+
+// extractUIDFromJWT 尝试从 JWT payload 中提取 uid 或 sub。
+func extractUIDFromJWT(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	seg := parts[1]
+	// base64 RawURLEncoding padding
+	if l := len(seg) % 4; l > 0 {
+		seg += strings.Repeat("=", 4-l)
+	}
+	raw, err := base64.URLEncoding.DecodeString(seg)
+	if err != nil {
+		raw, err = base64.StdEncoding.DecodeString(seg)
+		if err != nil {
+			return ""
+		}
+	}
+	var payload struct {
+		UID    string `json:"uid"`
+		Sub    string `json:"sub"`
+		UserId string `json:"userId"`
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	if payload.UID != "" {
+		return payload.UID
+	}
+	if payload.Sub != "" {
+		return payload.Sub
+	}
+	if payload.UserId != "" {
+		return payload.UserId
+	}
+	return payload.UserID
+}
+
 
 // fetchLiveAccount 实际拉取一侧的数据。网络错误一律降级成 Err，
 // 不让单侧的失败拖垮整个面板。

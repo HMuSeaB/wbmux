@@ -809,6 +809,84 @@
     50% { opacity: 0.4; transform: scale(0.85); }
   }
 
+  /* ---------- 模态弹窗 (Modal) ---------- */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+  }
+  .modal-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .modal-card {
+    background: #151821;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--r-md);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    max-width: 520px;
+    width: 100%;
+    overflow: hidden;
+    transform: scale(0.96);
+    transition: transform .18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .modal-overlay.open .modal-card {
+    transform: scale(1);
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--g5);
+    background: rgba(255,255,255,0.02);
+  }
+  .modal-title {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--ink-1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+  }
+  .modal-close:hover {
+    color: var(--ink-1);
+    background: rgba(255,255,255,0.08);
+  }
+  .modal-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .modal-foot {
+    padding: 12px 18px;
+    border-top: 1px solid var(--g5);
+    background: rgba(255,255,255,0.015);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
 </style>
 </head>
 <body>
@@ -3230,6 +3308,127 @@
 
   var usageData = null;
 
+  // showTokenImportModal 弹出免装国际客户端录入凭据的模态窗口。
+  function showTokenImportModal(side) {
+    side = side || "intl";
+    var existing = document.getElementById("token-import-modal");
+    if (existing) existing.remove();
+
+    var overlay = el("div", { class: "modal-overlay", id: "token-import-modal" });
+    var card = el("div", { class: "modal-card" });
+
+    // Head
+    var head = el("div", { class: "modal-head" }, [
+      el("div", { class: "modal-title" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-layers"/>' }),
+        "免装国际端 · 录入 AccessToken 凭据"
+      ]),
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal })
+    ]);
+
+    // Body
+    var body = el("div", { class: "modal-body" });
+
+    // 引导提示卡
+    var guideBox = el("div", {
+      style: "background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.22);border-radius:var(--r-sm);padding:10px 12px;font-size:12px;line-height:1.5;color:var(--ink-2)"
+    }, [
+      el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:4px", text: "💡 极速获取 Token 指引（无需下载客户端）：" }),
+      el("div", { text: "1. 浏览器打开并登录国际官网 codebuddy.ai；" }),
+      el("div", { text: "2. 按 F12 打开开发者工具 → 切换到「网络 (Network)」标签；" }),
+      el("div", { text: "3. 刷新页面，在任一 API 请求的标头（Headers）中找到 Authorization，复制 Bearer 后面的 Token。" })
+    ]);
+    body.appendChild(guideBox);
+
+    // Token 输入框
+    var tokenLabel = el("label", { style: "font-size:12px;font-weight:600;color:var(--ink-2);display:flex;flex-direction:column;gap:5px" }, [
+      "AccessToken (必填)：",
+      el("textarea", {
+        id: "inp-import-token",
+        rows: "4",
+        placeholder: "粘贴以 eyJ... 开头的长文本 Token（或完整 Bearer eyJ...）",
+        style: "width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11.5px;padding:8px;background:rgba(0,0,0,0.3);border:1px solid var(--g4);border-radius:var(--r-sm);color:var(--ink-1);resize:vertical"
+      })
+    ]);
+    body.appendChild(tokenLabel);
+
+    // UID 可选输入
+    var uidLabel = el("label", { style: "font-size:12px;font-weight:600;color:var(--ink-2);display:flex;flex-direction:column;gap:5px" }, [
+      "UID (可选，留空将自动从 Token 或官方响应提取)：",
+      el("input", {
+        id: "inp-import-uid",
+        type: "text",
+        placeholder: "如：fd46b846-da8f-426b-8af2-...",
+        style: "width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;padding:6px 8px;background:rgba(0,0,0,0.3);border:1px solid var(--g4);border-radius:var(--r-sm);color:var(--ink-1)"
+      })
+    ]);
+    body.appendChild(uidLabel);
+
+    // 防风控说明
+    var securityNote = el("div", {
+      style: "font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px"
+    }, [
+      el("svg", { class: "ico ico-sm", html: '<use href="#i-check"/>' }),
+      "已启用 Telemetry Guardian：自动生成设备指纹与拟真 UA，确保账号安全。"
+    ]);
+    body.appendChild(securityNote);
+
+    // 状态反馈区域
+    var statusBox = el("div", { id: "import-status-box", style: "display:none;font-size:12px;margin-top:2px" });
+    body.appendChild(statusBox);
+
+    // Foot
+    var btnCancel = el("button", { class: "ghost", text: "取消", onclick: closeModal });
+    var btnSubmit = el("button", { class: "primary", text: "验证并保存凭据" });
+    btnSubmit.onclick = function () {
+      var tok = (document.getElementById("inp-import-token").value || "").trim();
+      var uid = (document.getElementById("inp-import-uid").value || "").trim();
+      if (!tok) {
+        toast("请先粘贴 AccessToken", "bad");
+        return;
+      }
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = "正在官方链路验证…";
+      statusBox.style.display = "block";
+      statusBox.className = "hint";
+      statusBox.textContent = "正在校验 Token 有效性并初始化机器指纹…";
+
+      api("/api/credentials/import", {
+        method: "POST",
+        body: JSON.stringify({ side: side, token: tok, uid: uid })
+      }).then(function (r) {
+        toast("凭据导入成功！欢迎 " + (r.nickname || r.uid), "ok");
+        closeModal();
+        loadUsage(true, true);
+      }).catch(function (e) {
+        statusBox.className = "note bad";
+        statusBox.textContent = "验证失败：" + e.message;
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = "重新验证并保存";
+      });
+    };
+
+    var foot = el("div", { class: "modal-foot" }, [btnCancel, btnSubmit]);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    card.appendChild(foot);
+    overlay.appendChild(card);
+
+    overlay.onclick = function (e) {
+      if (e.target === overlay) closeModal();
+    };
+
+    function closeModal() {
+      overlay.classList.remove("open");
+      setTimeout(function () { overlay.remove(); }, 200);
+    }
+
+    document.body.appendChild(overlay);
+    overlay.offsetHeight;
+    overlay.classList.add("open");
+  }
+
   // 档位 id → 显示名。注意 /api/state 里那个字段叫 displayName，不叫 name。
   // 优先用它（客户端自己的叫法），拿不到再退回固定说法。
   function sideLabel(id) {
@@ -3797,16 +3996,41 @@
         ]),
         el("div", { class: "dash-user-badge" }, [
           intlAcc,
-          el("span", { class: "pill ok", text: "实时通路" })
+          el("span", { class: "pill " + (intlLv.ok ? "ok" : "ghost"), text: intlLv.ok ? "实时通路" : "未录入" })
         ])
       ]),
-      el("div", { style: "display:flex;gap:6px" }, [
+      el("div", { style: "display:flex;gap:6px;align-items:center" }, [
+        el("button", {
+          class: "ghost",
+          style: "padding:2px 8px;font-size:11px",
+          text: intlLv.ok ? "更换 Token" : "录入 Token",
+          onclick: function () { showTokenImportModal("intl"); }
+        }),
         el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/plan", target: "_blank", rel: "noreferrer",
           style: "margin:0;font-size:11px", text: "账单 ↗" }),
         el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/usage", target: "_blank", rel: "noreferrer",
           style: "margin:0;font-size:11px", text: "明细 ↗" })
       ])
     ]));
+
+    // 未检测到国际版客户端或凭据时的免装指引
+    if (!intlLv.ok) {
+      var noCredNotice = el("div", {
+        style: "background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.22);border-radius:var(--r-sm);padding:9px 12px;margin:8px 0;display:flex;align-items:center;justify-content:space-between;gap:8px"
+      }, [
+        el("div", { style: "font-size:12px;color:var(--ink-2);line-height:1.4" }, [
+          el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:2px", text: "🚀 未安装国际版？无需下载几百MB安装包！" }),
+          el("div", { text: "直接粘贴网页版 AccessToken，自动开启机器指纹遥测与限免模型注入。" })
+        ]),
+        el("button", {
+          class: "btn-hero",
+          style: "padding:4px 12px;font-size:12px;white-space:nowrap;height:auto",
+          text: "录入凭据",
+          onclick: function () { showTokenImportModal("intl"); }
+        })
+      ]);
+      intlCard.appendChild(noCredNotice);
+    }
 
     // 国际积分包
     var intlSecPackages = el("div", {});

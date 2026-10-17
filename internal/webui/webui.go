@@ -28,6 +28,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/checkin"
 	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
 	"github.com/HMuSeaB/wbmux/internal/migrate"
@@ -280,6 +281,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
 	mux.HandleFunc("/api/telemetry", s.guard(s.handleTelemetry))
+	mux.HandleFunc("/api/credentials/import", s.guard(s.handleCredentialImport))
 
 	s.http = &http.Server{
 		Handler:           mux,
@@ -1225,4 +1227,70 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, s.guardian.GetStatus())
 }
+
+// handleCredentialImport 接收用户手动录入的 AccessToken，验证后落盘凭据文件。
+func (s *Server) handleCredentialImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Side     string `json:"side"`
+		Token    string `json:"token"`
+		UID      string `json:"uid"`
+		Nickname string `json:"nickname"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析")
+		return
+	}
+	targetID := variant.ID(strings.TrimSpace(req.Side))
+	if targetID == "" {
+		targetID = variant.Intl
+	}
+	if targetID != variant.CN && targetID != variant.Intl {
+		writeErr(w, http.StatusBadRequest, "不支持的目标档位")
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		writeErr(w, http.StatusBadRequest, "Token 不能为空")
+		return
+	}
+
+	// 探针校验：调用官方接口验证 Token 合法性，并自动补齐账号信息
+	cred, err := usage.ValidateAndProbeToken(targetID, token, strings.TrimSpace(req.UID))
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "凭据验证失败: "+err.Error())
+		return
+	}
+
+	if req.Nickname != "" {
+		cred.Nickname = strings.TrimSpace(req.Nickname)
+	}
+
+	// 写入磁盘官方凭据路径
+	if err := credential.Write(s.probe(), targetID, *cred); err != nil {
+		writeErr(w, http.StatusInternalServerError, "保存凭据失败: "+err.Error())
+		return
+	}
+
+	// 使缓存失效，下一次查用量时直接拉新账号
+	usage.InvalidateLiveCache(targetID)
+
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Text:  fmt.Sprintf("用户手动导入凭据成功（%s），UID: %s", targetID, cred.UID),
+	})
+
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"side":     string(targetID),
+		"uid":      cred.UID,
+		"nickname": cred.Nickname,
+		"note":     "凭据导入成功并已通过官方链路校验！",
+	})
+}
+
 

@@ -548,3 +548,87 @@ func ClearCache() {
 	defer cacheMu.Unlock()
 	cache = map[variant.ID]cacheEntry{}
 }
+
+// Write 将明文凭据以官方标准结构落盘到对应客户端的数据目录。
+// 适用于用户在未安装官方客户端或需手动录入 Token 的免安装使用场景。
+func Write(p *variant.Probe, id variant.ID, cred Credential) error {
+	token := strings.TrimSpace(cred.Token)
+	if token == "" {
+		return errors.New("凭据 Token 不能为空")
+	}
+	path := File(p, id)
+	if path == "" {
+		return fmt.Errorf("无法确定凭据文件路径")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("创建凭据目录失败: %w", err)
+	}
+
+	domain := cred.Domain
+	if domain == "" {
+		if id == variant.Intl {
+			domain = "www.workbuddy.ai"
+		} else {
+			domain = "www.codebuddy.cn"
+		}
+	}
+	expiresAt := cred.ExpiresAtMs
+	if expiresAt == 0 {
+		expiresAt = time.Now().Add(30 * 24 * time.Hour).UnixMilli()
+	}
+	refreshExpiresAt := cred.RefreshExpiresAtMs
+	if refreshExpiresAt == 0 {
+		refreshExpiresAt = time.Now().Add(60 * 24 * time.Hour).UnixMilli()
+	}
+
+	type authSection struct {
+		AccessToken      string `json:"accessToken"`
+		Domain           string `json:"domain"`
+		ExpiresAt        int64  `json:"expiresAt"`
+		RefreshExpiresAt int64  `json:"refreshExpiresAt"`
+	}
+	type accountSection struct {
+		UID       string `json:"uid"`
+		Nickname  string `json:"nickname,omitempty"`
+		Type      string `json:"type,omitempty"`
+		LastLogin bool   `json:"lastLogin"`
+	}
+	payload := struct {
+		Auth    authSection    `json:"auth"`
+		Account accountSection `json:"account"`
+	}{
+		Auth: authSection{
+			AccessToken:      token,
+			Domain:           domain,
+			ExpiresAt:        expiresAt,
+			RefreshExpiresAt: refreshExpiresAt,
+		},
+		Account: accountSection{
+			UID:       cred.UID,
+			Nickname:  cred.Nickname,
+			Type:      "personal",
+			LastLogin: true,
+		},
+	}
+
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化凭据失败: %w", err)
+	}
+
+	// 原子写入：先写入同目录下的临时文件，再原子 rename 替换
+	tmpPath := fmt.Sprintf("%s.tmp.%d", path, time.Now().UnixNano())
+	if err := os.WriteFile(tmpPath, raw, 0600); err != nil {
+		return fmt.Errorf("写入临时凭据失败: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("重命名凭据文件失败: %w", err)
+	}
+
+	// 写成功后清除解密结果缓存
+	cacheForget(id)
+	return nil
+}
+

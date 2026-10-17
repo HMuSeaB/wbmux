@@ -555,3 +555,45 @@ func TestHelperJSCarriesTheVerifiedCryptoShape(t *testing.T) {
 		t.Fatal("helper 不该从命令行读输入——载荷只走 stdin")
 	}
 }
+
+func TestWriteAndReadRoundTrip(t *testing.T) {
+	p := newEnv(t)
+	target := variant.Intl
+	cred := Credential{
+		Token:              "eyJhbGciOi-manual-test-token",
+		UID:                "wb_manual_user_12345",
+		Nickname:           "AntigravityTest",
+		Domain:             "www.workbuddy.ai",
+		ExpiresAtMs:        time.Now().Add(7 * 24 * time.Hour).UnixMilli(),
+		RefreshExpiresAtMs: time.Now().Add(14 * 24 * time.Hour).UnixMilli(),
+	}
+
+	// 1. 写入
+	if err := Write(p, target, cred); err != nil {
+		t.Fatalf("Write 失败: %v", err)
+	}
+
+	// 2. 读回并校验
+	got, err := Read(p, target)
+	if err != nil {
+		t.Fatalf("Read 失败: %v", err)
+	}
+	if got.Token != cred.Token {
+		t.Errorf("Token 预期 %q, 得到 %q", cred.Token, got.Token)
+	}
+	if got.UID != cred.UID {
+		t.Errorf("UID 预期 %q, 得到 %q", cred.UID, got.UID)
+	}
+	if got.Nickname != cred.Nickname {
+		t.Errorf("Nickname 预期 %q, 得到 %q", cred.Nickname, got.Nickname)
+	}
+	if got.Domain != cred.Domain {
+		t.Errorf("Domain 预期 %q, 得到 %q", cred.Domain, got.Domain)
+	}
+
+	// 3. 空 Token 校验
+	if err := Write(p, target, Credential{}); err == nil {
+		t.Error("空 Token 应该报错")
+	}
+}
+

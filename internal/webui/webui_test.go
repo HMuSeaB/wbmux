@@ -489,3 +489,26 @@ func TestLaunchBothReportsEachSideIndependent(t *testing.T) {
 		t.Errorf("两侧都要覆盖：%v", sides)
 	}
 }
+
+func TestHandleCredentialImportValidation(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 空 Token 请求
+	rEmpty := e.do(t, "POST", "/api/credentials/import", `{"side":"intl","token":""}`, true)
+	if rEmpty.code != 400 {
+		t.Errorf("空 Token 应返回 400，得到 %d", rEmpty.code)
+	}
+
+	// 2. 无效 Side 请求
+	rBadSide := e.do(t, "POST", "/api/credentials/import", `{"side":"unknown","token":"xxx"}`, true)
+	if rBadSide.code != 400 {
+		t.Errorf("未知 side 应返回 400，得到 %d", rBadSide.code)
+	}
+
+	// 3. GET 请求应拒绝
+	rGet := e.do(t, "GET", "/api/credentials/import", "", true)
+	if rGet.code != 405 {
+		t.Errorf("GET 应返回 405，得到 %d", rGet.code)
+	}
+}
+
