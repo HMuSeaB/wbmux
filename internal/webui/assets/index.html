@@ -455,12 +455,20 @@
 
   .toast {
     position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
-    background: var(--g3); border: 1px solid var(--g5); border-radius: var(--r-md);
-    padding: 10px 16px; font-size: 12.5px; color: var(--ink);
-    box-shadow: 0 8px 28px #000a; max-width: 90vw; z-index: 20;
+    background: rgba(24, 27, 34, 0.94);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--g5);
+    border-radius: var(--r-md);
+    padding: 10px 18px; font-size: 13px; color: #fff;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.5); max-width: 90vw; z-index: 999;
+    animation: toast-in .22s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .toast.bad { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: #e6bcb9; }
-  .toast.ok  { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: #b3d9c1; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  .toast.bad { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: #ffb8b5; }
+  .toast.ok  { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: #b8ebd0; }
 
   [hidden] { display: none !important; }
 
@@ -565,6 +573,160 @@
   /* 历史瓷砖里的模型行：比 .q-row 紧凑，它是次要信息 */
   .q-hist { display: flex; align-items: baseline; gap: 7px; font-size: 12px;
             color: var(--ink-2); margin-top: 3px; }
+  /* ---------- Phase 2: 仪表盘双栏卡片看板 (Dashboard Grid) ---------- */
+  .dash-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 820px) {
+    .dash-grid { grid-template-columns: 1fr; }
+  }
+  .dash-card {
+    background: linear-gradient(175deg, #181b22 0%, #121418 100%);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-lg);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+    position: relative;
+    transition: border-color .15s ease;
+  }
+  .dash-card:hover {
+    border-color: var(--g5);
+  }
+  .dash-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding-bottom: 11px;
+  }
+  .dash-side-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .dash-side-title {
+    font-size: 14px;
+    font-weight: 650;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .dash-user-badge {
+    font-size: 11.5px;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+  }
+  .dash-sec-title {
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .promo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .promo-item {
+    background: rgba(99, 179, 196, 0.07);
+    border: 1px solid rgba(99, 179, 196, 0.22);
+    border-radius: var(--r-sm);
+    padding: 7px 11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: background .12s, border-color .12s;
+  }
+  .promo-item:hover {
+    background: rgba(99, 179, 196, 0.12);
+    border-color: rgba(99, 179, 196, 0.35);
+  }
+  .promo-model {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .promo-free-tag {
+    font-size: 10px;
+    background: rgba(74, 157, 106, 0.25);
+    color: var(--ok);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 650;
+    letter-spacing: .2px;
+  }
+  .promo-countdown {
+    font-size: 11px;
+    color: #d1b88e;
+    font-family: var(--mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    background: rgba(224, 179, 114, 0.1);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .promo-countdown.urgent {
+    color: var(--warn);
+    background: rgba(230, 150, 70, 0.15);
+  }
+  .api-card {
+    background: #111317;
+    border: 1px solid var(--g4);
+    border-radius: var(--r-md);
+    padding: 13px 16px;
+    margin-top: 14px;
+  }
+  .api-card-title {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: #fff;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .api-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 14px;
+    font-size: 12px;
+    align-items: center;
+  }
+  .api-label {
+    color: var(--ink-3);
+    font-size: 11.5px;
+  }
+  .api-val {
+    font-family: var(--mono);
+    color: var(--brand);
+    background: rgba(255,255,255,0.03);
+    padding: 2px 7px;
+    border-radius: 4px;
+    word-break: break-all;
+    user-select: all;
+  }
 
 </style>
 </head>
@@ -3318,6 +3480,28 @@
     return d !== null && d >= 0 && d < 7;
   }
 
+  function renderModelDetailsFold(side, list, summaryTitle) {
+    if (!list || !list.length) return el("div", {});
+    var grid = el("div", { class: "mcards", style: "margin-top:8px" });
+    list.forEach(function (r) {
+      var meta = ["速度 " + (r.rate !== undefined ? r.rate.toFixed(2) : "0.00") + "x"];
+      if (r.ctx) meta.push((r.ctx >= 1000000 ? (r.ctx / 1000000) + "M" : Math.round(r.ctx / 1000) + "K") + " 窗口");
+      grid.appendChild(el("div", { class: "mcard" }, [
+        el("div", { class: "mrow" }, [
+          el("span", { class: "mname", title: (r.id || "") + " · " + (r.raw || ""), text: r.name || prettyModel(r.id) }),
+          r.free ? el("span", { class: "fbadge", text: r.freeLabel || "限时免费" }) : null,
+          el("span", { class: "mrate" + (r.free ? " free" : ""), text: (r.rate !== undefined ? r.rate.toFixed(2) : "0.00") + "x" })
+        ]),
+        r.desc ? el("div", { class: "mdesc", text: r.desc }) : null,
+        el("div", { class: "mmeta", text: meta.join(" · ") })
+      ]));
+    });
+    return el("details", { class: "fold", style: "margin:4px 0 0" }, [
+      el("summary", { style: "font-size:12px;color:var(--ink-3)", text: summaryTitle }),
+      grid
+    ]);
+  }
+
   function renderUsage() {
     var box = document.getElementById("usage-body");
     var note = document.getElementById("usage-note");
@@ -3326,50 +3510,206 @@
 
     var limits = usageData.limits || [];
     var costs = usageData.costs || [];
-    var latest = usageData.latest || {};
-    // live 在后面的倍率区块也用；瓷砖里先读账号，声明必须提到最前
     var live = usageData.live || {};
-    note.textContent = "限流 " + limits.length + " · 消耗 " + costs.length +
-      (costs.length >= 300 ? "（只取前 300）" : "");
+    var rates = usageData.rates || {};
+    note.textContent = "限流记录 " + limits.length + " · 会话消耗 " + costs.length +
+      (costs.length >= 300 ? "（取前 300）" : "");
 
-    // ① 先给结论：现在能不能用。（以代理的观察为准，不是客户端的历史记录）
+    // ① 先给结论：现在能不能用（以代理实时观察为准）
     box.appendChild(quotaNowCard());
 
-    // ② 历史与账单收进折叠。
-    //
-    // 这些是"过去几天被限过几次、花了多少"，属于**事后账**，答不了"此刻
-    // 能不能用"——以前它们占满首屏，把真正的结论挤没了（用户："完全看不了"）。
-    // 下面三节（状态瓷砖 / 消耗榜 / 模型分布）改写进 histBody，
-    // 之后的倍率、活动、入口链接等仍然写在外层。
-    var mainBox = box;
-    var histBody = el("div", { style: "margin-top:8px" });
-    box.appendChild(el("details", { class: "fold", style: "margin-top:12px" }, [
-      el("summary", { text: "历史限流记录与消耗（" + limits.length + " 条限流 · " +
-        costs.length + " 条消耗）" }),
-      histBody
-    ]));
-    box = histBody;
+    // ② 双端资产与限免仪表盘 (Dashboard Grid: 左右双卡片并排)
+    var grid = el("div", { class: "dash-grid" });
 
-    // --- 状态瓷砖：一眼看清两侧现状 ---
-    var tiles = el("div", { class: "tiles" });
+    // --- 左卡片：国内端 CodeBuddy ---
+    var cnLv = live["cn"] || {};
+    var cnCard = el("div", { class: "dash-card" });
+    var cnAcc = cnLv.nickname || (cnLv.uid ? cnLv.uid.slice(0, 10) + "…" : "未登录/未探测");
+    var cnCredPill = cnLv.credKind === "unsealed"
+      ? el("span", { class: "pill ok", text: "凭据正常" })
+      : cnLv.credKind === "envelope"
+        ? el("span", { class: "pill warn", text: "信封加密" })
+        : el("span", { class: "pill ghost", text: "无凭据" });
+
+    cnCard.appendChild(el("div", { class: "dash-card-head" }, [
+      el("div", { class: "dash-side-info" }, [
+        el("div", { class: "dash-side-title" }, [
+          el("svg", { class: "ico ico-sm", html: '<use href="#i-server"/>' }),
+          "国内版 (CodeBuddy)"
+        ]),
+        el("div", { class: "dash-user-badge" }, [
+          cnAcc,
+          cnCredPill
+        ])
+      ]),
+      el("a", { class: "chip", href: "https://www.codebuddy.cn/profile/plan", target: "_blank", rel: "noreferrer",
+        style: "margin:0;font-size:11px", text: "国内账单 ↗" })
+    ]));
+
+    // 国内积分包
+    var cnSecPackages = el("div", {});
+    cnSecPackages.appendChild(el("div", { class: "dash-sec-title", text: "积分包余量" }));
+    var cnPkgs = cnLv.packages || [];
+    if (!cnPkgs.length) {
+      cnSecPackages.appendChild(el("div", { class: "hint", text: "暂无有效积分包数据" }));
+    } else {
+      cnPkgs.slice(0, 5).forEach(function (p) {
+        var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
+        cnSecPackages.appendChild(el("div", { class: "bar-row" }, [
+          el("span", { class: "bar-name", title: p.code, text: "积分包 …" + p.code.slice(-6) }),
+          el("span", { class: "bar-track" }, [
+            el("span", { class: "bar-fill cn", style: "width:" + Math.max(1.5, pct) + "%" })
+          ]),
+          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
+        ]));
+      });
+    }
+    cnCard.appendChild(cnSecPackages);
+
+    // 国内每日签到状态挂件
+    var cnCheckinSec = el("div", {
+      style: "background:rgba(255,255,255,0.02);border:1px solid var(--g4);border-radius:var(--r-sm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between;"
+    });
+    var ckSt = (checkinLast && checkinLast.status) || {};
+    var isSigned = ckSt.todayCheckedIn;
+    cnCheckinSec.appendChild(el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)" }, [
+      el("svg", { class: "ico ico-sm", html: '<use href="#i-calendar"/>' }),
+      el("span", { text: isSigned ? ("今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "每日签到：顺手打卡领积分" })
+    ]));
+    var btnCheckinJump = el("button", {
+      class: "ghost",
+      style: "padding:2px 8px;font-size:11px",
+      text: isSigned ? "查看明细" : "去签到"
+    });
+    btnCheckinJump.onclick = function () { showPage("checkin"); };
+    cnCheckinSec.appendChild(btnCheckinJump);
+    cnCard.appendChild(cnCheckinSec);
+
+    // 国内模型库概览折叠
+    var cnRawModels = (cnLv.ok && cnLv.models && cnLv.models.length) ? cnLv.models : (rates["cn"] || []);
+    if (cnRawModels.length) {
+      cnCard.appendChild(renderModelDetailsFold("cn", cnRawModels, "展开国内模型清单（" + cnRawModels.length + " 个）"));
+    }
+    grid.appendChild(cnCard);
+
+    // --- 右卡片：国际端 WorkBuddy AI ---
+    var intlLv = live["intl"] || {};
+    var intlCard = el("div", { class: "dash-card" });
+    var intlAcc = intlLv.nickname || (intlLv.uid ? intlLv.uid.slice(0, 10) + "…" : "未登录/未探测");
+    intlCard.appendChild(el("div", { class: "dash-card-head" }, [
+      el("div", { class: "dash-side-info" }, [
+        el("div", { class: "dash-side-title" }, [
+          el("svg", { class: "ico ico-sm", html: '<use href="#i-layers"/>' }),
+          "国际版 (WorkBuddy AI)"
+        ]),
+        el("div", { class: "dash-user-badge" }, [
+          intlAcc,
+          el("span", { class: "pill ok", text: "实时通路" })
+        ])
+      ]),
+      el("div", { style: "display:flex;gap:6px" }, [
+        el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/plan", target: "_blank", rel: "noreferrer",
+          style: "margin:0;font-size:11px", text: "账单 ↗" }),
+        el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/usage", target: "_blank", rel: "noreferrer",
+          style: "margin:0;font-size:11px", text: "明细 ↗" })
+      ])
+    ]));
+
+    // 国际积分包
+    var intlSecPackages = el("div", {});
+    intlSecPackages.appendChild(el("div", { class: "dash-sec-title", text: "国际积分包余量" }));
+    var intlPkgs = intlLv.packages || [];
+    if (!intlPkgs.length) {
+      intlSecPackages.appendChild(el("div", { class: "hint", text: "暂无有效积分包数据" }));
+    } else {
+      intlPkgs.slice(0, 5).forEach(function (p) {
+        var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
+        intlSecPackages.appendChild(el("div", { class: "bar-row" }, [
+          el("span", { class: "bar-name", title: p.code, text: "积分包 …" + p.code.slice(-6) }),
+          el("span", { class: "bar-track" }, [
+            el("span", { class: "bar-fill intl", style: "width:" + Math.max(1.5, pct) + "%" })
+          ]),
+          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
+        ]));
+      });
+    }
+    intlCard.appendChild(intlSecPackages);
+
+    // 🔥 限时免费大模型挂件专区 (Featured Promos)
+    var promoSec = el("div", {});
+    promoSec.appendChild(el("div", { class: "dash-sec-title", text: "限时免费大模型 (0.00x)" }));
+    var promoList = el("div", { class: "promo-list" });
+    var promoItems = intlLv.promos || [];
+    if (!promoItems.length) {
+      promoList.appendChild(el("div", { class: "hint", text: "当前无官方限免公告" }));
+    } else {
+      promoItems.slice(0, 4).forEach(function (p) {
+        var d = daysLeft(p.validUntil);
+        var isUrgent = d !== null && d >= 0 && d < 7;
+        var countdownTxt = d !== null && d >= 0 ? ("⏳ 剩 " + d + " 天") : (p.validUntil ? freeUntil(p.validUntil) : "限时免费");
+        var modelNames = (p.modelIds || []).map(function (m) { return prettyModel(m); }).join(" / ") || (p.label || "特惠模型");
+
+        promoList.appendChild(el("div", { class: "promo-item", title: p.textZh || "" }, [
+          el("div", { class: "promo-model" }, [
+            el("span", { class: "promo-free-tag", text: "0.00x" }),
+            el("span", { text: modelNames })
+          ]),
+          el("span", { class: "promo-countdown" + (isUrgent ? " urgent" : ""), text: countdownTxt })
+        ]));
+      });
+    }
+    promoSec.appendChild(promoList);
+    intlCard.appendChild(promoSec);
+
+    // 国际模型库概览折叠
+    var intlRawModels = (intlLv.ok && intlLv.models && intlLv.models.length) ? intlLv.models : (rates["intl"] || []);
+    if (intlRawModels.length) {
+      intlCard.appendChild(renderModelDetailsFold("intl", intlRawModels, "展开国际模型倍率（" + intlRawModels.length + " 个）"));
+    }
+    grid.appendChild(intlCard);
+
+    box.appendChild(grid);
+
+    // ③ 本地 OpenAI 兼容接口卡片 (API Card)
+    var apiCard = el("div", { class: "api-card" });
+    apiCard.appendChild(el("div", { class: "api-card-title" }, [
+      el("svg", { class: "ico ico-sm", html: '<use href="#i-term"/>' }),
+      "本地 OpenAI 兼容代理接口（无需开启客户端，全工具直连）"
+    ]));
+    var apiGrid = el("div", { class: "api-grid" });
+    apiGrid.appendChild(el("div", { class: "api-label", text: "Base URL" }));
+    apiGrid.appendChild(el("div", { class: "api-val", text: location.origin + "/v1" }));
+    apiGrid.appendChild(el("div", { class: "api-label", text: "API Key" }));
+    apiGrid.appendChild(el("div", { class: "api-val", text: TOKEN }));
+    apiGrid.appendChild(el("div", { class: "api-label", text: "Completions" }));
+    apiGrid.appendChild(el("div", { class: "api-val", text: "POST " + location.origin + "/v1/chat/completions" }));
+    apiGrid.appendChild(el("div", { class: "api-label", text: "Models List" }));
+    apiGrid.appendChild(el("div", { class: "api-val", text: "GET " + location.origin + "/v1/models" }));
+    apiCard.appendChild(apiGrid);
+    apiCard.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+      text: "仅转发国际侧模型；限时免费：DeepSeek-V4.1-Flash / Hy4 preview / Hy3，零成本直接接入任意 AI 客户端。" }));
+    box.appendChild(apiCard);
+
+    // ④ 排障参考与历史记录：收进底部折叠
+    var histBody = el("div", { style: "margin-top:10px" });
+    var histDetails = el("details", { class: "fold", style: "margin-top:16px" }, [
+      el("summary", { text: "排障参考：历史限流记录与会话消耗（" + limits.length + " 条限流 · " + costs.length + " 条消耗）" }),
+      histBody
+    ]);
+
+    // 历史瓷砖与模型记录
+    var histTiles = el("div", { class: "tiles" });
     (state ? state.backends : []).forEach(function (b) {
-      var e = latest[b.id];
       var sum = 0, n = 0;
       costs.forEach(function (c) {
         if (c.side === b.id) { sum += (c.credits || 0); n++; }
       });
-      // 每个被限的模型一行：免费额度按模型单独计，deepseek 和 hy4
-      // 可以同时被限着，各有各的重置时间。
-      //
-      // 这里显示的是**历史**（客户端落盘的记录），所以措辞要说清是"记录"，
-      // 不能说成"现在的状态"——以前顶行写"额度用尽"、下面又写"可以继续用"，
-      // 就是因为把历史记录当成了当前结论（2026-09-29 用户反馈看不懂）。
       var mine = (usageData.byModel || []).filter(function (x) { return x.side === b.id; });
       var rows = mine.slice(0, 6).map(function (x) {
         var cls, icon, txt;
         if (x.kind === "exhausted") {
           cls = "bad"; icon = "cross";
-          txt = prettyModel(x.model) + "：额度用尽，需充值（不可自愈）";
+          txt = prettyModel(x.model) + "：额度用尽，需充值";
         } else if (x.resetMs && x.resetMs < Date.now()) {
           cls = "ok"; icon = "check";
           txt = prettyModel(x.model) + "：上次限流已过期";
@@ -3382,39 +3722,25 @@
           el("span", { text: txt })
         ]);
       });
-      var acc = live[b.id] || {};
-      var who = acc.nickname || (acc.uid ? acc.uid.slice(0, 8) + "…" : "");
-      // 凭据形态如实说：解开了就要说"解开了"，否则用户以为国内侧还是残的；
-      // 没解开才提示去装/修客户端。含糊地都说"信封"会让人以为功能没生效。
-      var credNote = acc.credKind === "unsealed" ? "（凭据信封已解开）"
-                   : acc.credKind === "envelope" ? "（凭据信封未解开）" : "";
-      tiles.appendChild(el("div", { class: "tile" }, [
-        el("div", { class: "desc", title: acc.unsealedBy || "",
-          text: sideLabel(b.id) + (who ? " · " + who + credNote : "") }),
-        // 顶行只说"有没有历史记录"，不下"现在能不能用"的结论——
-        // 那是上面那张卡的事（它读代理的实时观察）。
+      histTiles.appendChild(el("div", { class: "tile" }, [
+        el("div", { class: "desc", text: sideLabel(b.id) + " 历史统计" }),
         el("div", { class: "big " + (!mine.length ? "ok" : "warn"),
-          text: !mine.length ? "近 7 天无限流记录"
-            : "近 7 天 " + mine.length + " 个模型被限过" }),
+          text: !mine.length ? "近 7 天无限流记录" : "近 7 天 " + mine.length + " 个模型被限过" }),
         !mine.length ? el("div", { class: "desc", text: "其间一直可用。" }) : rows,
         el("div", { class: "desc", text: "期间消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条会话）" })
       ]));
     });
-    box.appendChild(tiles);
+    histBody.appendChild(histTiles);
 
-    // --- 消耗榜：条形一眼比出谁吃得多，蓝=国内 绿=国际 ---
-    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-      text: "消耗榜 · 前 10（积分，蓝=国内 绿=国际）" }));
-    if (!costs.length) {
-      box.appendChild(el("div", { class: "note",
-        text: "没读到消耗数据（两侧没用过、没登录，或表结构变了）。" }));
-    } else {
-      var max = 0;
-      costs.forEach(function (c) { if ((c.credits || 0) > max) max = c.credits; });
+    // 消耗榜
+    if (costs.length) {
+      histBody.appendChild(el("div", { class: "hint", style: "margin:10px 0 4px", text: "消耗榜 · 前 10（积分，蓝=国内 绿=国际）" }));
+      var maxCost = 0;
+      costs.forEach(function (c) { if ((c.credits || 0) > maxCost) maxCost = c.credits; });
       costs.slice(0, 10).forEach(function (c) {
         var title = c.title || "会话 " + String(c.sessionId || "").slice(0, 8);
-        var w = max > 0 ? Math.max(1.5, (c.credits || 0) / max * 100) : 0;
-        box.appendChild(el("div", { class: "bar-row" }, [
+        var w = maxCost > 0 ? Math.max(1.5, (c.credits || 0) / maxCost * 100) : 0;
+        histBody.appendChild(el("div", { class: "bar-row" }, [
           el("span", { class: "bar-name", title: title, text: title }),
           el("span", { class: "bar-track" }, [
             el("span", { class: "bar-fill " + c.side, style: "width:" + w + "%" })
@@ -3422,166 +3748,16 @@
           el("span", { class: "bar-num", text: (c.credits || 0).toFixed(2) })
         ]));
       });
-      if (costs.length > 10) {
-        var rest = 0;
-        costs.slice(10).forEach(function (c) { rest += (c.credits || 0); });
-        box.appendChild(el("div", { class: "hint",
-          text: "其余 " + (costs.length - 10) + " 条合计 " + rest.toFixed(2) + " 积分。" }));
-      }
     }
 
-    // --- 模型分布：只数"出现在几条会话"，配不出积分（分项哈希拆不到模型） ---
-    var mc = {};
-    costs.forEach(function (c) {
-      (c.models || []).forEach(function (m) { mc[m] = (mc[m] || 0) + 1; });
-    });
-    var names = Object.keys(mc).sort(function (a, b) { return mc[b] - mc[a]; });
-    if (names.length) {
-      box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-        text: "模型 · 出现在几条会话里（不代表积分多少）" }));
-      var chips = el("div", {});
-      names.slice(0, 12).forEach(function (m) {
-        chips.appendChild(el("span", { class: "chip", title: m, text: prettyModel(m) + " ×" + mc[m] }));
-      });
-      box.appendChild(chips);
-    }
-
-    // 历史部分到此为止，切回外层。
-    box = mainBox;
-
-    // --- 实时模型清单与倍率：优先官方接口，读不到退回安装包快照 ---
-    var rates = usageData.rates || {};
-    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-      text: "模型倍率 · 实时官方接口优先，读不到退回安装包快照（以客户端为准）" }));
-    ["cn", "intl"].forEach(function (side) {
-      var lv = live[side];
-      box.appendChild(el("div", { class: "desc", style: "margin:6px 0 2px",
-        text: sideLabel(side) + (lv && lv.ok ? " · 实时" : " · 快照") }));
-      if (lv && lv.err) {
-        box.appendChild(el("div", { class: "hint", style: "margin:2px 0", text: "ⓘ " + lv.err }));
-      }
-      var list;
-      if (lv && lv.ok && lv.models && lv.models.length) {
-        list = lv.models.map(function (m) {
-          return { name: m.name || prettyModel(m.id), rate: m.rate, raw: m.rateRaw,
-                   id: m.id, free: m.freeNow, freeLabel: m.freeLabel, desc: m.desc, ctx: m.ctx };
-        });
-      } else {
-        list = (rates[side] || []).map(function (r) {
-          return { name: r.name || prettyModel(r.id), rate: r.rate, raw: r.rateRaw,
-                   id: r.id, free: false, freeLabel: "", desc: "", ctx: 0 };
-        });
-      }
-      if (!list.length) {
-        box.appendChild(el("div", { class: "hint", text: "没读到倍率数据。" }));
-        return;
-      }
-      // 免费的排最前：0.00x 是最想用的，按倍率从高到低排会沉到底部
-      list.sort(function (a, b) {
-        if (a.free !== b.free) return a.free ? -1 : 1;
-        return b.rate - a.rate;
-      });
-      // 客户端同款卡片：名称+免费徽章+倍率 / 描述 / 消耗速度+上下文
-      var grid = el("div", { class: "mcards" });
-      // 全量显示：排序按倍率从高到低，最想看的 0.00x 免费模型恰恰排在
-      // 末尾——截断会把它们藏掉，而卡片很小，26 个也占不了几屏。
-      list.forEach(function (r) {
-        var meta = ["消耗速度 " + r.rate.toFixed(2) + "x"];
-        if (r.ctx) meta.push("上下文 " + (r.ctx >= 1000000 ? (r.ctx / 1000000) + "M" : Math.round(r.ctx / 1000) + "K"));
-        grid.appendChild(el("div", { class: "mcard" }, [
-          el("div", { class: "mrow" }, [
-            el("span", { class: "mname", title: r.id + " · " + r.raw, text: r.name }),
-            r.free ? el("span", { class: "fbadge", text: r.freeLabel || "限时免费" }) : null,
-            el("span", { class: "mrate" + (r.free ? " free" : ""), text: r.rate.toFixed(2) + "x" })
-          ]),
-          r.desc ? el("div", { class: "mdesc", text: r.desc }) : null,
-          el("div", { class: "mmeta", text: meta.join(" · ") })
-        ]));
-      });
-      // 折叠：默认收起，摘要行自带关键信息（数量+免费模型清单），
-      // 想细看再展开——卡片全量渲染但不再常驻撑长页面。
-      var freeNames = list.filter(function (r) { return r.free; })
-        .map(function (r) { return r.name; });
-      var summaryText = list.length + " 个模型" +
-        (freeNames.length ? " · 限时免费：" + freeNames.slice(0, 3).join("、") +
-          (freeNames.length > 3 ? " 等 " + freeNames.length + " 个" : "") : "");
-      box.appendChild(el("details", { class: "fold" }, [
-        el("summary", { text: summaryText }),
-        grid
-      ]));
-
-    });
-
-    // --- 限时免费活动 + 积分包余量：仅实时侧有 ---
-    ["cn", "intl"].forEach(function (side) {
-      var lv = live[side];
-      if (!lv || !lv.ok) return;
-      (lv.promos || []).slice(0, 5).forEach(function (p) {
-        box.appendChild(el("div", { class: "note warn", style: "margin:4px 0",
-          text: "· " + (p.label || "优惠活动") + "：" + (p.textZh || "") +
-                " · 适用 " + ((p.modelIds || []).map(function (m) { return prettyModel(m); }).join("、") || "全模型") +
-                // 同样算剩余天数——活动文案里的官方日期是英文缩写（"Sep 11 – Oct 31"），
-                // 光看原文得自己折算。
-                (p.validUntil ? " · " + freeUntil(p.validUntil) : "") }));
-      });
-      (lv.packages || []).slice(0, 6).forEach(function (p) {
-        var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
-        box.appendChild(el("div", { class: "bar-row" }, [
-          el("span", { class: "bar-name", title: p.code, text: "积分包 …" + p.code.slice(-6) }),
-          el("span", { class: "bar-track" }, [
-            el("span", { class: "bar-fill " + side, style: "width:" + Math.max(1.5, pct) + "%" })
-          ]),
-          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
-        ]));
-      });
-    });
-
-    // --- 官方入口：充值、套餐、优惠码都在账号页，本地读不到 ---
-    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-      text: "官方入口（充值 / 套餐 / 优惠码兑换）" }));
-    var links = el("div", {});
-    // URL 依据：两侧 product.json 的 links 字段；国际版用量页来自 429 报错原文
-    [["国内版账单", "https://www.codebuddy.cn/profile/plan"],
-     ["国际版账单", "https://www.codebuddy.ai/profile/plan"],
-     ["国际版用量明细", "https://www.codebuddy.ai/profile/usage"]].forEach(function (p) {
-      links.appendChild(el("a", { class: "chip", href: p[1], target: "_blank", rel: "noreferrer", text: p[0] }));
-    });
-    box.appendChild(links);
-    box.appendChild(el("div", { class: "hint",
-      text: "优惠码属于账号数据，在官方页面兑换，本地读不到。" }));
-
-    // --- 本地 OpenAI 兼容接口：不开客户端，任何工具都能调国际模型 ---
-    box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px",
-      text: "本地 OpenAI 兼容接口（不用开客户端，任意工具可调国际模型）" }));
-    box.appendChild(el("div", { class: "cmdline", style: "white-space:pre-wrap",
-      text: "Base URL  " + location.origin + "/v1\n" +
-            "API Key   " + TOKEN + "\n" +
-            "模型清单  GET  /v1/models\n" +
-            "聊天      POST /v1/chat/completions（OpenAI 格式，自动补 system）" }));
-    box.appendChild(el("div", { class: "hint",
-      text: "仅国际侧；免费模型：deepseek-v4.1-flash / hy4-preview / hy3（限时）。这个代理只连国际后端，国内侧的模型不经这里。" }));
-
-    // --- 限流历史：一行一条，色标区分类型 ---
-    if (limits.length) {
-      box.appendChild(el("div", { class: "hint", style: "margin:12px 0 4px", text: "限流历史" }));
-      limits.forEach(function (e) {
-        box.appendChild(el("div", { class: "row", style: "margin:2px 0" }, [
-          pill(sideLabel(e.side), "ghost"),
-          pill(e.kind === "exhausted" ? "额度用尽" : "频率超限",
-               e.kind === "exhausted" ? "bad" : "warn"),
-          el("span", { class: "desc",
-            text: (e.resetAt ? "重置 " + e.resetAt : "不自动恢复") +
-                  " · 会话 " + String(e.sessionId || "").slice(0, 8) +
-                  (e.model ? " · " + prettyModel(e.model) : "") })
-        ]));
-      });
-    }
-
+    // 历史警告信息
     (usageData.warnings || []).forEach(function (w) {
-      box.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+      histBody.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
     });
-    box.appendChild(el("div", { class: "hint", style: "margin-top:8px",
-      text: "数据来自客户端内部文件，升级后可能失效；credit 不是钱。" }));
+    histBody.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+      text: "数据来自客户端本地记录，升级后可能失效；credit 不是钱。" }));
+
+    box.appendChild(histDetails);
   }
 
   // ---------- 启动 ----------
