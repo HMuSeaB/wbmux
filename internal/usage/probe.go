@@ -2,6 +2,7 @@ package usage
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,6 +66,28 @@ func pickProbeModel(models []LiveModel) string {
 	return cheapest
 }
 
+// 2026-10-16 官方国际版新增严格渠道校验，缺失整套身份头会报 HTTP 400 code 11128
+var requiredProbeIdentityHeaders = []string{
+	"X-Conversation-ID",
+	"X-Parent-Conversation-ID",
+	"X-Session-ID",
+	"X-Conversation-Request-ID",
+	"X-Conversation-Message-ID",
+	"X-Request-ID",
+	"X-Root-Request-ID",
+	"X-Trace-ID",
+}
+
+func newProbeUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // 版本 4
+	b[8] = (b[8] & 0x3f) | 0x80 // 变体 10xx
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 // sendProbeMessage 发一条最小聊天消息并解析流式响应。
 // 返回：服务端回显的模型、回复文本、token 用量、报的积分消耗。
 func sendProbeMessage(endpoint string, cred credential.Credential, id variant.ID, model string) (served, reply string, promptTok, completionTok int, credit float64, err error) {
@@ -88,6 +111,10 @@ func sendProbeMessage(endpoint string, cred credential.Credential, id variant.ID
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range liveCommonHeaders(id) {
 		req.Header.Set(k, v)
+	}
+	probeUUID := newProbeUUID()
+	for _, h := range requiredProbeIdentityHeaders {
+		req.Header.Set(h, probeUUID)
 	}
 	client := &http.Client{Timeout: 45 * time.Second}
 	resp, err := client.Do(req)

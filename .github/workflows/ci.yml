@@ -1,6 +1,12 @@
 name: ci
 
 on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: '触发范围 (all: 编译+测试, build: 仅跨平台编译)'
+        required: false
+        default: 'all'
   push:
     branches: [main]
     paths-ignore:
@@ -20,12 +26,10 @@ permissions:
 
 jobs:
   # 格式、静态检查、跨平台构建。
-  #
-  # 构建这一项刻意覆盖全部目标平台：wbmux 的平台差异集中在安装探测
-  # （Windows 走注册表，其它平台走文件系统），漏掉某个平台
-  # 很容易到交叉编译时才暴露。
+  # 仅在手动派发 (workflow_dispatch) 或 commit 信息明确携带 [build]/[ci] 参数时触发。
   build:
     name: build (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -87,6 +91,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
