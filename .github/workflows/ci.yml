@@ -115,6 +115,7 @@ jobs:
   # 方便排查平台差异。
   detect:
     name: 安装探测（Windows）
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
