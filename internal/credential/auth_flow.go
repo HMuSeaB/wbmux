@@ -3,6 +3,7 @@ package credential
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,6 +102,12 @@ func (m *LoginFlowManager) getBaseURL() string {
 	return m.baseURL
 }
 
+func (m *LoginFlowManager) getHomeDir() string {
+	if m.probe != nil {
+		return m.probe.Home
+	}
+	return ""
+}
 
 // cleanExpiredLocked 清理过期未完成的会话
 func (m *LoginFlowManager) cleanExpiredLocked() {
@@ -154,13 +161,13 @@ func (m *LoginFlowManager) StartLoginFlow(ctx context.Context) (*LoginFlow, erro
 		return nil, fmt.Errorf("创建授权请求失败: %w", err)
 	}
 
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Domain", OfficialAuthDomain)
 	req.Header.Set("User-Agent", telemetry.UserAgent(""))
-	if devID := telemetry.DeviceID(""); devID != "" {
+	if devID := telemetry.DeviceID(m.getHomeDir()); devID != "" {
 		req.Header.Set("X-Device-Id", devID)
 	}
+
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -235,7 +242,7 @@ func (m *LoginFlowManager) PollLoginStatus(ctx context.Context, state string) (*
 	}
 	req.Header.Set("X-Domain", OfficialAuthDomain)
 	req.Header.Set("User-Agent", telemetry.UserAgent(""))
-	if devID := telemetry.DeviceID(""); devID != "" {
+	if devID := telemetry.DeviceID(m.getHomeDir()); devID != "" {
 		req.Header.Set("X-Device-Id", devID)
 	}
 
@@ -282,6 +289,12 @@ func (m *LoginFlowManager) PollLoginStatus(ctx context.Context, state string) (*
 
 	// 进一步拉取该 Token 对应的用户详情
 	uid, nickname := m.fetchAccountInfo(ctx, accessToken)
+	if uid == "" {
+		uid = extractUIDFromJWT(accessToken)
+	}
+	if uid == "" {
+		uid = "intl_user"
+	}
 	if nickname == "" {
 		nickname = "国际版用户"
 	}
@@ -333,7 +346,7 @@ func (m *LoginFlowManager) fetchAccountInfo(ctx context.Context, token string) (
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Domain", OfficialAuthDomain)
 	req.Header.Set("User-Agent", telemetry.UserAgent(""))
-	if devID := telemetry.DeviceID(""); devID != "" {
+	if devID := telemetry.DeviceID(m.getHomeDir()); devID != "" {
 		req.Header.Set("X-Device-Id", devID)
 	}
 
@@ -362,3 +375,42 @@ func (m *LoginFlowManager) fetchAccountInfo(ctx context.Context, token string) (
 	}
 	return "", ""
 }
+
+// extractUIDFromJWT 尝试从 JWT payload 中提取 uid 或 sub
+func extractUIDFromJWT(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	seg := parts[1]
+	if l := len(seg)%4; l > 0 {
+		seg += strings.Repeat("=", 4-l)
+	}
+	raw, err := base64.URLEncoding.DecodeString(seg)
+	if err != nil {
+		raw, err = base64.StdEncoding.DecodeString(seg)
+		if err != nil {
+			return ""
+		}
+	}
+	var payload struct {
+		UID    string `json:"uid"`
+		Sub    string `json:"sub"`
+		UserId string `json:"userId"`
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	if payload.UID != "" {
+		return payload.UID
+	}
+	if payload.Sub != "" {
+		return payload.Sub
+	}
+	if payload.UserId != "" {
+		return payload.UserId
+	}
+	return payload.UserID
+}
+

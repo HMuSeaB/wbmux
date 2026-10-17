@@ -3528,10 +3528,17 @@
           window.open(currentAuthURL, "_blank");
         };
         btnCopyLink.onclick = function () {
-          navigator.clipboard.writeText(currentAuthURL).then(function () {
-            toast("登录链接已复制到剪贴板", "ok");
-          });
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(currentAuthURL).then(function () {
+              toast("登录链接已复制到剪贴板", "ok");
+            }).catch(function () {
+              prompt("请手动复制以下登录链接：", currentAuthURL);
+            });
+          } else {
+            prompt("请手动复制以下登录链接：", currentAuthURL);
+          }
         };
+
 
         // 倒计时
         var remainingSec = 300;
@@ -4372,7 +4379,7 @@
         el("button", {
           class: "ghost",
           style: "padding:2px 8px;font-size:11px",
-          text: intlLv.ok ? "添加/更换" : "录入 Token",
+          text: intlLv.ok ? "获取/录入凭据" : "⚡ 拟真登录/录入",
           onclick: function () { showTokenImportModal("intl"); }
         }),
         el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/plan", target: "_blank", rel: "noreferrer",
@@ -4389,17 +4396,18 @@
       }, [
         el("div", { style: "font-size:12px;color:var(--ink-2);line-height:1.4" }, [
           el("div", { style: "font-weight:600;color:var(--ink-1);margin-bottom:2px", text: "🚀 未安装国际版？无需下载几百MB安装包！" }),
-          el("div", { text: "直接粘贴网页版 AccessToken，自动开启机器指纹遥测与限免模型注入。" })
+          el("div", { text: "支持官方拟真一键登录（免抓包），自动捕获 Token 并开启机器指纹遥测。" })
         ]),
         el("button", {
           class: "btn-hero",
           style: "padding:4px 12px;font-size:12px;white-space:nowrap;height:auto",
-          text: "录入凭据",
+          text: "⚡ 官方拟真登录",
           onclick: function () { showTokenImportModal("intl"); }
         })
       ]);
       intlCard.appendChild(noCredNotice);
     }
+
 
     // 国际积分包
     var intlSecPackages = el("div", {});

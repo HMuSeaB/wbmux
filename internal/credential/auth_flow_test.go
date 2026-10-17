@@ -180,3 +180,29 @@ func TestLoginFlow_EndToEnd(t *testing.T) {
 		t.Fatalf("expected status 'expired', got %s", eRes.Status)
 	}
 }
+
+func TestExtractUIDFromJWT(t *testing.T) {
+	// 1. 构造带有 uid 的有效 JWT
+	fakeJWT := "header." + "eyJ1aWQiOiJ1c3JfMTIzNDU2NzgiLCJzdWIiOiJzdWJfODg4OCJ9" + ".sig"
+	uid := extractUIDFromJWT(fakeJWT)
+	if uid != "usr_12345678" {
+		t.Errorf("expected uid usr_12345678, got %s", uid)
+	}
+
+
+	// 2. 构造只有 sub 的 JWT
+	fakeJWTSub := "header." + "eyJzdWIiOiJzdWJfOTk5OTk5In0" + ".sig"
+	sub := extractUIDFromJWT(fakeJWTSub)
+	if sub != "sub_999999" {
+		t.Errorf("expected sub sub_999999, got %s", sub)
+	}
+
+	// 3. 非法 Token 不 panic 并返回空
+	if invalid := extractUIDFromJWT("not_a_jwt"); invalid != "" {
+		t.Errorf("expected empty string for non-jwt, got %s", invalid)
+	}
+	if garbage := extractUIDFromJWT("a.???!!!.c"); garbage != "" {
+		t.Errorf("expected empty string for invalid base64, got %s", garbage)
+	}
+}
+
