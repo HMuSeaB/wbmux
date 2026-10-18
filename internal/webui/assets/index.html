@@ -403,6 +403,75 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .mcard .mmeta { color: var(--ink-3); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
+  .mcard.injected {
+    border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+    background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 8%, var(--g2)), var(--g2));
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--brand) 12%, transparent);
+  }
+  .mcard-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--g4);
+  }
+  .mcard-caps {
+    display: flex; gap: 4px; align-items: center; font-size: 10.5px; color: var(--ink-3);
+  }
+  .mcard-cap-tag {
+    background: var(--g3); padding: 1px 5px; border-radius: 3px; font-size: 10px;
+  }
+  .btn-m-action {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 550; padding: 2px 8px; border-radius: 4px;
+    border: 1px solid var(--g4); background: var(--g1);
+    color: var(--ink-2); cursor: pointer; transition: all .15s ease;
+    white-space: nowrap; flex: none; line-height: 1.4;
+  }
+  .btn-m-action:hover {
+    border-color: var(--brand); color: var(--brand);
+    background: color-mix(in srgb, var(--brand) 10%, var(--g1));
+  }
+  .btn-m-action.added {
+    background: color-mix(in srgb, var(--ok) 12%, var(--g1));
+    border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+    color: var(--ok);
+  }
+  .btn-m-action.added:hover {
+    border-color: var(--bad); color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 10%, var(--g1));
+  }
+  .btn-m-action.free-default {
+    background: color-mix(in srgb, var(--g4) 50%, transparent);
+    border-color: transparent; color: var(--ink-3); cursor: default;
+  }
+  .mfold-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 8px; margin: 8px 0 10px; padding: 8px 10px;
+    background: var(--g2); border-radius: var(--r-sm); border: 1px solid var(--g3);
+  }
+  .mfold-search-wrap {
+    display: flex; align-items: center; gap: 6px; flex: 1; min-width: 160px; max-width: 280px;
+  }
+  .mfold-search {
+    width: 100%; font-size: 12px; padding: 4px 8px; border-radius: 4px;
+    border: 1px solid var(--g4); background: var(--g1); color: var(--ink);
+    outline: none; transition: border-color .15s ease;
+  }
+  .mfold-search:focus { border-color: var(--brand); }
+  .mfold-filters {
+    display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+  }
+  .mfold-filter-btn {
+    font-size: 11px; padding: 2px 7px; border-radius: 3px;
+    border: 1px solid transparent; background: transparent;
+    color: var(--ink-3); cursor: pointer; transition: all .15s ease;
+  }
+  .mfold-filter-btn:hover { color: var(--ink); }
+  .mfold-filter-btn.active {
+    background: var(--g3); color: var(--brand); font-weight: 550;
+    border-color: color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  .mfold-stats {
+    font-size: 11.5px; color: var(--ink-3); display: flex; align-items: center; gap: 6px;
+  }
 
   /* ---------- 改动清单表格 ---------- */
   table.changes { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -903,7 +972,7 @@
 </style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol></defs></svg>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol></defs></svg>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
@@ -1383,6 +1452,16 @@
   var target = null;     // 当前选中的目标后端 id
   var nativeMode = false;
   var busy = false;
+  var selectedIntlModels = [];
+
+  function isIntlModelSelected(modelId) {
+    if (!modelId) return false;
+    var targetId = String(modelId).toLowerCase();
+    for (var i = 0; i < selectedIntlModels.length; i++) {
+      if (String(selectedIntlModels[i]).toLowerCase() === targetId) return true;
+    }
+    return false;
+  }
 
   // ---------- 工具 ----------
 
@@ -4376,11 +4455,128 @@
 
   function renderModelDetailsFold(side, list, summaryTitle) {
     if (!list || !list.length) return el("div", {});
+    var isIntl = (side === "intl");
     var grid = el("div", { class: "mcards", style: "margin-top:8px" });
+    var details = el("details", { class: "fold", style: "margin:4px 0 0" });
+    var summaryEl = el("summary", { style: "font-size:12px;color:var(--ink-3)", text: summaryTitle });
+    details.appendChild(summaryEl);
+
+    // 针对国际端模型，提供顶部控制条（搜索、过滤标签、统计）
+    var filterMode = "all";
+    var searchKeyword = "";
+    var statLabel = null;
+    var filterBtns = {};
+    var cards = [];
+
+    function updateStatsAndFilters() {
+      var total = list.length;
+      var freeCount = 0;
+      var injectedCount = 0;
+      var unaddedCount = 0;
+
+      list.forEach(function (r) {
+        var isFree = !!r.free;
+        var isSel = isIntlModelSelected(r.id);
+        if (isFree) freeCount++;
+        if (isFree || isSel) injectedCount++;
+        else unaddedCount++;
+      });
+
+      if (filterBtns["all"]) filterBtns["all"].textContent = "全部 (" + total + ")";
+      if (filterBtns["free"]) filterBtns["free"].textContent = "限免 (" + freeCount + ")";
+      if (filterBtns["injected"]) filterBtns["injected"].textContent = "已入国内端 (" + injectedCount + ")";
+      if (filterBtns["unadded"]) filterBtns["unadded"].textContent = "未入付费 (" + unaddedCount + ")";
+
+      var paidCount = injectedCount - freeCount;
+      if (statLabel) {
+        statLabel.textContent = "已选 " + paidCount + " 个付费注入";
+      }
+      summaryEl.textContent = "国际模型库与快捷注入（" + total + " 个 · 已自选付费 " + paidCount + " 个）";
+    }
+
+    function applyFilter() {
+      var kw = searchKeyword.toLowerCase().trim();
+      cards.forEach(function (item) {
+        var card = item.card;
+        var r = item.data;
+        var isFree = !!r.free;
+        var isSel = isIntlModelSelected(r.id);
+        var isInjected = isFree || isSel;
+
+        var matchKw = true;
+        if (kw) {
+          var nameStr = (r.name || "").toLowerCase();
+          var idStr = (r.id || "").toLowerCase();
+          var descStr = (r.desc || "").toLowerCase();
+          matchKw = (nameStr.indexOf(kw) >= 0 || idStr.indexOf(kw) >= 0 || descStr.indexOf(kw) >= 0);
+        }
+
+        var matchFilter = true;
+        if (filterMode === "free") matchFilter = isFree;
+        else if (filterMode === "injected") matchFilter = isInjected;
+        else if (filterMode === "unadded") matchFilter = (!isFree && !isSel);
+
+        card.style.display = (matchKw && matchFilter) ? "" : "none";
+      });
+    }
+
+    if (isIntl) {
+      var toolbar = el("div", { class: "mfold-toolbar" });
+      var searchWrap = el("div", { class: "mfold-search-wrap" });
+      var searchIcon = el("span", { html: ICO("search", "ico-sm"), style: "color:var(--ink-3);display:flex" });
+      var searchInput = el("input", {
+        type: "text",
+        class: "mfold-search",
+        placeholder: "搜索模型名称、ID 或描述（如 GPT / Claude / Kimi）…"
+      });
+      searchInput.addEventListener("input", function (e) {
+        searchKeyword = e.target.value || "";
+        applyFilter();
+      });
+      searchWrap.appendChild(searchIcon);
+      searchWrap.appendChild(searchInput);
+      toolbar.appendChild(searchWrap);
+
+      var filtersWrap = el("div", { class: "mfold-filters" });
+      var fTypes = [
+        { key: "all", label: "全部" },
+        { key: "free", label: "限免" },
+        { key: "injected", label: "已入国内端" },
+        { key: "unadded", label: "未入付费" }
+      ];
+      fTypes.forEach(function (ft) {
+        var btn = el("button", {
+          type: "button",
+          class: "mfold-filter-btn" + (filterMode === ft.key ? " active" : ""),
+          text: ft.label
+        });
+        btn.addEventListener("click", function () {
+          filterMode = ft.key;
+          Object.keys(filterBtns).forEach(function (k) {
+            filterBtns[k].classList.remove("active");
+          });
+          btn.classList.add("active");
+          applyFilter();
+        });
+        filterBtns[ft.key] = btn;
+        filtersWrap.appendChild(btn);
+      });
+      toolbar.appendChild(filtersWrap);
+
+      statLabel = el("div", { class: "mfold-stats" });
+      toolbar.appendChild(statLabel);
+      details.appendChild(toolbar);
+    }
+
     list.forEach(function (r) {
+      var isFree = !!r.free;
+      var isSel = isIntl ? isIntlModelSelected(r.id) : false;
+      var isInjected = isFree || isSel;
+
       var meta = ["速度 " + (r.rate !== undefined ? r.rate.toFixed(2) : "0.00") + "x"];
       if (r.ctx) meta.push((r.ctx >= 1000000 ? (r.ctx / 1000000) + "M" : Math.round(r.ctx / 1000) + "K") + " 窗口");
-      grid.appendChild(el("div", { class: "mcard" }, [
+
+      var cardKids = [
         el("div", { class: "mrow" }, [
           el("span", { class: "mname", title: (r.id || "") + " · " + (r.raw || ""), text: r.name || prettyModel(r.id) }),
           r.free ? el("span", { class: "fbadge", text: r.freeLabel || "限时免费" }) : null,
@@ -4388,12 +4584,87 @@
         ]),
         r.desc ? el("div", { class: "mdesc", text: r.desc }) : null,
         el("div", { class: "mmeta", text: meta.join(" · ") })
-      ]));
+      ];
+
+      var card = el("div", { class: "mcard" + (isInjected ? " injected" : "") }, cardKids);
+
+      if (isIntl) {
+        var foot = el("div", { class: "mcard-foot" });
+        var capsWrap = el("div", { class: "mcard-caps" });
+        if (r.tools) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "Agent工具" }));
+        if (r.images) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "多模态" }));
+        if (r.maxOutput) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "单次" + Math.round(r.maxOutput / 1000) + "K" }));
+        foot.appendChild(capsWrap);
+
+        if (isFree) {
+          var freeTag = el("span", {
+            class: "btn-m-action free-default",
+            html: ICO("check", "ico-sm") + " 默认免积分注入",
+            title: "限时免费模型已被系统默认全自动注入到国内客户端，零成本使用"
+          });
+          foot.appendChild(freeTag);
+        } else {
+          var actBtn = el("button", {
+            type: "button",
+            class: "btn-m-action" + (isSel ? " added" : ""),
+            html: (isSel ? ICO("check", "ico-sm") : ICO("plus", "ico-sm")) +
+                  (isSel ? " 已加入国内客户端" : " 加入国内客户端"),
+            title: isSel ? "已加入国内客户端自定义模型（重启客户端后生效）。点击可从国内端移出。" : "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）"
+          });
+
+          (function (modelItem, buttonEl, cardEl) {
+            buttonEl.addEventListener("click", function () {
+              if (buttonEl.disabled) return;
+              buttonEl.disabled = true;
+              buttonEl.textContent = "同步中…";
+
+              api("/api/custom-models/intl-selection", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: modelItem.id, action: "toggle" })
+              }).then(function (res) {
+                if (res && res.selected) {
+                  selectedIntlModels = res.selected;
+                }
+                var nowIn = isIntlModelSelected(modelItem.id);
+                buttonEl.disabled = false;
+                if (nowIn) {
+                  buttonEl.className = "btn-m-action added";
+                  buttonEl.innerHTML = ICO("check", "ico-sm") + " 已加入国内客户端";
+                  buttonEl.title = "已加入国内客户端自定义模型（重启客户端后生效）。点击可从国内端移出。";
+                  cardEl.classList.add("injected");
+                  toast("已加入国内客户端：" + (modelItem.name || modelItem.id) + "（费率 " + (modelItem.rate ? modelItem.rate.toFixed(2) + "x" : "标准") + "，重启客户端生效）", "ok");
+                } else {
+                  buttonEl.className = "btn-m-action";
+                  buttonEl.innerHTML = ICO("plus", "ico-sm") + " 加入国内客户端";
+                  buttonEl.title = "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）";
+                  cardEl.classList.remove("injected");
+                  toast("已从国内客户端移出：" + (modelItem.name || modelItem.id) + "（重启客户端生效）", "warn");
+                }
+                updateStatsAndFilters();
+                applyFilter();
+              }).catch(function (err) {
+                buttonEl.disabled = false;
+                toast("操作失败：" + err.message, "bad");
+              });
+            });
+          })(r, actBtn, card);
+
+          foot.appendChild(actBtn);
+        }
+
+        card.appendChild(foot);
+        cards.push({ card: card, data: r });
+      }
+
+      grid.appendChild(card);
     });
-    return el("details", { class: "fold", style: "margin:4px 0 0" }, [
-      el("summary", { style: "font-size:12px;color:var(--ink-3)", text: summaryTitle }),
-      grid
-    ]);
+
+    details.appendChild(grid);
+    if (isIntl) {
+      updateStatsAndFilters();
+    }
+    return details;
   }
 
   function renderUsage() {
@@ -4758,7 +5029,8 @@
     // 国际模型库概览折叠
     var intlRawModels = (intlLv.ok && intlLv.models && intlLv.models.length) ? intlLv.models : (rates["intl"] || []);
     if (intlRawModels.length) {
-      intlCard.appendChild(renderModelDetailsFold("intl", intlRawModels, "展开国际模型倍率（" + intlRawModels.length + " 个）"));
+      var paidCount = (selectedIntlModels && selectedIntlModels.length) || 0;
+      intlCard.appendChild(renderModelDetailsFold("intl", intlRawModels, "国际模型库与快捷注入（" + intlRawModels.length + " 个 · 已自选付费 " + paidCount + " 个）"));
     }
     grid.appendChild(intlCard);
 
@@ -4968,6 +5240,7 @@
 
   api("/api/state").then(function (st) {
     state = st;
+    selectedIntlModels = (st && st.selectedIntlModels) || [];
     // 默认选另一套后端——这正是用户打开界面的原因。
     target = st.backends.filter(function (b) {
       return b.id !== st.hostId && st.canRun[b.id];

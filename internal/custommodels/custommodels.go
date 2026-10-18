@@ -97,7 +97,23 @@ func isOwned(id string) bool {
 // chatURL 是代理的补全端点（http://127.0.0.1:<port>/v1/chat/completions），
 // apiKey 是代理的鉴权令牌（GUI 令牌，仅本机回环有效）。
 // 返回注入的条目数。
-func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, providers []config.Provider) (int, error) {
+// Sync 把 wbmux 提供的模型写入国内客户端的自定义模型清单。
+//
+// 来源，代理按条目前缀分流：
+//   - 国际限时免费模型（借国际账号凭据，前缀 IDPrefix，默认自动注入）
+//   - 用户自选的国际付费高级模型（借国际账号凭据，前缀 IDPrefix，由 selectedIntl 传入）
+//   - 用户自备的提供方（BYOK，前缀 config.ProviderIDPrefix）
+//
+// 规则：
+//   - 先剥掉此前注入的旧条目（按 ownedPrefixes 识别），用户自己的条目原样保留
+//   - 国际侧默认注入限时免费模型（FreeNow），并同时注入用户自选的付费模型（带对应费率倍率后缀）
+//   - 写前备份原文件（models.json.wbmux-bak），写后校验可解析
+//   - **本轮全部来源都拿不到东西时，一个字节都不写**
+//
+// chatURL 是代理的补全端点（http://127.0.0.1:<port>/v1/chat/completions），
+// apiKey 是代理的鉴权令牌（GUI 令牌，仅本机回环有效）。
+// 返回注入的条目数。
+func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, providers []config.Provider, selectedIntl ...[]string) (int, error) {
 	// 目录不存在时**不**替客户端创建：凭空生成一个空的 ~/.workbuddy 会让
 	// 客户端自己以为"这是已有档位"，而里面没有登录态。宁可明确报错，
 	// 让人先启动一次客户端——顺带把操作系统那句"找不到路径"翻译成人话。
@@ -107,9 +123,20 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		}
 	}
 
+	var selectedList []string
+	if len(selectedIntl) > 0 {
+		selectedList = selectedIntl[0]
+	}
+	selectedSet := make(map[string]bool, len(selectedList))
+	for _, id := range selectedList {
+		if clean := strings.ToLower(strings.TrimSpace(id)); clean != "" {
+			selectedSet[clean] = true
+		}
+	}
+
 	// 先算清"这一轮到底有没有东西可注入"，再决定碰不碰文件。
 	// 只要有一个来源可用，就该照常剥旧重加（用户删了卡片、模型下线都要立刻反映）。
-	if !hasAnythingToInject(intl, providers) {
+	if !hasAnythingToInject(intl, providers, selectedSet) {
 		return 0, nil
 	}
 
@@ -142,15 +169,33 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		kept = append(kept, m)
 	}
 
-	// 只注入限时免费模型：测试与日常都零成本，不盲发计费模型
+	// 注入国际模型：限时免费模型自动注入；自选付费模型（在 selectedSet 中）同时注入。
 	added := 0
+	injectedIDs := make(map[string]bool)
 	for _, m := range intl {
-		if !m.FreeNow {
+		isFree := m.FreeNow
+		isSelected := selectedSet[strings.ToLower(m.ID)]
+		if !isFree && !isSelected {
 			continue
 		}
+		if injectedIDs[strings.ToLower(m.ID)] {
+			continue
+		}
+		injectedIDs[strings.ToLower(m.ID)] = true
+
+		displayNameStr := displayName(m)
+		var label string
+		if isFree {
+			label = fmt.Sprintf("%s（国际免费）", displayNameStr)
+		} else if m.Rate > 0 {
+			label = fmt.Sprintf("%s（国际 · %.2fx）", displayNameStr, m.Rate)
+		} else {
+			label = fmt.Sprintf("%s（国际）", displayNameStr)
+		}
+
 		entry := map[string]any{
 			"id":     IDPrefix + m.ID,
-			"name":   fmt.Sprintf("%s（国际免费）", displayName(m)),
+			"name":   label,
 			"vendor": "Custom",
 			"url":    chatURL,
 			"apiKey": apiKey,
@@ -166,8 +211,8 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			// 而国内壳子里的 Agent 全靠工具干活——写 false 的结果是
 			// 模型只能聊天，什么也做不了。实测官方配置里这几个免费模型
 			// 都是 supportsToolCall=true。
-			"supportsToolCall": m.Tools,
-			"supportsImages":   m.Images,
+			"supportsToolCall":  m.Tools,
+			"supportsImages":    m.Images,
 			// 思考类开关官方配置里没有对应字段，不猜，一律 false。
 			"supportsReasoning": false,
 		}
@@ -267,11 +312,11 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 // hasAnythingToInject 报告这一轮是否有东西可注入。
 //
 // 判据必须与 Sync 的循环保持一致，否则会出现"它说有、但循环一条都没加"
-// 的分叉——那正是清空事故的成因。国际侧看 FreeNow（Sync 只收限时免费），
+// 的分叉——那正是清空事故的成因。国际侧看 FreeNow 或在 selectedSet 中，
 // 自备侧看是否有非空模型名。
-func hasAnythingToInject(intl []usage.LiveModel, providers []config.Provider) bool {
+func hasAnythingToInject(intl []usage.LiveModel, providers []config.Provider, selectedSet map[string]bool) bool {
 	for _, m := range intl {
-		if m.FreeNow {
+		if m.FreeNow || (selectedSet != nil && selectedSet[strings.ToLower(m.ID)]) {
 			return true
 		}
 	}

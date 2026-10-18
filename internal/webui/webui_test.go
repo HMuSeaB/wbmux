@@ -610,5 +610,56 @@ func TestGrowthEndpoints(t *testing.T) {
 	}
 }
 
+func TestHandleIntlModelSelection(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 初始 GET 查询
+	var resGet struct {
+		Selected []string `json:"selected"`
+	}
+	e.do(t, "GET", "/api/custom-models/intl-selection", "", true).decode(t, &resGet)
+	if len(resGet.Selected) != 0 {
+		t.Errorf("初始选中的模型应为空，得到 %v", resGet.Selected)
+	}
+
+	// 2. 单个添加 POST
+	var resAdd struct {
+		OK       bool     `json:"ok"`
+		Selected []string `json:"selected"`
+		Note     string   `json:"note"`
+	}
+	e.do(t, "POST", "/api/custom-models/intl-selection", `{"model":"gpt-5.6-sol","action":"add"}`, true).decode(t, &resAdd)
+	if !resAdd.OK || len(resAdd.Selected) != 1 || resAdd.Selected[0] != "gpt-5.6-sol" {
+		t.Errorf("添加后 selected 应包含 gpt-5.6-sol，得到 %v", resAdd.Selected)
+	}
+
+	// 3. toggle 移出
+	var resToggle struct {
+		OK       bool     `json:"ok"`
+		Selected []string `json:"selected"`
+	}
+	e.do(t, "POST", "/api/custom-models/intl-selection", `{"model":"gpt-5.6-sol","action":"toggle"}`, true).decode(t, &resToggle)
+	if !resToggle.OK || len(resToggle.Selected) != 0 {
+		t.Errorf("toggle 移出后 selected 应为空，得到 %v", resToggle.Selected)
+	}
+
+	// 4. 批量保存
+	var resBatch struct {
+		OK       bool     `json:"ok"`
+		Selected []string `json:"selected"`
+	}
+	e.do(t, "POST", "/api/custom-models/intl-selection", `{"selected":["grok-4.7","kimi-k3"]}`, true).decode(t, &resBatch)
+	if !resBatch.OK || len(resBatch.Selected) != 2 {
+		t.Errorf("批量设置后 selected 应有 2 个，得到 %v", resBatch.Selected)
+	}
+
+	// 5. 验证 /api/state 返回了 SelectedIntlModels
+	var st State
+	e.do(t, "GET", "/api/state", "", true).decode(t, &st)
+	if len(st.SelectedIntlModels) != 2 || st.SelectedIntlModels[0] != "grok-4.7" {
+		t.Errorf("State.SelectedIntlModels 应包含 grok-4.7，得到 %v", st.SelectedIntlModels)
+	}
+}
+
 
 

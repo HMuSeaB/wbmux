@@ -259,6 +259,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
+	mux.HandleFunc("/api/custom-models/intl-selection", s.guard(s.handleIntlModelSelection))
 	mux.HandleFunc("/api/providers", s.guard(s.handleProviders))
 	mux.HandleFunc("/api/proxy-log", s.guard(s.handleProxyLog))
 	mux.HandleFunc("/api/zcode/list", s.guard(s.handleZCodeList))
@@ -566,6 +567,8 @@ type State struct {
 	// 等发现时已经在烧钱了。wbmux 拦不住客户端的故障转移（那条路不经过
 	// 代理），能做的就是把它说破。
 	QuotaWarn string `json:"quotaWarn,omitempty"`
+	// SelectedIntlModels 是用户选中的国际端付费/高级模型 ID 列表。
+	SelectedIntlModels []string `json:"selectedIntlModels,omitempty"`
 }
 
 // CheckView 是 doctor 的单项结论。
@@ -635,6 +638,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			HostExe:        cfg.HostExe,
 			ExtraEndpoints: cfg.ExtraEndpoints,
 		},
+		SelectedIntlModels: cfg.SelectedIntlModels,
 	}
 	if len(st.Quota) > 0 {
 		st.QuotaWarn = quotaWarnText(st.Quota)
@@ -852,12 +856,107 @@ func (s *Server) handleInjectCustomModels(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{"added": added, "note": note})
 }
 
+// handleIntlModelSelection 获取或更新自选的国际付费模型注入列表
+func (s *Server) handleIntlModelSelection(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := config.Load()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"selected": cfg.SelectedIntlModels,
+		})
+	case http.MethodPost:
+		var req struct {
+			Selected []string `json:"selected"`
+			Model    string   `json:"model"`
+			Action   string   `json:"action"` // "toggle", "add", "remove"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "请求解析失败："+err.Error())
+			return
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		var updated []string
+		if req.Model != "" {
+			modelID := strings.TrimSpace(req.Model)
+			current := make(map[string]bool)
+			for _, m := range cfg.SelectedIntlModels {
+				current[strings.ToLower(m)] = true
+			}
+			targetLower := strings.ToLower(modelID)
+			switch req.Action {
+			case "remove":
+				delete(current, targetLower)
+			case "add":
+				current[targetLower] = true
+			case "toggle", "":
+				if current[targetLower] {
+					delete(current, targetLower)
+				} else {
+					current[targetLower] = true
+				}
+			}
+			// 维持已有顺序并去重
+			for _, m := range cfg.SelectedIntlModels {
+				if current[strings.ToLower(m)] {
+					updated = append(updated, m)
+					delete(current, strings.ToLower(m))
+				}
+			}
+			if current[targetLower] {
+				updated = append(updated, modelID)
+			}
+		} else {
+			// 批量覆盖模式，清洗与去重
+			seen := make(map[string]bool)
+			for _, m := range req.Selected {
+				clean := strings.TrimSpace(m)
+				if clean != "" && !seen[strings.ToLower(clean)] {
+					seen[strings.ToLower(clean)] = true
+					updated = append(updated, clean)
+				}
+			}
+		}
+
+		cfg.SelectedIntlModels = updated
+		if err := config.Save(cfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
+			return
+		}
+
+		// 每次选定或取消后，立即触发 syncInto()，实时同步到 models.json
+		added, note, syncErr := s.syncInto()
+		errMsg := ""
+		if syncErr != nil {
+			errMsg = syncErr.Error()
+		}
+
+		writeJSON(w, map[string]any{
+			"ok":       true,
+			"selected": cfg.SelectedIntlModels,
+			"added":    added,
+			"note":     note,
+			"syncErr":  errMsg,
+		})
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET 或 POST")
+	}
+}
+
 // syncInto 把当前能提供的模型写进国内客户端的清单，返回注入条数与一句
 // 给用户看的话。
 //
-// 两个来源**互相独立**：国际侧凭据不可用时仍然要注入自备提供方的模型
-// ——那正是 BYOK 存在的意义（不依赖那个账号）。所以这里把国际侧的失败
-// 降级成"消息里说明一句"，而不是直接失败。
+// 来源：国际侧免费/自选模型 + 自备提供方（BYOK）。互相独立，国际侧凭据不可用时
+// 仍然要注入自备提供方的模型。
 func (s *Server) syncInto() (int, string, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -880,18 +979,6 @@ func (s *Server) syncInto() (int, string, error) {
 	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
 
 	// 只注入"此刻还能用"的模型。
-	//
-	// 为什么要在注入前过滤：客户端**只在启动时读一次** models.json，
-	// 中途改它没用。而一旦客户端手上拿着一个额度已经耗尽的条目，
-	// 用到一半被上游 429 打回来，它就会自己换一个模型继续——
-	// 国内客户端那边的备选往往正是**付费**模型。用户的原话是
-	// "希望 hy4 额度用完时别掉进国内版付费"，所以宁可这一轮不注入，
-	// 也不要注入了之后让他不知不觉挨一刀。
-	//
-	// 状态从 gui.log 里恢复（seedFromLog），所以跨重启仍然记得。
-	//
-	// 只有**配额类**问题才跳过注入（限流 / 额度用尽）；上游 5xx 这种瞬时
-	// 故障照常注入——见 ProxyQuota.BlocksInjection 的注释。
 	var skipped []string
 	var usable []usage.LiveModel
 	for _, m := range intl {
@@ -903,15 +990,25 @@ func (s *Server) syncInto() (int, string, error) {
 	}
 	intl = usable
 
-	added, err := custommodels.Sync(path, base, s.token, intl, cfg.Providers)
+	added, err := custommodels.Sync(path, base, s.token, intl, cfg.Providers, cfg.SelectedIntlModels)
 	if err != nil {
 		return 0, "", err
 	}
 
+	selectedSet := make(map[string]bool, len(cfg.SelectedIntlModels))
+	for _, id := range cfg.SelectedIntlModels {
+		if clean := strings.ToLower(strings.TrimSpace(id)); clean != "" {
+			selectedSet[clean] = true
+		}
+	}
+
 	free := 0
+	paid := 0
 	for _, m := range intl {
 		if m.FreeNow {
 			free++
+		} else if selectedSet[strings.ToLower(m.ID)] {
+			paid++
 		}
 	}
 	own := 0
@@ -919,7 +1016,22 @@ func (s *Server) syncInto() (int, string, error) {
 		own += len(p.Models)
 	}
 
-	parts := fmt.Sprintf("已注入 %d 个模型（国际免费 %d + 自备提供方 %d）", added, free, own)
+	var detailParts []string
+	if free > 0 {
+		detailParts = append(detailParts, fmt.Sprintf("国际免费 %d", free))
+	}
+	if paid > 0 {
+		detailParts = append(detailParts, fmt.Sprintf("国际付费 %d", paid))
+	}
+	if own > 0 {
+		detailParts = append(detailParts, fmt.Sprintf("自备提供方 %d", own))
+	}
+	detailStr := strings.Join(detailParts, " + ")
+	if detailStr == "" {
+		detailStr = "0"
+	}
+
+	parts := fmt.Sprintf("已注入 %d 个模型（%s）", added, detailStr)
 	if intlErr != "" {
 		parts += "；国际侧这一轮没注入：" + intlErr
 	}

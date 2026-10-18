@@ -479,3 +479,87 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return raw
 }
+
+// TestSyncAddsPaidSelectedModels 验证用户自选的付费模型可注入国内客户端，
+// 且正确带上费率倍率后缀，而未选中的付费模型不注入。
+func TestSyncAddsPaidSelectedModels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+
+	intl := []usage.LiveModel{
+		{ID: "deepseek-v4.1-flash", Name: "Deepseek-V4.1-Flash", FreeNow: true, Rate: 0.0},
+		{ID: "gpt-5.6-sol", Name: "GPT-5.6-Sol", FreeNow: false, Rate: 2.0, Ctx: 200000, Tools: true, Images: true},
+		{ID: "grok-4.7", Name: "Grok-4.7", FreeNow: false, Rate: 1.5, Ctx: 128000, Tools: true},
+		{ID: "claude-3.7-sonnet", Name: "Claude-3.7-Sonnet", FreeNow: false, Rate: 3.0},
+	}
+
+	selected := []string{"gpt-5.6-sol", "grok-4.7"}
+	added, err := Sync(path, "http://127.0.0.1:8817/v1/chat/completions", "gui-token", intl, nil, selected)
+	if err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+	// 期望注入 3 个模型：1 个免费 (deepseek) + 2 个自选付费 (gpt-5.6-sol, grok-4.7)
+	if added != 3 {
+		t.Fatalf("期望注入 3 个模型，实际注入 %d", added)
+	}
+
+	raw := mustRead(t, path)
+	list := mustParse(t, raw)
+	if len(list) != 3 {
+		t.Fatalf("期望写入 3 条，实际写入 %d", len(list))
+	}
+
+	names := make(map[string]string)
+	for _, m := range list {
+		id, _ := m["id"].(string)
+		name, _ := m["name"].(string)
+		names[id] = name
+	}
+
+	// 1. 验证免费模型后缀
+	if got := names[IDPrefix+"deepseek-v4.1-flash"]; got != "Deepseek-V4.1-Flash（国际免费）" {
+		t.Errorf("免费模型显示名不符合预期: %q", got)
+	}
+	// 2. 验证付费模型带费率后缀
+	if got := names[IDPrefix+"gpt-5.6-sol"]; got != "GPT-5.6-Sol（国际 · 2.00x）" {
+		t.Errorf("付费模型费率后缀不符合预期: %q", got)
+	}
+	if got := names[IDPrefix+"grok-4.7"]; got != "Grok-4.7（国际 · 1.50x）" {
+		t.Errorf("付费模型费率后缀不符合预期: %q", got)
+	}
+	// 3. 验证未选中的付费模型不会注入
+	if _, exists := names[IDPrefix+"claude-3.7-sonnet"]; exists {
+		t.Errorf("未勾选的付费模型不应被注入")
+	}
+}
+
+// TestSyncSelectedIntlDeduplication 验证当模型同时命中 FreeNow 和 Selected 时的去重逻辑，
+// 优先保留免费标记且不重复注入。
+func TestSyncSelectedIntlDeduplication(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+
+	intl := []usage.LiveModel{
+		{ID: "step-5-preview", Name: "Step-5-Preview", FreeNow: true, Rate: 0.0},
+	}
+
+	// 选了 step-5-preview，但它本身当前又是限免模型
+	added, err := Sync(path, "http://127.0.0.1:8817/v1/chat/completions", "gui-token", intl, nil, []string{"step-5-preview"})
+	if err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("重复命中应去重只注入 1 个，得到 %d", added)
+	}
+
+	raw := mustRead(t, path)
+	list := mustParse(t, raw)
+	if len(list) != 1 {
+		t.Fatalf("条目数应为 1，得到 %d", len(list))
+	}
+	name, _ := list[0]["name"].(string)
+	if name != "Step-5-Preview（国际免费）" {
+		t.Errorf("应优先显示免费标记，得到 %q", name)
+	}
+}
+

@@ -84,6 +84,13 @@ type Config struct {
 	// 有了它，代理可以按 id 前缀把请求转给任意 OpenAI 兼容端点，客户端侧
 	// 完全无感——注入条目还是指向本机代理，只是代理这次不再借用账号凭据。
 	Providers []Provider `json:"providers,omitempty"`
+
+	// SelectedIntlModels 是用户选中的国际端付费/高级模型 ID 列表。
+	//
+	// 默认情况下 wbmux 只注入国际端限时免费模型（FreeNow），
+	// 用户在 WebUI 中快捷勾选某些付费高级模型（如 gpt-5.6, grok-4.7, kimi-k3 等）后，
+	// 其 ID 会持久化在此列表中，并由 custommodels.Sync 注入到国内客户端 models.json。
+	SelectedIntlModels []string `json:"selectedIntlModels,omitempty"`
 }
 
 // ProviderIDPrefix 是注入条目 id 里"自备提供方"那一段的前缀。
