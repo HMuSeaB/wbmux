@@ -96,4 +96,20 @@ func TestHandleCredentialExport(t *testing.T) {
 	if !strings.Contains(disp, "attachment") || !strings.Contains(disp, "workbuddy-intl-credential") {
 		t.Errorf("期望 Content-Disposition 包含 attachment 和文件名，实际: %q", disp)
 	}
+
+	// 6. 校验全量导出模式 (download=true&all=true)
+	reqDownloadAll, _ := http.NewRequest(http.MethodGet, "http://"+e.srv.Addr()+"/api/credentials/export?side=intl&download=true&all=true", nil)
+	reqDownloadAll.Header.Set("X-Wbmux-Token", e.srv.token)
+	respAll, err := http.DefaultClient.Do(reqDownloadAll)
+	if err != nil {
+		t.Fatalf("发起全量下载请求失败: %v", err)
+	}
+	defer respAll.Body.Close()
+	if respAll.StatusCode != http.StatusOK {
+		t.Fatalf("期望全量下载模式返回 200 OK，实际: %d", respAll.StatusCode)
+	}
+	dispAll := respAll.Header.Get("Content-Disposition")
+	if !strings.Contains(dispAll, "all-accounts-backup") {
+		t.Errorf("期望 Content-Disposition 包含 all-accounts-backup，实际: %q", dispAll)
+	}
 }

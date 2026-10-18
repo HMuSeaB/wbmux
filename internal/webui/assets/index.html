@@ -4471,117 +4471,195 @@
     overlay.offsetHeight;
     overlay.classList.add("open");
 
-    api("/api/credentials/export?side=" + side).then(function (res) {
+    function loadAndRender(targetAccId, isAll) {
       clear(body);
-      if (!res || !res.account) {
-        body.appendChild(el("div", { class: "bad", text: "未获取到有效凭据" }));
-        return;
-      }
-      var acc = res.account;
-      var rawJson = JSON.stringify(res.officialFormat || res, null, 2);
+      body.appendChild(el("div", { class: "hint", text: "正在安全提取凭据…" }));
 
-      // 顶部账号概要卡片
-      var banner = el("div", {
-        style: "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:12px"
-      }, [
-        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" }, [
-          el("div", { style: "font-weight:600;font-size:13.5px;color:var(--text)" }, [
-            "当前凭据：",
-            el("span", { style: "color:var(--accent)" }, acc.nickname || acc.uid)
+      var url = "/api/credentials/export?side=" + side;
+      if (isAll) url += "&all=true";
+      else if (targetAccId) url += "&account_id=" + encodeURIComponent(targetAccId);
+
+      api(url).then(function (res) {
+        clear(body);
+        if (!res) {
+          body.appendChild(el("div", { class: "bad", text: "未获取到有效凭据" }));
+          return;
+        }
+
+        // 1. 账号选择与全选工具条
+        var selectorRow = el("div", {
+          style: "display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:var(--r-sm)"
+        });
+        selectorRow.appendChild(el("span", { style: "font-size:12px;color:var(--g8);white-space:nowrap", text: "导出目标：" }));
+
+        var selectEl = el("select", {
+          style: "flex:1;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.15);color:var(--text);border-radius:var(--r-sm);padding:4px 8px;font-size:12px"
+        });
+
+        var opts = res.options || [];
+        opts.forEach(function (o) {
+          var opt = el("option", {
+            value: o.id,
+            text: (o.active ? "⭐ [当前活跃] " : "👤 ") + (o.nickname || o.uid) + (o.uid ? " (" + o.uid.slice(0, 8) + ")" : "")
+          });
+          if (!isAll && (o.id === res.selectedId || (res.selectedId === "native_current" && o.id === "native_current"))) {
+            opt.selected = true;
+          }
+          selectEl.appendChild(opt);
+        });
+
+        var allOpt = el("option", {
+          value: "__ALL__",
+          text: "📦 [全选] 导出全部账号完整备份 (合辑 " + (opts.length > 0 ? opts.length : 1) + " 个)"
+        });
+        if (isAll) allOpt.selected = true;
+        selectEl.appendChild(allOpt);
+
+        selectEl.onchange = function () {
+          if (selectEl.value === "__ALL__") {
+            loadAndRender(null, true);
+          } else {
+            loadAndRender(selectEl.value, false);
+          }
+        };
+        selectorRow.appendChild(selectEl);
+
+        var btnQuickAll = el("button", {
+          class: isAll ? "btn-hero" : "ghost",
+          style: "padding:4px 10px;font-size:11.5px;white-space:nowrap",
+          text: isAll ? "✓ 当前为全选" : "全选全部账号"
+        });
+        btnQuickAll.onclick = function () {
+          loadAndRender(null, !isAll);
+        };
+        selectorRow.appendChild(btnQuickAll);
+
+        body.appendChild(selectorRow);
+
+        // 2. 账号概要卡片
+        var acc = res.account || {};
+        var isAllMode = !!isAll;
+        var rawJson = isAllMode
+          ? JSON.stringify(res.allBackup || res, null, 2)
+          : JSON.stringify(res.officialFormat || res, null, 2);
+
+        var banner = el("div", {
+          style: "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:var(--r-sm);padding:10px 14px;margin-bottom:12px"
+        }, [
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:4px" }, [
+            el("div", { style: "font-weight:600;font-size:13px;color:var(--text)" }, [
+              isAllMode ? "全量灾备合辑：" : "凭据账号：",
+              el("span", { style: "color:var(--accent)" }, isAllMode ? ("包含 " + (opts.length || 1) + " 个账号配置") : (acc.nickname || acc.uid || "未知"))
+            ]),
+            el("span", {
+              class: "pill " + (isAllMode ? "neutral" : "ok"),
+              text: isAllMode ? "完整备份包" : (acc.expiresAtHuman ? "到期：" + acc.expiresAtHuman : "长期有效")
+            })
           ]),
-          el("span", { class: "pill ok", text: acc.expiresAtHuman ? "到期：" + acc.expiresAtHuman : "长期有效" })
-        ]),
-        el("div", { style: "font-size:11.5px;color:var(--g8);word-break:break-all", text: "UID: " + (acc.uid || "未知") + " · 域名: " + (acc.domain || "www.workbuddy.ai") })
-      ]);
-      body.appendChild(banner);
+          el("div", { style: "font-size:11px;color:var(--g8);word-break:break-all",
+            text: isAllMode ? "可用于多设备一键整体迁移与完整账号库还原" : ("UID: " + (acc.uid || "未知") + " · 域名: " + (acc.domain || "www.workbuddy.ai"))
+          })
+        ]);
+        body.appendChild(banner);
 
-      // 工具栏：下载备份 / 复制 Token / 复制完整 JSON / 脱敏开关
-      var actions = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" });
+        // 3. 工具栏：下载备份 / 复制 Token / 复制 JSON / 脱敏开关
+        var actions = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" });
 
-      // 下载按钮
-      var btnDownload = el("button", { class: "btn-hero", style: "padding:6px 14px;font-size:12px", title: "下载完整 JSON 配置文件备份" }, [
-        el("svg", { class: "ico ico-sm", html: '<use href="#i-down"/>' }),
-        "下载凭据备份 (.json)"
-      ]);
-      btnDownload.onclick = function () {
-        var blob = new Blob([rawJson], { type: "application/json;charset=utf-8" });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement("a");
-        a.href = url;
-        a.download = "workbuddy-" + side + "-credential-" + (acc.uid ? acc.uid.slice(0, 8) : "backup") + ".json";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast("凭据备份已开始下载！", "ok");
-      };
-      actions.appendChild(btnDownload);
+        var btnDownload = el("button", { class: "btn-hero", style: "padding:6px 14px;font-size:12px" }, [
+          el("svg", { class: "ico ico-sm", html: '<use href="#i-down"/>' }),
+          isAllMode ? "下载全量备份包 (.json)" : "下载单账号备份 (.json)"
+        ]);
+        btnDownload.onclick = function () {
+          var blob = new Blob([rawJson], { type: "application/json;charset=utf-8" });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = isAllMode
+            ? ("workbuddy-" + side + "-all-accounts-backup.json")
+            : ("workbuddy-" + side + "-credential-" + (acc.uid ? acc.uid.slice(0, 8) : "backup") + ".json");
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          toast("凭据备份已开始下载！", "ok");
+        };
+        actions.appendChild(btnDownload);
 
-      // 复制 Access Token 按钮
-      var btnCopyToken = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px", text: "📋 复制 Access Token" });
-      btnCopyToken.onclick = function () {
-        navigator.clipboard.writeText(acc.token).then(function () {
-          btnCopyToken.textContent = "✓ 已复制 Token!";
-          toast("Access Token 已复制到剪贴板", "ok");
-          setTimeout(function () { btnCopyToken.textContent = "📋 复制 Access Token"; }, 2000);
+        if (!isAllMode && acc.token) {
+          var btnCopyToken = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px", text: "📋 复制 Access Token" });
+          btnCopyToken.onclick = function () {
+            navigator.clipboard.writeText(acc.token).then(function () {
+              btnCopyToken.textContent = "✓ 已复制 Token!";
+              toast("Access Token 已复制到剪贴板", "ok");
+              setTimeout(function () { btnCopyToken.textContent = "📋 复制 Access Token"; }, 2000);
+            });
+          };
+          actions.appendChild(btnCopyToken);
+        }
+
+        var btnCopyAll = el("button", {
+          class: "ghost",
+          style: "padding:6px 12px;font-size:12px",
+          text: isAllMode ? "📄 复制全量 JSON" : "📄 复制官方格式 JSON"
         });
-      };
-      actions.appendChild(btnCopyToken);
+        btnCopyAll.onclick = function () {
+          navigator.clipboard.writeText(rawJson).then(function () {
+            btnCopyAll.textContent = "✓ 已复制 JSON!";
+            toast("凭据 JSON 已复制到剪贴板", "ok");
+            setTimeout(function () { btnCopyAll.textContent = isAllMode ? "📄 复制全量 JSON" : "📄 复制官方格式 JSON"; }, 2000);
+          });
+        };
+        actions.appendChild(btnCopyAll);
 
-      // 复制完整配置按钮
-      var btnCopyAll = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px", text: "📄 复制官方格式 JSON" });
-      btnCopyAll.onclick = function () {
-        navigator.clipboard.writeText(rawJson).then(function () {
-          btnCopyAll.textContent = "✓ 已复制 JSON!";
-          toast("官方凭据 JSON 已复制到剪贴板", "ok");
-          setTimeout(function () { btnCopyAll.textContent = "📄 复制官方格式 JSON"; }, 2000);
+        var isMasked = true;
+        var btnToggleMask = el("button", { class: "ghost", style: "padding:6px 10px;font-size:12px;margin-left:auto", text: "👁️ 显示明文" });
+        actions.appendChild(btnToggleMask);
+        body.appendChild(actions);
+
+        // 4. 预览窗
+        function getDisplayText() {
+          if (!isMasked) return rawJson;
+          var t = rawJson;
+          if (acc.token && acc.token.length > 20) {
+            var m = acc.token.slice(0, 10) + "••••••••••••••••••••••••••••••••••••" + acc.token.slice(-8);
+            t = t.replace(acc.token, m);
+          }
+          if (acc.refreshToken && acc.refreshToken.length > 20) {
+            var mr = acc.refreshToken.slice(0, 8) + "••••••••••••••••" + acc.refreshToken.slice(-6);
+            t = t.replace(acc.refreshToken, mr);
+          }
+          return t;
+        }
+
+        var pre = el("pre", {
+          style: "background:#0d1117;color:#c9d1d9;padding:12px;border-radius:var(--r-sm);font-size:11px;max-height:200px;overflow-y:auto;user-select:all;border:1px solid rgba(255,255,255,0.06);white-space:pre-wrap;word-break:break-all",
+          text: getDisplayText()
         });
-      };
-      actions.appendChild(btnCopyAll);
+        body.appendChild(pre);
 
-      // 脱敏开关
-      var isMasked = true;
-      var btnToggleMask = el("button", { class: "ghost", style: "padding:6px 10px;font-size:12px;margin-left:auto", text: "👁️ 显示明文" });
-      actions.appendChild(btnToggleMask);
+        btnToggleMask.onclick = function () {
+          isMasked = !isMasked;
+          btnToggleMask.textContent = isMasked ? "👁️ 显示明文" : "🔒 隐藏脱敏";
+          pre.textContent = getDisplayText();
+        };
 
-      body.appendChild(actions);
+        // 5. 底部指引
+        var tip = el("div", {
+          class: "hint",
+          style: "margin-top:10px;font-size:11px;color:var(--g8);line-height:1.5",
+          html: "💡 <b>用法指引：</b><br>" +
+                "• <b>单账号</b>：复制 Access Token 直接接入 Cherry Studio / NextChat / Cursor 等第三方客户端；<br>" +
+                "• <b>全选备份</b>：保存全量账号配置，可在任意设备上一键恢复全部多账号与登录态。"
+        });
+        body.appendChild(tip);
 
-      // 预览窗
-      function getDisplayText() {
-        if (!isMasked) return rawJson;
-        var maskedToken = acc.token.length > 20 ? (acc.token.slice(0, 10) + "••••••••••••••••••••••••••••••••••••" + acc.token.slice(-8)) : "••••••••";
-        var maskedRef = acc.refreshToken && acc.refreshToken.length > 20 ? (acc.refreshToken.slice(0, 8) + "••••••••••••••••" + acc.refreshToken.slice(-6)) : "••••••••";
-        return rawJson.replace(acc.token, maskedToken).replace(acc.refreshToken, maskedRef);
-      }
-
-      var pre = el("pre", {
-        style: "background:#0d1117;color:#c9d1d9;padding:12px;border-radius:var(--r-sm);font-size:11.5px;max-height:220px;overflow-y:auto;user-select:all;border:1px solid rgba(255,255,255,0.06);white-space:pre-wrap;word-break:break-all",
-        text: getDisplayText()
+      }).catch(function (err) {
+        clear(body);
+        body.appendChild(el("div", { class: "bad", style: "padding:12px;background:rgba(239,68,68,0.1);border-radius:var(--r-sm)", text: "获取凭据失败：" + err.message }));
       });
-      body.appendChild(pre);
+    }
 
-      btnToggleMask.onclick = function () {
-        isMasked = !isMasked;
-        btnToggleMask.textContent = isMasked ? "👁️ 显示明文" : "🔒 隐藏脱敏";
-        pre.textContent = getDisplayText();
-      };
-
-      // 底部指引
-      var tip = el("div", {
-        class: "hint",
-        style: "margin-top:12px;font-size:11.5px;color:var(--g8);line-height:1.6",
-        html: "💡 <b>用法指引：</b><br>" +
-              "• <b>免安装恢复 / 灾备</b>：保存此 JSON 配置文件，重装或更换设备后可直接一键导入载入登录态；<br>" +
-              "• <b>第三方客户端调用</b>：复制上面的 Access Token 作为 API 密钥，直接接入 Cherry Studio / NextChat / Cursor 等工具。"
-      });
-      body.appendChild(tip);
-
-    }).catch(function (err) {
-      clear(body);
-      body.appendChild(el("div", { class: "bad", style: "padding:12px;background:rgba(239,68,68,0.1);border-radius:var(--r-sm)" }, [
-        "获取凭据失败：" + err.message + "。请确认官方客户端已处于登录状态。"
-      ]));
-    });
+    loadAndRender(null, false);
   }
 
   // 档位 id → 显示名。注意 /api/state 里那个字段叫 displayName，不叫 name。
