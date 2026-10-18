@@ -588,5 +588,27 @@ func TestHandleAuthFlowAPI(t *testing.T) {
 	}
 }
 
+func TestGrowthEndpoints(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 未配置国际账号时，GET /api/growth/streak 返回 404
+	rStreakNoCred := e.do(t, "GET", "/api/growth/streak", "", true)
+	if rStreakNoCred.code != 404 {
+		t.Errorf("未配置国际账号时 /api/growth/streak 预期 404，得到 %d", rStreakNoCred.code)
+	}
+
+	// 2. 缺少 tier 时，POST /api/growth/redeem 返回 400
+	rRedeemBad := e.do(t, "POST", "/api/growth/redeem", `{}`, true)
+	if rRedeemBad.code != 400 {
+		t.Errorf("POST /api/growth/redeem 缺少 tier 参数预期 400，得到 %d", rRedeemBad.code)
+	}
+
+	// 3. GET /api/growth/redeem 拒绝
+	rRedeemGet := e.do(t, "GET", "/api/growth/redeem", "", true)
+	if rRedeemGet.code != 405 {
+		t.Errorf("GET /api/growth/redeem 应返回 405，得到 %d", rRedeemGet.code)
+	}
+}
+
 
 

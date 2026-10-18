@@ -71,11 +71,16 @@ type LivePromo struct {
 
 // LivePackage 是一个积分包的周期用量。
 type LivePackage struct {
-	Code   string  `json:"code"`
-	Unit   string  `json:"unit"`
-	Total  float64 `json:"total"`
-	Remain float64 `json:"remain"`
-	Used   float64 `json:"used"`
+	Code           string  `json:"code"`
+	Unit           string  `json:"unit"`
+	Total          float64 `json:"total"`
+	Remain         float64 `json:"remain"`
+	Used           float64 `json:"used"`
+	Kind           string  `json:"kind,omitempty"`           // subscription | bonus
+	KindZh         string  `json:"kindZh,omitempty"`         // 月度订阅基础包 | 活动/赠送加量包
+	ExpiryRuleZh   string  `json:"expiryRuleZh,omitempty"`   // 每月 1 日重置 | 发放起 30 天有效（到期清零）
+	DeductPriority int     `json:"deductPriority,omitempty"` // 扣减优先级：1 为最优先
+	ExpiresAtMs    int64   `json:"expiresAtMs,omitempty"`    // 失效/重置时刻时间戳（毫秒）
 }
 
 // LiveAccount 是一侧的实时账号数据。OK 为 false 时 Err 说明原因
@@ -603,7 +608,7 @@ func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePacka
 		lc.Used, _ = p.Used.Float64()
 		out = append(out, lc)
 	}
-	return out, nil
+	return EnhancePackagesWithMeta(out), nil
 }
 
 // parseRateNumber 从 "2.00" 这类片段解析倍数；解析不了返回 0。

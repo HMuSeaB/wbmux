@@ -3972,6 +3972,10 @@
       el("span", { text: "📦 积分包用量清单 (" + pkgs.length + " 个)" }),
       el("span", { style: "font-weight:normal;font-size:11px;color:var(--ink-3)", text: "本地 API 实时直读" })
     ]));
+    pkgsSec.appendChild(el("div", {
+      style: "font-size:11px;color:var(--ink-3);background:rgba(255,255,255,0.02);padding:6px 10px;border-radius:var(--r-sm);border:1px dashed var(--g4)",
+      text: "💡 官方扣费策略：问答时优先消耗月度基础包；用尽后按到期时间优先扣除临期的活动/加量包。"
+    }));
 
     if (!pkgs.length) {
       pkgsSec.appendChild(el("div", { class: "hint", text: isIntl ? "当前暂无有效积分包数据" : "当前为包月/无额度限制套餐或无独立积分包" }));
@@ -3981,10 +3985,12 @@
         var pCard = el("div", {
           style: "background:var(--g2);border:1px solid var(--g4);border-radius:var(--r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px"
         }, [
-          el("div", { style: "display:flex;align-items:center;justify-content:space-between;font-size:12px" }, [
-            el("div", { style: "display:flex;align-items:center;gap:6px" }, [
+          el("div", { style: "display:flex;align-items:center;justify-content:space-between;font-size:12px;flex-wrap:wrap;gap:4px" }, [
+            el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
               el("span", { class: "pill", style: "font-size:10px;padding:0 5px", text: "#" + (idx + 1) }),
-              el("span", { style: "font-family:var(--mono);color:var(--ink)", text: p.code })
+              el("span", { style: "font-family:var(--mono);color:var(--ink);font-weight:600", text: p.code }),
+              p.kindZh ? el("span", { class: "pill " + (p.kind === "subscription" ? "ok" : "warn"), style: "font-size:10px;padding:1px 6px", text: p.kindZh }) : null,
+              p.deductPriority === 1 ? el("span", { class: "pill", style: "background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;font-size:10px;padding:1px 5px", text: "优先消耗" }) : null
             ]),
             el("div", { style: "font-family:var(--mono);font-weight:600;color:var(--ink)" }, [
               formatCreditNum(p.remain) + " / " + formatCreditNum(p.total) + " " + (p.unit || "credits"),
@@ -3993,7 +3999,11 @@
           ]),
           el("div", { class: "bar-track", style: "height:6px;margin:0" }, [
             el("span", { class: "bar-fill " + (isIntl ? "intl" : "cn"), style: "width:" + Math.max(1, pct) + "%" })
-          ])
+          ]),
+          p.expiryRuleZh ? el("div", { style: "font-size:11px;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;margin-top:2px" }, [
+            el("span", { text: "⏳ 有效期规则：" + p.expiryRuleZh }),
+            p.expiresAtMs ? el("span", { style: "font-family:var(--mono);color:var(--ink-2)", text: "预估到期/重置：" + shortDate(new Date(p.expiresAtMs).toISOString()) }) : null
+          ]) : null
         ]);
         pkgsSec.appendChild(pCard);
       });
@@ -4648,6 +4658,77 @@
       });
     }
     intlCard.appendChild(intlSecPackages);
+
+    // 国际端成长中心连续活跃里程碑挂件 (Growth Center Streak)
+    if (intlLv.ok) {
+      var intlStreakSec = el("div", {
+        style: "background:rgba(255,255,255,0.02);border:1px solid var(--g4);border-radius:var(--r-sm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px"
+      });
+      var streakInfoBox = el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);min-width:0" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-zap"/>' }),
+        el("span", { id: "intl-streak-text", text: "连续活跃：读取中…" })
+      ]);
+      var btnStreakAction = el("button", {
+        class: "ghost",
+        style: "padding:3px 10px;font-size:11px;height:auto;white-space:nowrap",
+        text: "刷新",
+        title: "连续活跃可阶梯领取 50/150 积分奖励"
+      });
+      intlStreakSec.appendChild(streakInfoBox);
+      intlStreakSec.appendChild(btnStreakAction);
+      intlCard.appendChild(intlStreakSec);
+
+      // 异步拉取 Streak 状态
+      api("/api/growth/streak").then(function (st) {
+        var days = st.days || 0;
+        var nextTierRemaining = st.nextTierRemaining || 0;
+        var claimableTier = null;
+        if (st.tiers && st.tiers.length) {
+          st.tiers.forEach(function (t) {
+            if (t.status === "claimable" && t.credit > 0) {
+              claimableTier = t;
+            }
+          });
+        }
+
+        var textEl = document.getElementById("intl-streak-text");
+        if (claimableTier) {
+          if (textEl) textEl.textContent = "🎉 连续活跃 " + days + " 天 · 可领 " + claimableTier.credit + " 积分！";
+          btnStreakAction.className = "btn-hero";
+          btnStreakAction.textContent = "一键领 " + claimableTier.credit + " 积分";
+          btnStreakAction.onclick = function () {
+            btnStreakAction.disabled = true;
+            btnStreakAction.textContent = "领取中…";
+            api("/api/growth/redeem", {
+              method: "POST",
+              body: JSON.stringify({ tier: claimableTier.tier })
+            }).then(function (r) {
+              toast("成功领取 " + r.granted + " 积分！", "ok");
+              loadUsage(true, true);
+            }).catch(function (e) {
+              toast(e.message, "bad");
+              btnStreakAction.disabled = false;
+              btnStreakAction.textContent = "重试领取";
+            });
+          };
+        } else {
+          var desc = days > 0 ? ("已连签 " + days + " 天") : "日常问答自动累积活跃";
+          if (nextTierRemaining > 0) {
+            desc += " · 距下级奖励剩 " + nextTierRemaining + " 天";
+          }
+          if (textEl) textEl.textContent = desc;
+          btnStreakAction.textContent = "查看明细";
+          btnStreakAction.onclick = function () {
+            showAssetDetailsModal("intl", intlLv);
+          };
+        }
+      }).catch(function () {
+        var textEl = document.getElementById("intl-streak-text");
+        if (textEl) textEl.textContent = "日常对话自动点亮活跃";
+        btnStreakAction.textContent = "明细";
+        btnStreakAction.onclick = function () { showAssetDetailsModal("intl", intlLv); };
+      });
+    }
 
     // 🔥 限时免费大模型挂件专区 (Featured Promos)
     var promoSec = el("div", {});
