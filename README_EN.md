@@ -8,9 +8,9 @@
  ███ ███  ██████  ██      ██  ██████  ██   ██
 ```
 
-### **Multi-Backend Orchestrator · Local OpenAI Gateway · Credential Vault · Auto-Failover**
+### **WorkBuddy Developer Workspace Suite · Environment Migration · Session Archiving · Debug Proxy**
 
-Bridge domestic and international WorkBuddy ecosystems seamlessly from a single client installation.
+Bridge multi-edition developer environments, cross-IDE session archiving, smooth profile migrations, and local debug proxying.
 
 <p align="center">
   <a href="README.md">简体中文</a> • <b>English</b>
@@ -28,7 +28,6 @@ Bridge domestic and international WorkBuddy ecosystems seamlessly from a single 
   <a href="#-overview">Overview</a> •
   <a href="#-system-architecture">Architecture</a> •
   <a href="#-core-features">Core Features</a> •
-  <a href="#-benchmarks--footprint">Benchmarks</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-ide--external-integrations">Integrations</a> •
   <a href="#-contributing--feedback">Contributing</a>
@@ -40,17 +39,18 @@ Bridge domestic and international WorkBuddy ecosystems seamlessly from a single 
 
 ## 📖 Overview
 
-`wbmux` is a lightweight, high-performance local orchestrator, credential lifecycle vault, and OpenAI-compatible proxy gateway crafted specifically for developers using **WorkBuddy (CodeBuddy)**.
+`wbmux` is a lightweight, high-performance local developer workspace suite and environment coordination toolkit tailored for **WorkBuddy** and modern AI-assisted engineering workflows.
 
-Although the domestic (`CodeBuddy`) and international (`WorkBuddy AI`) editions share the identical core runtime, their distribution installers, storage namespaces, authentication pipelines, and upstream gateway endpoints are strictly separated:
-- **Domestic Edition**: Native support for WeChat Mini Program and WeCom remote agent control channels;
-- **International Edition**: Access to premier frontier models, recurring promotional credit allocations, and zero-cost 0.00x promotional models (e.g. DeepSeek, Hy4).
+When using WorkBuddy (`CodeBuddy` and `WorkBuddy AI`) alongside mainstream AI coding assistants, developers often face fragmented environments, isolated conversation histories, and tedious manual profile synchronization:
+- **Environment Isolation**: Separate distributions maintain independent local storage structures and databases;
+- **Scattered Sessions**: Critical debugging dialogues and architecture decisions in tools like Cursor, Qoder, and ZCode are scattered across local SQLite files with no simple way to archive or hand over;
+- **Repetitive Configuration**: Manually copying custom skills, project memories, and preferences across installations is error-prone.
 
-Installing two duplicate Electron clients wastes over **1.3 GB** of disk space and fractures workspace configuration. `wbmux` eliminates this friction through dynamic environment redirection, transparent protocol emulation, and an embedded local proxy gateway:
-
-- **Unify Both Ecosystems**: Access international promotional and premium models directly from the domestic client;
-- **Preserve Remote Control**: All local proxy traffic satisfies official heartbeat requirements—mobile remote control remains 100% operational;
-- **Single Self-Contained Binary**: Written in pure Go with statically embedded assets—zero external dependencies or dynamic link libraries.
+Written in pure Go and compiled into a single dependency-free executable, `wbmux` offers out-of-the-box workspace collaboration:
+- **Cross-IDE Session Hub**: Automatically index and group history sessions across editors, enabling one-click Markdown handoff exports;
+- **Environment Doctor & Migration**: Non-invasively inspect installation integrity and smoothly sync skills, memories, and configurations;
+- **Standard Debug Proxy**: Built-in lightweight OpenAI-compatible development proxy supporting custom model endpoints and local latency measurement;
+- **Profile Backup & Vault**: Securely export and back up workspace configurations for seamless multi-device restoration.
 
 ---
 
@@ -59,32 +59,32 @@ Installing two duplicate Electron clients wastes over **1.3 GB** of disk space a
 ```mermaid
 graph LR
     subgraph Clients["Developer Workflow (Clients)"]
-        CB["WorkBuddy Domestic Client<br/>(Full Mobile Remote Control)"]
-        IDE["Third-Party IDEs / Assistants<br/>(Cursor / Continue / Cline)"]
+        CB["WorkBuddy Client<br/>(IDE Programming Workspace)"]
+        IDE["Third-Party IDEs / Extensions<br/>(Cursor / Continue / Cline)"]
     end
 
     subgraph wbmux["wbmux Local Daemon (:8000)"]
         direction TB
-        GW["OpenAI-Compatible Gateway<br/>(/v1/chat/completions)"]
-        AUTH["Credential Security Vault<br/>(Auto-Capture / Silent Renewal)"]
-        ROUTER["Auto-Failover Router<br/>(Sub-100ms 429 Failover)"]
-        AUDIT["Zero-GC RingBuffer Audit<br/>(TTFT & Token Throughput Stats)"]
+        GW["Local Debug Proxy<br/>(OpenAI-Compatible Endpoint)"]
+        CONF["Environment & Session Manager<br/>(Migration / Archiving / Backup)"]
+        ROUTER["Adaptive Environment Router<br/>(Connection Management)"]
+        AUDIT["Zero-GC RingBuffer Audit<br/>(Latency Metrics · Debug Dashboard)"]
         
         GW --> ROUTER
-        ROUTER --> AUTH
+        ROUTER --> CONF
         GW -.-> AUDIT
     end
 
-    subgraph Upstream["Upstream Clusters"]
-        ACC_P["Primary Account Pool"]
-        ACC_B["Backup Standby Pool"]
+    subgraph Upstream["Target Environments & Endpoints (Upstream)"]
+        ENV_A["Primary Environment"]
+        ENV_B["Secondary Environment"]
         BYOK["Custom Endpoints (BYOK / OneAPI)"]
     end
 
-    CB -->|"Unified Local Loopback"| GW
-    IDE -->|"Standard OpenAI Protocol"| GW
-    ROUTER -->|"Transparent Retries"| ACC_P
-    ROUTER -->|"429 Rate-Limit Failover"| ACC_B
+    CB -->|"Local Loopback"| GW
+    IDE -->|"Standard Protocol"| GW
+    ROUTER -->|"Environment Adaptation"| ENV_A
+    ROUTER -->|"Endpoint Routing"| ENV_B
     ROUTER -->|"Direct Forwarding"| BYOK
 ```
 
@@ -92,30 +92,29 @@ graph LR
 
 ## ✨ Core Features
 
-### 1. Authentic Browser OAuth Flow & Zero-DevTools Vault
-* **One-Click Authorization**: Faithfully reproduces official web authentication flows without manual header inspection or DevTools extraction.
-* **Autonomous Ingestion**: Safely captures ephemeral `AccessToken`s and long-lived `RefreshToken`s directly into the local encrypted credential vault.
+### 1. 📚 Cross-IDE Session Hub & Markdown Handoff Export
+* **Multi-Source Session Indexing**: In-place discovery and structural parsing of history conversations across Cursor, Qoder, ZCode, and WorkBuddy;
+* **One-Click Markdown Export**: Turn long discussions, code snippets, and decision trails into standardized Markdown documents for rapid project handoff and review.
 
-### 2. Autonomous Token Keep-Alive & Self-Healing
-* **Preemptive Renewal**: Background telemetry monitors token expiration and silently refreshes credentials when less than 2 hours remain.
-* **Dynamic 401 Interception**: Intercepts upstream authentication failures at the gateway layer, refreshes tokens on the fly, and transparently replays in-flight requests without interrupting active coding sessions.
+### 2. 🔄 Smooth Environment Migration & System Health Doctor
+* **Safe Profile Synchronization**: Securely sync configuration, custom skills, and workspace memory between different installations without overwriting existing data;
+* **One-Click Health Diagnostics**: Built-in `wbmux doctor` diagnoses installation paths, configuration completeness, and network connectivity in seconds.
 
-### 3. Intelligent Multi-Account Auto-Failover
-* **Pooled Account Management**: Centralize primary, secondary, and promotional credit accounts.
-* **Sub-100ms Failover**: Upon encountering upstream `429 Too Many Requests` or quota exhaustion, traffic automatically switches to the next healthy account in milliseconds.
+### 3. 🔌 Local Development Debug Proxy & Custom Model Integration (BYOK)
+* **OpenAI Protocol Compliance**: Provides standard local loopback completion endpoints for seamless integration with desktop tools like Cherry Studio, NextChat, or Cursor;
+* **Custom Model Mapping**: Bring your own API keys (e.g. DeepSeek, Moonshot, Ollama) and map them directly into your client dropdowns with a unified entry point.
 
-### 4. Elastic Model Injection (0.00x Free + Premium + BYOK)
-* **Zero-Cost Model Discovery**: Dynamically queries and injects promotional 0.00x rate models into the domestic client dropdown.
-* **Selective Premium Exposure**: Inspect official billing multipliers and toggle premium frontier models into your local client with instant hover-to-remove ergonomics.
-* **Bring Your Own Key (BYOK)**: Connect arbitrary OpenAI-compatible endpoints including official DeepSeek API, local Ollama, or self-hosted aggregators.
+### 4. 📊 Real-Time Request Debug Dashboard & Latency Metrics
+* **Zero-Allocation RingBuffer**: Fixed-capacity 1,000-record circular buffer guarantees predictable performance without garbage collection overhead;
+* **Transparent Latency Metrics**: Precise millisecond-level measurement of **Time to First Token (TTFT)**, total request duration, and token throughput on a modern visual dashboard.
 
-### 5. High-Throughput Audit Dashboard & Latency Metrics
-* **Zero-Allocation RingBuffer**: Fixed-capacity 1,000-record circular buffer guarantees predictable performance without garbage collection spikes.
-* **Granular Telemetry**: Precise recording of **Time to First Token (TTFT)**, total turnaround time, token throughput, and real-time reverse-chronological request streams.
+### 5. 🛡️ Profile Security Export & Disaster Recovery
+* **Interactive Export Management**: Easily select individual accounts or batch-export full configurations to official `.json` backup files via the WebUI;
+* **Seamless Multi-Device Restoration**: Quickly reload configurations and restore workspace environments after OS reinstallation or device replacement.
 
-### 6. Unified Credit Overview & Growth Center Automation
-* **Lifecycle Visibility**: Aggregated breakdown of domestic credits, international bonus allocations, expiration horizons, and deduction priorities.
-* **Activity Synchronization**: Everyday programming queries automatically contribute to official Growth Center daily check-in streaks with one-click reward claiming.
+### 6. 🚀 Pure Single-Binary Delivery (Zero Dependency)
+* **Zero External Runtimes**: No Node.js, Python, or system DLL requirements—ready to run out of the box;
+* **Statically Embedded Modern WebUI**: Frontend assets are compiled into the binary via Go `embed.FS` for minimal memory and disk footprint.
 
 ---
 
@@ -126,83 +125,72 @@ graph LR
 | **Binary Size** | **~24 MB** | Pure Go static compilation with embedded WebUI (`embed.FS`) |
 | **Resident Memory** | **~14 MB** | Zero-GC in-memory ring buffers and lightweight goroutine pools |
 | **Proxy Overhead** | **< 1.2 ms** | Optimized `httputil.ReverseProxy` with zero-copy stream forwarding |
-| **Failover Latency** | **< 80 ms** | Fast health state routing with in-place upstream retry |
 | **Cold Start** | **< 15 ms** | Instant configuration initialization and port binding |
 
 ---
 
 ## 🚀 Quick Start
 
-### Installation
+### 1. Download & Launch
+
 Grab the pre-built single binary for your operating system from [GitHub Releases](https://github.com/HMuSeaB/wbmux/releases/latest):
 
 ```bash
-# Launch the local management dashboard (equivalent to double-clicking wbmux.exe)
+# Launch the local management dashboard (equivalent to double-clicking wbmux.exe on Windows)
 wbmux gui
 
-# Run environment and network connectivity diagnostics
+# Run environment and configuration integrity diagnostics
 wbmux doctor
 
-# Inspect detected local installations and version details
+# Inspect detected local client installations
 wbmux list
 ```
 
-Upon launch, the daemon automatically opens your default browser to the secure local dashboard:
-```text
-http://127.0.0.1:<random-port>/?t=<secure-ephemeral-token>
-```
-
----
-
-## 🔌 IDE & External Integrations
-
-`wbmux` exposes a standard OpenAI-compatible `/v1` endpoint on localhost, allowing you to power external IDEs, extensions, and CLI agents:
-
-* **Base URL**: `http://127.0.0.1:<port>/v1`
-* **API Key**: Enter the `t` parameter from your dashboard URL (or the token printed in terminal logs)
-
-### Client Configuration Matrix
-
-| Tool / Extension | Base URL | Auth Bearer Key | Recommended Model Identifier |
-|---|---|---|---|
-| **VS Code / Continue** | `http://127.0.0.1:<port>/v1` | `<GUI-Token>` | `claude-3-7-sonnet`, `deepseek-chat` |
-| **Cline / Roo Code** | `http://127.0.0.1:<port>/v1` | `<GUI-Token>` | `claude-3-7-sonnet`, `gpt-4o` |
-| **Cursor (OpenAI Compatible)** | `http://127.0.0.1:<port>/v1` | `<GUI-Token>` | `deepseek-chat`, `deepseek-reasoner` |
-| **Cherry Studio / Chatbox** | `http://127.0.0.1:<port>/v1` | `<GUI-Token>` | All injected models & custom endpoints |
-
----
-
-## 🛠️ CLI Reference
+### 2. Common CLI Commands
 
 ```bash
-# Dashboard & Diagnostics
-wbmux gui                  # Start local web management console (bound to 127.0.0.1)
-wbmux doctor               # Perform environment, configuration, and network health checks
+# Start Web UI console (resident in tray; quit from UI bottom-right or tray menu)
+wbmux gui
 
-# Target Launch Operations
-wbmux run intl --dry-run   # Preview injected environment flags without launching client
-wbmux run cn               # Launch client bound to domestic backend
-wbmux run intl             # Launch client bound to international backend
+# Run system and configuration health check
+wbmux doctor
 
-# Account & Session Utilities
-wbmux checkin claim        # Claim daily check-in rewards from official Growth Center
-wbmux migrate              # Analyze cross-edition session migration candidates (read-only)
-wbmux sessions             # Browse cross-IDE sessions grouped by workspace (supports --web)
+# Browse and index cross-IDE history sessions
+wbmux sessions
+
+# Migrate environment settings, skills, and memory (use --yes to execute; defaults to dry-run)
+wbmux migrate
+
+# Create a desktop shortcut (Windows)
+wbmux shortcut
 ```
+
+---
+
+## 🛠️ Third-Party IDE & Tool Integrations
+
+Because the built-in debug proxy strictly conforms to the OpenAI specification, you can connect any third-party development tool directly to local loopback:
+
+| Client / Tool | Base URL | API Key | Recommended Model Identifier |
+|---|---|---|---|
+| **Cherry Studio** | `http://127.0.0.1:8000/v1` | Ephemeral Security Token from WebUI top-right | `deepseek-chat` / `auto` |
+| **NextChat** | `http://127.0.0.1:8000` | Ephemeral Security Token from WebUI top-right | `deepseek-chat` |
+| **Cursor / Continue** | `http://127.0.0.1:8000/v1` | Ephemeral Security Token from WebUI top-right | `auto` |
 
 ---
 
 ## 🤝 Contributing & Feedback
 
-Open source thrives on community collaboration. We welcome and appreciate your contributions:
-
-- 🐛 **Bug Reports & Proposals**: Open an [Issue](https://github.com/HMuSeaB/wbmux/issues) with detailed reproduction steps or feature proposals;
-- 💡 **Pull Requests**: Fork the repository and submit clean, well-tested PRs;
-- ⭐ **Show Your Support**: If `wbmux` saves you time and disk space, please consider starring this repository on GitHub!
+Issues and Pull Requests are warmly welcomed! When contributing, please ensure:
+- Adhere to the single self-contained binary philosophy without heavy external dependencies;
+- All automated unit tests pass: `go test ./...`;
+- Maintain the principle of minimal disruption and non-invasive handling of local installation directories.
 
 ---
 
-## ⚠️ Disclaimer
+## 📄 License & Disclaimer
 
-`wbmux` is an independent, community-driven open-source project created for local developer environment orchestration and lawful gateway proxying. It is not affiliated with, maintained by, or endorsed by Tencent, WorkBuddy, or CodeBuddy. Please adhere to the terms of service of respective product providers.
+This project is licensed under the [MIT License](LICENSE).
+
+**Disclaimer**: `wbmux` is an independent third-party utility designed to help developers manage local workspaces, archive sessions, and migrate developer configurations. It is not affiliated with, endorsed by, or sponsored by Tencent, WorkBuddy, or CodeBuddy.
 
