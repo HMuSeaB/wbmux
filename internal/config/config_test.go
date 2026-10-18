@@ -114,3 +114,23 @@ func TestSaveOmitsEmptyFields(t *testing.T) {
 		t.Errorf("非空字段应写入：%s", raw)
 	}
 }
+
+// TestDisableAutoUpdateOn 验证禁止客户端更新的可选属性：默认未设置时应为 false（不主动干预客户端）。
+func TestDisableAutoUpdateOn(t *testing.T) {
+	// 1. 默认未设置 (nil) -> 应为 false
+	if DisableAutoUpdateOn(Config{}) {
+		t.Errorf("默认未配置时 DisableAutoUpdateOn 应为 false，实际为 true")
+	}
+
+	// 2. 显式设为 false -> 应为 false
+	f := false
+	if DisableAutoUpdateOn(Config{DisableAutoUpdate: &f}) {
+		t.Errorf("显式设为 false 时 DisableAutoUpdateOn 应为 false")
+	}
+
+	// 3. 显式设为 true -> 应为 true
+	tr := true
+	if !DisableAutoUpdateOn(Config{DisableAutoUpdate: &tr}) {
+		t.Errorf("显式设为 true 时 DisableAutoUpdateOn 应为 true")
+	}
+}

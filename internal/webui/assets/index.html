@@ -1740,12 +1740,10 @@
     </p>
   </section>
   <section>
-    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>客户端自动更新</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>客户端自动更新管理（可选功能）</h2>
     <p class="sub">
-      客户端的<strong>启动静默更新</strong>会在窗口出现之前就把新版本装上，你连提示都看不到。
-      这对 wbmux 是实打实的风险：<strong>2026-10-15 那次升级改了
-      <code>models.json</code> 的格式</strong>，注入的模型集体读不到、上下文被压回 300k，
-      而升级时你什么都没看到。
+      这是一项可选防护功能。开启后可关闭客户端的<strong>启动静默更新</strong>，避免官方升级改动内部配置格式导致注入模型失效；
+      未开启时，<strong>wbmux 绝不主动修改客户端配置</strong>，完全保持客户端官方默认的更新策略。
     </p>
     <label class="check">
       <input type="checkbox" id="chk-client-update">
@@ -1754,13 +1752,10 @@
       </span>
     </label>
     <p class="sub" style="margin-top:10px">
-      关掉的是"自动"，<strong>不影响你在客户端里手动检查更新</strong>——想升随时能升，
-      只是不会再被动地半夜换版本。
+      关掉的是"启动静默自动更新"，<strong>不影响你在客户端里手动检查与安装更新</strong>——想升级随时可升。
     </p>
     <p class="sub">
-      原理是往客户端的 <code>app/app-config.json</code> 写一个键。那是客户端自己
-      优先级最高的设置层，<strong>不需要管理员权限、也不会被更新覆盖</strong>。
-      取消勾选会把这个键<strong>删掉</strong>（而不是写成"允许"），交回客户端自己决定。
+      原理是向客户端的 <code>app/app-config.json</code> 写入开关；取消勾选会将该键<strong>彻底删除</strong>，完整恢复客户端官方原生决策。
     </p>
     <div id="client-update-note" style="margin-top:10px"></div>
   </section>
@@ -3162,8 +3157,8 @@
   function renderClientUpdateState(on) {
     var s = document.getElementById("client-update-state");
     if (!s) return;
-    s.textContent = on ? "（已禁止；客户端不会再自己升级）"
-                       : "（未禁止；客户端可能自行升级）";
+    s.textContent = on ? "（已开启；压制启动静默更新，保护本地配置）"
+                       : "（未开启；保持官方默认更新策略）";
   }
 
   // 首次进入时读一次开关状态。读不到就保持不勾、并把原因说出来——
@@ -5975,14 +5970,12 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: on })
     }).then(function (res) {
-      toast(on ? "已禁止客户端自动更新" : "已交回客户端自己决定", "ok");
+      toast(on ? "已开启禁止客户端自动更新" : "已恢复客户端官方更新策略", "ok");
       if (box) {
         clear(box);
-        // 后端会回话"动了几侧"：某侧客户端从没跑过时它不会动手
-        // （不替没装的客户端做决定），这里如实说清，别让人以为没生效。
         var t = res && res.note ? res.note
               : (on ? "已写入客户端设置；下次启动客户端生效。"
-                    : "已把那个键删掉，客户端会按它自己的策略决定。");
+                    : "已从客户端设置中移除该配置，恢复官方原生更新策略。");
         box.appendChild(el("div", { class: "note", text: t }));
       }
       renderClientUpdateState(on);

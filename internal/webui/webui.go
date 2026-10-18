@@ -336,7 +336,7 @@ func (s *Server) Start() error {
 // 恰恰是机制失效的主要来源。2026-10-15 那次升级就把 models.json 的格式改了，
 // 注入的模型集体读不到、上下文回落到 300k。
 //
-// 默认开（config.DisableAutoUpdate 为 nil 时按开处理）；用户在界面上关掉就不写。
+// 可选功能（默认关，仅在用户显式开启时压制）；未开启时不主动触碰客户端配置。
 func (s *Server) applyAutoUpdatePolicy() {
 	if cfg, err := config.Load(); err == nil && !config.DisableAutoUpdateOn(cfg) {
 		return
@@ -344,7 +344,7 @@ func (s *Server) applyAutoUpdatePolicy() {
 	if n, err := s.applyClientUpdatePolicy(true); err != nil {
 		s.logf("关闭客户端自动更新失败：%s", compactError(err.Error()))
 	} else if n > 0 {
-		s.logf("已关闭客户端的启动静默自动更新（改动了 %d 侧；下次启动客户端生效）", n)
+		s.logf("已按用户配置关闭客户端的启动静默自动更新（改动了 %d 侧；下次启动客户端生效）", n)
 	}
 }
 

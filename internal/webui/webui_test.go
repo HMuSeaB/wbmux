@@ -285,14 +285,25 @@ func TestPreviewDescribesRewritesAndLeavesRestAlone(t *testing.T) {
 	joined := strings.Join(pv.Changes, "\n")
 	for _, want := range []string{
 		"endpoint", "dataFolderName", "officialEndpoints", "isOversea",
-		// 禁用客户端自动更新是生成的配置里**有意**加的一项，预览必须如实列出——
-		// 用户得知道 wbmux 改了客户端的一个更新行为。
-		"updates.startupForceAutoUpdate",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("改写清单里缺少 %s：\n%s", want, joined)
 		}
 	}
+	// 默认未开启"禁止客户端自动更新"时，不应主动触碰 updates
+	if strings.Contains(joined, "updates.startupForceAutoUpdate") {
+		t.Errorf("默认未开启可选功能时，改写清单不应包含 updates.startupForceAutoUpdate：\n%s", joined)
+	}
+
+	// 开启可选的"禁止客户端自动更新"功能
+	e.do(t, http.MethodPost, "/api/client-update", `{"enabled":true}`, true)
+	var pvEnabled PreviewView
+	e.do(t, http.MethodPost, "/api/preview", `{"target":"intl"}`, true).decode(t, &pvEnabled)
+	joinedEnabled := strings.Join(pvEnabled.Changes, "\n")
+	if !strings.Contains(joinedEnabled, "updates.startupForceAutoUpdate") {
+		t.Errorf("显式开启可选功能后，改写清单应包含 updates.startupForceAutoUpdate：\n%s", joinedEnabled)
+	}
+
 	// 这几项绝不能动：改了会让客户端自己的更新与产品标识错乱。
 	//
 	// 注意 `updates` 本身不是禁项——`updates.startupForceAutoUpdate`（启动时
@@ -301,8 +312,8 @@ func TestPreviewDescribesRewritesAndLeavesRestAlone(t *testing.T) {
 	for _, forbidden := range []string{
 		"productName", "updates.url", "updateUrl", "smhHost", "productFeatures",
 	} {
-		if strings.Contains(joined, forbidden) {
-			t.Errorf("改写清单里不该出现 %s：\n%s", forbidden, joined)
+		if strings.Contains(joinedEnabled, forbidden) {
+			t.Errorf("改写清单里不该出现 %s：\n%s", forbidden, joinedEnabled)
 		}
 	}
 }

@@ -27,10 +27,9 @@ type Config struct {
 
 	// DisableAutoUpdate 控制生成配置里 `updates.startupForceAutoUpdate` 的取值。
 	//
-	// 用指针是为了区分"没设过"与"明确设成 false"：默认（nil）按**开启**处理
-	// ——即默认禁用客户端自动更新。理由是 wbmux 靠客户端未公开的配置行为工作，
-	// "客户端被悄悄升到新版本"正是机制失效的主要来源；用户要的是稳定可用，
-	// 而不是最新。想恢复官方行为，把它显式设为 false 即可。
+	// 本项为可选功能（默认 nil 视为未开启）：不主动触碰客户端原有更新配置。
+	// 当用户在界面明确开启（true）时，才会把客户端 app-config.json 的启动更新关掉；
+	// 关闭（false）时则执行 Release 恢复客户端官方原生策略。
 	DisableAutoUpdate *bool `json:"disableAutoUpdate,omitempty"`
 
 	// AutoCheckin 控制"打开界面时自动签到"。
@@ -340,10 +339,9 @@ func Save(c Config) error {
 
 // DisableAutoUpdateOn 报告"是否要禁止客户端自动更新"。
 //
-// 默认（没设过）按**开启**处理，见 DisableAutoUpdate 字段的注释：
-// wbmux 靠客户端未公开的配置行为工作，"客户端被悄悄升级"正是机制失效的
-// 主要来源（2026-10-15 那次升级改了 models.json 格式，注入的模型集体失效）。
-// 想恢复官方行为，在界面里把这个开关关掉即可。
+// 本功能为可选功能（Opt-in）：默认（没设过）按关闭处理，不主动篡改客户端配置。
+// 仅当用户在 WebUI 明确开启（*cfg.DisableAutoUpdate == true）时才生效并压制
+// 客户端启动静默更新。
 func DisableAutoUpdateOn(cfg Config) bool {
-	return cfg.DisableAutoUpdate == nil || *cfg.DisableAutoUpdate
+	return cfg.DisableAutoUpdate != nil && *cfg.DisableAutoUpdate
 }

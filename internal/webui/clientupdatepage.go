@@ -51,9 +51,13 @@ func (s *Server) handleClientUpdatePolicy(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			note = "配置已保存，但写客户端设置失败：" + err.Error()
 		} else if applied == 0 {
-			note = "配置已保存。没找到客户端的数据目录，等它启动过一次、再打开本界面就会自动写上。"
+			if on {
+				note = "配置已保存。未检测到本地客户端目录，后续启动客户端时若开启此项将按需写入。"
+			} else {
+				note = "配置已保存。当前客户端保持官方默认更新策略。"
+			}
 		}
-		s.logf("禁止客户端自动更新：已%s（改动了 %d 侧）", map[bool]string{true: "打开", false: "关闭"}[on], applied)
+		s.logf("客户端自动更新策略：已%s（改动了 %d 侧）", map[bool]string{true: "开启禁止", false: "恢复官方默认"}[on], applied)
 		writeJSON(w, map[string]any{"enabled": on, "applied": applied, "note": note})
 		return
 	}
@@ -73,17 +77,33 @@ func (s *Server) handleClientUpdatePolicy(w http.ResponseWriter, r *http.Request
 //
 // 返回真正改动过的侧数（不含"本来就是对的"）。
 //
-// 关掉时是**把键删掉**（回到"客户端自己决定"），不是写 true ——
+// 开启禁止 (on=true) 时写入 "startupForceAutoUpdate": false。
+// 关闭禁止 (on=false) 时是**把键删掉**（回到"客户端官方默认决定"），不是写 true ——
 // 写 true 等于替用户做了"允许自动更新"这个决定，而用户想表达的只是
-// "这事我不管了"。这个区别在客户端升级策略变化时会体现出来。
+// "按官方原生策略处理"。这个区别在客户端升级策略变化时会体现出来。
 func (s *Server) applyClientUpdatePolicy(on bool) (int, error) {
 	applied := 0
 	var firstErr error
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
-		p := filepath.Join(s.probe().DataDir(id), "app", "app-config.json")
-		// 只动**用户确实用过**的那一侧：app/ 目录存在才说明这个客户端跑过。
-		if _, err := os.Stat(filepath.Dir(p)); err != nil {
+		dataDir := s.probe().DataDir(id)
+		// 只有该侧客户端的数据根目录存在（说明已安装并运行过该版本）才处理
+		if _, err := os.Stat(dataDir); err != nil {
 			continue
+		}
+		p := filepath.Join(dataDir, "app", "app-config.json")
+		if on {
+			// 用户主动开启禁止，如果 app/ 目录尚未创建则预埋
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+		} else {
+			// 关闭禁止：若 app/ 目录都不存在，无需动
+			if _, err := os.Stat(filepath.Dir(p)); err != nil {
+				continue
+			}
 		}
 		var changed bool
 		var err error
