@@ -1969,6 +1969,9 @@
         else n.setAttribute(k, v);
       });
     }
+    if (kids && !Array.isArray(kids)) {
+      kids = [kids];
+    }
     (kids || []).forEach(function add(c) {
       if (c === null || c === undefined || c === false) return;
       // 数组递归展开：嵌套分组时直接传数组，别让 appendChild(数组) 炸掉
@@ -4488,7 +4491,7 @@
           ]),
           el("span", { class: "pill ok", text: acc.expiresAtHuman ? "到期：" + acc.expiresAtHuman : "长期有效" })
         ]),
-        el("div", { style: "font-size:11.5px;color:var(--g8);word-break:break-all" }, "UID: " + (acc.uid || "未知") + " · 域名: " + (acc.domain || "www.workbuddy.ai"))
+        el("div", { style: "font-size:11.5px;color:var(--g8);word-break:break-all", text: "UID: " + (acc.uid || "未知") + " · 域名: " + (acc.domain || "www.workbuddy.ai") })
       ]);
       body.appendChild(banner);
 
@@ -4515,7 +4518,7 @@
       actions.appendChild(btnDownload);
 
       // 复制 Access Token 按钮
-      var btnCopyToken = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px" }, "📋 复制 Access Token");
+      var btnCopyToken = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px", text: "📋 复制 Access Token" });
       btnCopyToken.onclick = function () {
         navigator.clipboard.writeText(acc.token).then(function () {
           btnCopyToken.textContent = "✓ 已复制 Token!";
@@ -4526,7 +4529,7 @@
       actions.appendChild(btnCopyToken);
 
       // 复制完整配置按钮
-      var btnCopyAll = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px" }, "📄 复制官方格式 JSON");
+      var btnCopyAll = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px", text: "📄 复制官方格式 JSON" });
       btnCopyAll.onclick = function () {
         navigator.clipboard.writeText(rawJson).then(function () {
           btnCopyAll.textContent = "✓ 已复制 JSON!";
@@ -4538,7 +4541,7 @@
 
       // 脱敏开关
       var isMasked = true;
-      var btnToggleMask = el("button", { class: "ghost", style: "padding:6px 10px;font-size:12px;margin-left:auto" }, "👁️ 显示明文");
+      var btnToggleMask = el("button", { class: "ghost", style: "padding:6px 10px;font-size:12px;margin-left:auto", text: "👁️ 显示明文" });
       actions.appendChild(btnToggleMask);
 
       body.appendChild(actions);

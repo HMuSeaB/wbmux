@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,33 @@ import (
 	"sync"
 	"time"
 )
+
+// PingOptions 包含探针调用的拟真客户端参数（账号 UID、通用桌面端 Header 等）。
+type PingOptions struct {
+	UID          string
+	ExtraHeaders map[string]string
+}
+
+var requiredProbeIdentityHeaders = []string{
+	"X-Conversation-ID",
+	"X-Parent-Conversation-ID",
+	"X-Session-ID",
+	"X-Conversation-Request-ID",
+	"X-Conversation-Message-ID",
+	"X-Request-ID",
+	"X-Root-Request-ID",
+	"X-Trace-ID",
+}
+
+func newProbeUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 // Status 定义模型的健康与连通性等级。
 type Status string
@@ -85,7 +113,7 @@ func NewRadar(client *http.Client) *Radar {
 // 1. 发送 1-Token 测试流式补全（max_tokens: 1, stream: true）；
 // 2. 收到首个有效 SSE chunk（data: ...）后立即截断并关闭连接，不浪费多余算力与 Token；
 // 3. 超时或遇到非 200 状态码时，准确记录失败原因。
-func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta) ProbeRecord {
+func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta, opts ...PingOptions) ProbeRecord {
 	rec := ProbeRecord{
 		Model:       meta.ID,
 		DisplayName: meta.DisplayName,
@@ -95,9 +123,16 @@ func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta
 		CheckedAt:   time.Now(),
 	}
 
+	var opt PingOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	payload := map[string]any{
 		"model": meta.ID,
 		"messages": []map[string]string{
+			// 官方上游严格风控：首条必须为 system 角色，不能仅有 user 否则直接返回 code 11128 (request illegal)
+			{"role": "system", "content": "You are a helpful assistant."},
 			{"role": "user", "content": "hi"},
 		},
 		"max_tokens": 1,
@@ -127,8 +162,23 @@ func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if opt.UID != "" {
+		req.Header.Set("X-User-Id", opt.UID)
+	}
+	// 注入官方 Electron 客户端平台指纹与 UA
+	for k, v := range opt.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+	// 补全会话链路 UUID 追踪头
+	probeUUID := newProbeUUID()
+	for _, h := range requiredProbeIdentityHeaders {
+		if req.Header.Get(h) == "" {
+			req.Header.Set(h, probeUUID)
+		}
 	}
 
 	startTime := time.Now()
@@ -144,7 +194,11 @@ func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		msg := strings.TrimSpace(string(snippet))
-		if msg == "" {
+		if strings.Contains(msg, "14003") || strings.Contains(strings.ToLower(msg), "model busy") {
+			msg = "429 (官方模型算力繁忙 Model Busy)"
+		} else if strings.Contains(msg, "11128") || strings.Contains(msg, "渠道校验") {
+			msg = "400 (官方渠道拦截: 未通过校验)"
+		} else if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 		rec.ErrorMsg = msg
@@ -194,7 +248,7 @@ func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta
 // PingBatch 并发控制批量测速。
 //
 // maxConcurrency 控制最大并发协程数（默认建议 2~3），每个请求之间有微小抖动，保护上游。
-func (r *Radar) PingBatch(ctx context.Context, endpoint, token string, models []ModelMeta, maxConcurrency int) []ProbeRecord {
+func (r *Radar) PingBatch(ctx context.Context, endpoint, token string, models []ModelMeta, maxConcurrency int, opts ...PingOptions) []ProbeRecord {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 3
 	}
@@ -229,7 +283,7 @@ func (r *Radar) PingBatch(ctx context.Context, endpoint, token string, models []
 			// 微小交错延迟（30ms），杜绝瞬发击穿
 			time.Sleep(time.Duration(idx*35) * time.Millisecond)
 
-			results[idx] = r.Ping(ctx, endpoint, token, meta)
+			results[idx] = r.Ping(ctx, endpoint, token, meta, opts...)
 		}(i, m)
 	}
 

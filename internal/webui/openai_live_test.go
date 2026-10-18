@@ -186,3 +186,98 @@ func TestLiveUpstreamIdentityHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestLiveModelRadarPing(t *testing.T) {
+	srv := liveGuard(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/model-radar/ping", strings.NewReader(`{"model":"deepseek-v4.1-flash"}`))
+	rec := httptest.NewRecorder()
+	srv.handleModelRadarPing(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Records []struct {
+			Model      string `json:"model"`
+			Status     string `json:"status"`
+			TTFTMs     int64  `json:"ttftMs"`
+			StatusCode int    `json:"statusCode"`
+			ErrorMsg   string `json:"errorMsg"`
+		} `json:"records"`
+		FastestFreeModel string `json:"fastestFreeModel"`
+		HasHealthyFree   bool   `json:"hasHealthyFree"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(res.Records) == 0 {
+		t.Fatalf("无测速记录返回")
+	}
+	r := res.Records[0]
+	t.Logf("单模型测速结果: Model=%s, Status=%s, TTFT=%dms, StatusCode=%d, Err=%s", r.Model, r.Status, r.TTFTMs, r.StatusCode, r.ErrorMsg)
+	if r.Status == "down" || r.StatusCode >= 400 {
+		t.Fatalf("测速失败: %s (Status: %s, Code: %d)", r.ErrorMsg, r.Status, r.StatusCode)
+	}
+}
+
+func TestLiveModelRadarBatchPing(t *testing.T) {
+	srv := liveGuard(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/model-radar/ping", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	srv.handleModelRadarPing(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Records []struct {
+			Model      string `json:"model"`
+			Status     string `json:"status"`
+			TTFTMs     int64  `json:"ttftMs"`
+			StatusCode int    `json:"statusCode"`
+			ErrorMsg   string `json:"errorMsg"`
+		} `json:"records"`
+		FastestFreeModel string `json:"fastestFreeModel"`
+		HasHealthyFree   bool   `json:"hasHealthyFree"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	t.Logf("批量测速完成: 共 %d 个模型, 最速推荐=%s, 是否有健康限免=%v",
+		len(res.Records), res.FastestFreeModel, res.HasHealthyFree)
+	for _, r := range res.Records {
+		t.Logf(" - [%s] Status=%s, TTFT=%dms, Code=%d, Err=%s", r.Model, r.Status, r.TTFTMs, r.StatusCode, r.ErrorMsg)
+	}
+	if !res.HasHealthyFree || res.FastestFreeModel == "" {
+		t.Errorf("期望发现可用限免模型，实际未发现")
+	}
+}
+
+func TestLiveCredentialExport(t *testing.T) {
+	srv := liveGuard(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/credentials/export?side=intl", nil)
+	rec := httptest.NewRecorder()
+	srv.handleCredentialExport(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		OK      bool `json:"ok"`
+		Account struct {
+			UID   string `json:"uid"`
+			Token string `json:"token"`
+		} `json:"account"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !res.OK || res.Account.Token == "" {
+		t.Fatalf("凭据导出失败: %+v", res)
+	}
+	t.Logf("凭据导出成功: UID=%s, TokenLen=%d", res.Account.UID, len(res.Account.Token))
+}
+

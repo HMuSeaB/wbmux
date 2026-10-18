@@ -53,6 +53,11 @@ func (s *Server) handleModelRadarPing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	endpoint := s.upstreamBase() + chatCompletionsPath
+	extraHeaders := usage.IntlCommonHeaders()
+	opt := modelradar.PingOptions{
+		UID:          cred.UID,
+		ExtraHeaders: extraHeaders,
+	}
 
 	// 2. 获取国际端实时模型元数据，解析费率与是否限免
 	var liveModels []usage.LiveModel
@@ -83,7 +88,7 @@ func (s *Server) handleModelRadarPing(w http.ResponseWriter, r *http.Request) {
 				IsFree:      false,
 			}
 		}
-		rec := radar.Ping(r.Context(), endpoint, cred.Token, meta)
+		rec := radar.Ping(r.Context(), endpoint, cred.Token, meta, opt)
 		fastest, found := radar.FastestFreeModel()
 		writeJSON(w, map[string]any{
 			"records":          []modelradar.ProbeRecord{rec},
@@ -115,7 +120,7 @@ func (s *Server) handleModelRadarPing(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	results := radar.PingBatch(r.Context(), endpoint, cred.Token, probeTargets, 2)
+	results := radar.PingBatch(r.Context(), endpoint, cred.Token, probeTargets, 2, opt)
 	fastest, found := radar.FastestFreeModel()
 
 	writeJSON(w, map[string]any{
