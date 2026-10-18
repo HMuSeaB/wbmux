@@ -570,6 +570,76 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			}
 		}
 
+		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
+			// 查询当前活跃账号
+			accs, _ := credential.ListAccounts(s.probe(), variant.Intl)
+			var currentActiveID string
+			for _, a := range accs {
+				if a.Active {
+					currentActiveID = a.ID
+					break
+				}
+			}
+			if currentActiveID != "" && len(accs) > 1 {
+				currentFailedID := currentActiveID
+				for attempt := 0; attempt < len(accs)-1 && attempt < 3; attempt++ {
+					nextAcc, errFailover := credential.GetDefaultFailoverTracker().FailoverToNext(s.probe(), variant.Intl, currentFailedID, credential.DefaultCooldownDuration)
+					if errFailover != nil || nextAcc == nil || nextAcc.Token == "" {
+						break
+					}
+					s.note(ProxyLogEntry{
+						Level: "warn",
+						Model: route.Model,
+						Text:  fmt.Sprintf("上游触发 429 限流/配额用尽，自动故障转移至备用账号：%s (%s) 并重发 (第 %d 次重试)", nextAcc.Nickname, nextAcc.UID, attempt+1),
+					})
+					usage.InvalidateLiveCache(variant.Intl)
+					reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
+					if errReq != nil {
+						break
+					}
+					for k, v := range req.Header {
+						reqRetry.Header[k] = v
+					}
+					reqRetry.Header.Set("Authorization", "Bearer "+nextAcc.Token)
+					if nextAcc.UID != "" {
+						reqRetry.Header.Set("X-User-Id", nextAcc.UID)
+					}
+					respRetry, errRetry := probeHTTPClient().Do(reqRetry)
+					if errRetry != nil {
+						break
+					}
+					if respRetry.StatusCode == http.StatusOK {
+						defer respRetry.Body.Close()
+						s.observe(route.Model, http.StatusOK, "")
+						var sent int64
+						if up.ClientStream {
+							sent = s.streamChatThrough(w, respRetry.Body)
+						} else {
+							sent = s.aggregateChat(w, respRetry.Body)
+						}
+						s.note(ProxyLogEntry{
+							Level:  "ok",
+							Model:  route.Model,
+							Tools:  up.Tools,
+							Stream: up.ClientStream,
+							MS:     time.Since(started).Milliseconds(),
+							Text: fmt.Sprintf("故障转移重发成功 model=%s 经%s (账号: %s) stream=%v 回给客户端 %s 用时 %s",
+								route.Model, route.Label, nextAcc.Nickname, up.ClientStream,
+								describeBytes(sent), time.Since(started).Round(time.Millisecond)),
+						})
+						return
+					}
+					if respRetry.StatusCode == http.StatusTooManyRequests || respRetry.StatusCode == http.StatusPaymentRequired {
+						_ = respRetry.Body.Close()
+						currentFailedID = nextAcc.ID
+						continue
+					}
+					_ = respRetry.Body.Close()
+					break
+				}
+			}
+		}
+
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		msg := upstreamMessage(body)
 		// 记下"这个模型此刻不能用"——面板据此告诉用户现在能切哪个、

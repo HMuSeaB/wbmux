@@ -44,6 +44,7 @@ type RedactedAccount struct {
 	HasRefreshToken  bool   `json:"hasRefreshToken"`
 	ExpiresAt        int64  `json:"expiresAt,omitempty"`
 	RefreshExpiresAt int64  `json:"refreshExpiresAt,omitempty"`
+	CooldownSec      int64  `json:"cooldownSec,omitempty"`
 }
 
 // Redact 返回用于安全展示的脱敏账号对象。
@@ -54,6 +55,10 @@ func (a Account) Redact() RedactedAccount {
 		mask = tok[:6] + "…" + tok[len(tok)-4:]
 	} else if len(tok) > 0 {
 		mask = "******"
+	}
+	cooldownSec := int64(0)
+	if isCool, rem := GetDefaultFailoverTracker().GetCooldown(a.ID); isCool {
+		cooldownSec = int64(rem.Seconds())
 	}
 	return RedactedAccount{
 		ID:               a.ID,
@@ -68,6 +73,7 @@ func (a Account) Redact() RedactedAccount {
 		HasRefreshToken:  strings.TrimSpace(a.RefreshToken) != "",
 		ExpiresAt:        a.ExpiresAt,
 		RefreshExpiresAt: a.RefreshExpiresAt,
+		CooldownSec:      cooldownSec,
 	}
 }
 

@@ -3709,6 +3709,12 @@
           if (a.hasRefreshToken) {
             tagPills.push(el("span", { class: "pill", style: "background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.38);color:#a5b4fc", text: "⚡ 自动无感保鲜" }));
           }
+          if (a.cooldownSec > 0) {
+            var min = Math.ceil(a.cooldownSec / 60);
+            tagPills.push(el("span", { class: "pill warn", style: "font-size:10.5px;padding:1px 6px", text: "⏳ 限流冷却中 (" + min + "m)" }));
+          } else {
+            tagPills.push(el("span", { class: "pill ok", style: "font-size:10.5px;padding:1px 6px", text: "✅ 就绪" }));
+          }
           if (a.expiresAt > 0) {
             var rem = a.expiresAt - Date.now();
             if (rem > 0) {

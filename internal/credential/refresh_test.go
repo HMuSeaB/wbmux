@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -82,7 +83,8 @@ func TestDoTokenRefresh_ErrorCodes(t *testing.T) {
 
 func TestRefreshAccount_Integration(t *testing.T) {
 	tempDir := t.TempDir()
-	t.Setenv("WBMUX_CONFIG_DIR", tempDir)
+	restore := config.SetRoot(tempDir)
+	defer restore()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
