@@ -54,13 +54,16 @@ type ghAsset struct {
 
 // Info 是一次更新检查的结果。
 type Info struct {
-	Current   string `json:"current"`   // 当前运行的版本（构建期注入）
-	Latest    string `json:"latest"`    // 最新已发布版本的 tag（带 v 前缀）
-	URL       string `json:"url"`       // release 页面，手动下载兜底用
-	AssetURL  string `json:"assetURL"`  // Windows amd64 zip 的直链；非 Windows 平台为空
-	AssetName string `json:"assetName"` // 该资产的文件名（校验和按名字对）
-	SumsURL   string `json:"sumsURL"`   // checksums.txt 的直链
-	UpToDate  bool   `json:"upToDate"`
+	Current     string `json:"current"`               // 当前运行的版本（构建期注入）
+	Latest      string `json:"latest"`                // 最新已发布版本的 tag（带 v 前缀）
+	Title       string `json:"title,omitempty"`       // release 标题
+	Changelog   string `json:"changelog,omitempty"`   // release 正文说明与更新日志（Markdown 格式）
+	PublishedAt string `json:"publishedAt,omitempty"` // 发布时间 (RFC3339)
+	URL         string `json:"url"`                   // release 页面，手动下载兜底用
+	AssetURL    string `json:"assetURL"`              // Windows amd64 zip 的直链；非 Windows 平台为空
+	AssetName   string `json:"assetName"`             // 该资产的文件名（校验和按名字对）
+	SumsURL     string `json:"sumsURL"`               // checksums.txt 的直链
+	UpToDate    bool   `json:"upToDate"`
 }
 
 // Check 向 GitHub 查最新已发布版本，与当前版本比较。
@@ -86,9 +89,12 @@ func Check(current string) (Info, error) {
 	}
 
 	var rel struct {
-		TagName string    `json:"tag_name"`
-		HTMLURL string    `json:"html_url"`
-		Assets  []ghAsset `json:"assets"`
+		TagName     string    `json:"tag_name"`
+		Name        string    `json:"name"`
+		Body        string    `json:"body"`
+		PublishedAt string    `json:"published_at"`
+		HTMLURL     string    `json:"html_url"`
+		Assets      []ghAsset `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return info, err
@@ -98,6 +104,9 @@ func Check(current string) (Info, error) {
 	}
 
 	info.Latest = rel.TagName
+	info.Title = rel.Name
+	info.Changelog = rel.Body
+	info.PublishedAt = rel.PublishedAt
 	if rel.HTMLURL != "" {
 		info.URL = rel.HTMLURL
 	}
