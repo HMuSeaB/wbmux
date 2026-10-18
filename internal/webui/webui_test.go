@@ -3,6 +3,7 @@ package webui
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -660,6 +661,91 @@ func TestHandleIntlModelSelection(t *testing.T) {
 		t.Errorf("State.SelectedIntlModels 应包含 grok-4.7，得到 %v", st.SelectedIntlModels)
 	}
 }
+
+func TestHandleUpdateTargetInfo(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 无 token 拦截
+	got := e.do(t, http.MethodGet, "/api/update/target-info", "", false)
+	if got.code != http.StatusForbidden {
+		t.Fatalf("无 token 应返回 403，得到 %d", got.code)
+	}
+
+	// 2. 只接受 GET
+	gotPost := e.do(t, http.MethodPost, "/api/update/target-info", "{}", true)
+	if gotPost.code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST 应返回 405，得到 %d", gotPost.code)
+	}
+
+	// 3. 正常获取
+	var ti struct {
+		TargetExe string `json:"targetExe"`
+		TempDir   string `json:"tempDir"`
+	}
+	e.do(t, http.MethodGet, "/api/update/target-info", "", true).decode(t, &ti)
+	if ti.TargetExe == "" {
+		t.Errorf("TargetExe 不应为空")
+	}
+	if ti.TempDir == "" {
+		t.Errorf("TempDir 不应为空")
+	}
+}
+
+func TestHandleOpenFolder(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 无 token 拦截
+	got := e.do(t, http.MethodPost, "/api/open-folder", `{"path":"."}`, false)
+	if got.code != http.StatusForbidden {
+		t.Fatalf("无 token 应返回 403，得到 %d", got.code)
+	}
+
+	// 2. 只接受 POST
+	gotGet := e.do(t, http.MethodGet, "/api/open-folder", "", true)
+	if gotGet.code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET 应返回 405，得到 %d", gotGet.code)
+	}
+
+	// 3. 空路径拒绝
+	gotEmpty := e.do(t, http.MethodPost, "/api/open-folder", `{"path":"   "}`, true)
+	if gotEmpty.code != http.StatusBadRequest {
+		t.Fatalf("空路径应返回 400，得到 %d", gotEmpty.code)
+	}
+
+	// 4. 不存在的路径拒绝
+	gotMissing := e.do(t, http.MethodPost, "/api/open-folder", `{"path":"non_existing_file_path_123456"}`, true)
+	if gotMissing.code != http.StatusNotFound {
+		t.Fatalf("不存在路径应返回 404，得到 %d", gotMissing.code)
+	}
+
+	// 5. 存在且合法的临时目录测试（不真唤起窗口，测试路径解析及成功响应）
+	tempDir := t.TempDir()
+	var res struct {
+		OK   bool   `json:"ok"`
+		Path string `json:"path"`
+	}
+	e.do(t, http.MethodPost, "/api/open-folder", fmt.Sprintf(`{"path":%q}`, tempDir), true).decode(t, &res)
+	if !res.OK {
+		t.Errorf("打开合法目录应返回 ok: true")
+	}
+}
+
+func TestHandleUpdateApplyStreamValidation(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 无 token 拦截
+	got := e.do(t, http.MethodGet, "/api/update/apply-stream", "", false)
+	if got.code != http.StatusForbidden {
+		t.Fatalf("无 token 应返回 403，得到 %d", got.code)
+	}
+
+	// 2. 缺少 assetURL/assetName 拒绝
+	gotBad := e.do(t, http.MethodGet, "/api/update/apply-stream", "", true)
+	if gotBad.code != http.StatusBadRequest {
+		t.Fatalf("缺少参数应返回 400，得到 %d", gotBad.code)
+	}
+}
+
 
 
 

@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -174,3 +177,52 @@ func repoRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+func TestTargetInfo(t *testing.T) {
+	exe, tmp, err := TargetInfo()
+	if err != nil {
+		t.Fatalf("TargetInfo 失败: %v", err)
+	}
+	if exe == "" {
+		t.Error("TargetExe 不应为空")
+	}
+	if tmp == "" {
+		t.Error("TempDir 不应为空")
+	}
+}
+
+func TestDownloadWithProgress(t *testing.T) {
+	data := bytes.Repeat([]byte("1234567890"), 1024*10) // 100 KB
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "downloaded.bin")
+	var calls int
+	var maxPercent float64
+	var lastDownloaded int64
+
+	err := downloadWithProgress(srv.URL, dest, func(dl, tot int64, spd string, pct float64) {
+		calls++
+		lastDownloaded = dl
+		if pct > maxPercent {
+			maxPercent = pct
+		}
+	})
+	if err != nil {
+		t.Fatalf("downloadWithProgress 失败: %v", err)
+	}
+	if calls == 0 {
+		t.Error("预期应当至少触发一次进度回调")
+	}
+	if lastDownloaded != int64(len(data)) {
+		t.Errorf("最终下载大小应为 %d，实际得到 %d", len(data), lastDownloaded)
+	}
+	if maxPercent < 99.0 {
+		t.Errorf("最终进度百分比应接近 100%%，实际得到 %.1f%%", maxPercent)
+	}
+}
+

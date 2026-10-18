@@ -189,29 +189,65 @@ func pickWindowsAsset(assets []ghAsset) string {
 	return ""
 }
 
-// Apply 下载并原位替换当前运行的 exe。
-// 返回给界面的话要说清"替换已就位、重启才生效"——正在运行的还是旧版。
-func Apply(assetURL, assetName, sumsURL string) (string, error) {
-	if assetURL == "" {
-		return "", errors.New("没有可用的 Windows 安装包（该 release 可能没有 windows_amd64 构建产物）")
-	}
+// ProgressEvent 是一次在线升级过程中各阶段的进度事件。
+type ProgressEvent struct {
+	Phase      string  `json:"phase"`            // "init", "downloading", "verifying", "extracting", "replacing", "done", "error"
+	Downloaded int64   `json:"downloaded"`       // 已下载字节数
+	Total      int64   `json:"total"`            // 文件总字节数（未知为 0）
+	Percent    float64 `json:"percent"`          // 0.0 ~ 100.0
+	Speed      string  `json:"speed,omitempty"`  // 瞬时下载速率，如 "1.8 MB/s"
+	Message    string  `json:"message"`          // 阶段说明文案
+	TargetExe  string  `json:"targetExe"`        // 目标 wbmux.exe 绝对物理路径
+	TempDir    string  `json:"tempDir"`          // 临时下载目录
+	ZipFile    string  `json:"zipFile"`          // 下载的压缩包绝对路径
+	Error      string  `json:"error,omitempty"`  // 错误详情（如有）
+}
+
+// TargetInfo 返回当前运行的 exe 绝对路径和临时下载目录，供界面在升级前展示。
+func TargetInfo() (exePath string, tempDir string, err error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	exe, err = filepath.Abs(exe)
 	if err != nil {
+		return "", "", err
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return "", "", err
+	}
+	tmp := filepath.Join(dir, "tmp")
+	return exe, tmp, nil
+}
+
+// Apply 下载并原位替换当前运行的 exe。
+// 返回给界面的话要说清"替换已就位、重启才生效"——正在运行的还是旧版。
+func Apply(assetURL, assetName, sumsURL string) (string, error) {
+	return ApplyWithProgress(assetURL, assetName, sumsURL, nil)
+}
+
+// ApplyWithProgress 下载并原位替换当前运行的 exe，同时以高频回调向调用方通报实时进度与阶段。
+func ApplyWithProgress(assetURL, assetName, sumsURL string, onProgress func(ProgressEvent)) (string, error) {
+	emit := func(ev ProgressEvent) {
+		if onProgress != nil {
+			onProgress(ev)
+		}
+	}
+
+	if assetURL == "" {
+		err := errors.New("没有可用的 Windows 安装包（该 release 可能没有 windows_amd64 构建产物）")
+		emit(ProgressEvent{Phase: "error", Message: err.Error(), Error: err.Error()})
+		return "", err
+	}
+	exe, tmp, err := TargetInfo()
+	if err != nil {
+		emit(ProgressEvent{Phase: "error", Message: "获取主程序或临时目录失败: " + err.Error(), Error: err.Error()})
 		return "", err
 	}
 
-	// 下载到 wbmux 自己的 tmp（与 migrate 的桥脚本同一个目录，出问题
-	// 用户能自己看到，也便于整目录清理）。
-	dir, err := config.Dir()
-	if err != nil {
-		return "", err
-	}
-	tmp := filepath.Join(dir, "tmp")
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		emit(ProgressEvent{Phase: "error", Message: "创建临时目录失败: " + err.Error(), Error: err.Error()})
 		return "", err
 	}
 	zipPath := filepath.Join(tmp, "wbmux-update.zip")
@@ -219,23 +255,69 @@ func Apply(assetURL, assetName, sumsURL string) (string, error) {
 	defer os.Remove(zipPath)
 	defer os.Remove(newExe)
 
-	if err := download(assetURL, zipPath); err != nil {
+	emit(ProgressEvent{
+		Phase:     "init",
+		Percent:   0,
+		Message:   "正在连接下载服务器...",
+		TargetExe: exe,
+		TempDir:   tmp,
+		ZipFile:   zipPath,
+	})
+
+	// 1. 带进度与速率感知的下载
+	err = downloadWithProgress(assetURL, zipPath, func(dl, tot int64, spd string, pct float64) {
+		msg := "正在下载新版安装包..."
+		if tot > 0 {
+			msg = fmt.Sprintf("正在下载新版安装包（%.1f MB / %.1f MB · %s）...",
+				float64(dl)/(1024*1024), float64(tot)/(1024*1024), spd)
+		} else if dl > 0 {
+			msg = fmt.Sprintf("正在下载新版安装包（已下载 %.1f MB · %s）...",
+				float64(dl)/(1024*1024), spd)
+		}
+		emit(ProgressEvent{
+			Phase:      "downloading",
+			Downloaded: dl,
+			Total:      tot,
+			Percent:    pct,
+			Speed:      spd,
+			Message:    msg,
+			TargetExe:  exe,
+			TempDir:    tmp,
+			ZipFile:    zipPath,
+		})
+	})
+	if err != nil {
+		emit(ProgressEvent{
+			Phase:     "error",
+			Message:   "下载失败: " + err.Error(),
+			Error:     err.Error(),
+			TargetExe: exe,
+			TempDir:   tmp,
+			ZipFile:   zipPath,
+		})
 		return "", err
 	}
 
-	// 校验：与 release 的 checksums.txt 比对。
-	//
-	// 这是"下载到的到底是不是官方那个包"的唯一可靠判据（见 verifyChecksum 的
-	// 注释：按字符串猜二进制身份试过三组，全不可靠）。下载中断、链路被劫持、
-	// 上游传错文件，全都在这道拦下。
+	// 2. 校验 SHA256
+	emit(ProgressEvent{
+		Phase:     "verifying",
+		Percent:   92,
+		Message:   "下载完成，正在校验 SHA256 完整性...",
+		TargetExe: exe,
+		TempDir:   tmp,
+		ZipFile:   zipPath,
+	})
 	note := ""
 	if sumsURL != "" && assetName != "" {
 		sumsRaw, err := downloadText(sumsURL)
 		if err != nil {
-			return "", fmt.Errorf("下载校验和失败（%v）；不敢冒险替换，请稍后重试或手动下载", err)
+			err = fmt.Errorf("下载校验和失败（%v）；不敢冒险替换，请稍后重试或手动下载", err)
+			emit(ProgressEvent{Phase: "error", Message: err.Error(), Error: err.Error(), TargetExe: exe, TempDir: tmp, ZipFile: zipPath})
+			return "", err
 		}
 		n, err := verifyChecksum(zipPath, assetName, parseChecksums(sumsRaw))
 		if err != nil {
+			emit(ProgressEvent{Phase: "error", Message: "校验和比对失败: " + err.Error(), Error: err.Error(), TargetExe: exe, TempDir: tmp, ZipFile: zipPath})
 			return "", err
 		}
 		note = n
@@ -243,24 +325,56 @@ func Apply(assetURL, assetName, sumsURL string) (string, error) {
 		note = "release 没有提供校验和，本次未校验"
 	}
 
+	// 3. 解压
+	emit(ProgressEvent{
+		Phase:     "extracting",
+		Percent:   96,
+		Message:   "校验通过，正在解压释放新版本主程序...",
+		TargetExe: exe,
+		TempDir:   tmp,
+		ZipFile:   zipPath,
+	})
 	if err := extractExe(zipPath, newExe); err != nil {
+		emit(ProgressEvent{Phase: "error", Message: "解压安装包失败: " + err.Error(), Error: err.Error(), TargetExe: exe, TempDir: tmp, ZipFile: zipPath})
 		return "", err
 	}
 
-	// 原地替换：改名正在运行的 exe（Windows 允许），再在原路径放新版。
-	// 失败就把改名撤回来，绝不让用户落到"新旧都没有"的地步。
+	// 4. 原位安全替换
+	emit(ProgressEvent{
+		Phase:     "replacing",
+		Percent:   99,
+		Message:   "正在原位原子安全替换目标主程序...",
+		TargetExe: exe,
+		TempDir:   tmp,
+		ZipFile:   zipPath,
+	})
 	old := exe + ".old"
 	_ = os.Remove(old)
 	if err := os.Rename(exe, old); err != nil {
-		return "", fmt.Errorf("无法挪动正在运行的 wbmux.exe（可能被杀毒软件占用）：%w", err)
+		err = fmt.Errorf("无法挪动正在运行的 wbmux.exe（可能被杀毒软件占用）：%w", err)
+		emit(ProgressEvent{Phase: "error", Message: err.Error(), Error: err.Error(), TargetExe: exe, TempDir: tmp, ZipFile: zipPath})
+		return "", err
 	}
 	if err := copyFile(newExe, exe); err != nil {
 		if rbErr := os.Rename(old, exe); rbErr != nil {
-			return "", fmt.Errorf("写入新版失败，且旧版回滚也失败（旧版被改名为 %s，请手动改回）：%v；%v", old, err, rbErr)
+			err = fmt.Errorf("写入新版失败，且旧版回滚也失败（旧版被改名为 %s，请手动改回）：%v；%v", old, err, rbErr)
+		} else {
+			err = fmt.Errorf("写入新版失败（已安全回滚原版本）：%w", err)
 		}
-		return "", fmt.Errorf("写入新版失败（已回滚）：%w", err)
+		emit(ProgressEvent{Phase: "error", Message: err.Error(), Error: err.Error(), TargetExe: exe, TempDir: tmp, ZipFile: zipPath})
+		return "", err
 	}
-	return "新版已就位（" + note + "）。从托盘退出 wbmux，再启动一次即完成升级。", nil
+
+	succMsg := "新版已替换就位（" + note + "）。从托盘退出 wbmux，再启动一次即完成升级。"
+	emit(ProgressEvent{
+		Phase:     "done",
+		Percent:   100,
+		Message:   succMsg,
+		TargetExe: exe,
+		TempDir:   tmp,
+		ZipFile:   zipPath,
+	})
+	return succMsg, nil
 }
 
 // downloadText 拉一段纯文本（checksums.txt）。
@@ -291,8 +405,54 @@ func CleanupOld() {
 	_ = os.Remove(exe + ".old")
 }
 
-// download 把 url 拉到 path（覆盖写）。
-func download(url, path string) error {
+type progressReader struct {
+	reader     io.Reader
+	total      int64
+	downloaded int64
+	lastTime   time.Time
+	lastBytes  int64
+	onProgress func(downloaded, total int64, speed string, percent float64)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	if n > 0 {
+		pr.downloaded += int64(n)
+		now := time.Now()
+		elapsed := now.Sub(pr.lastTime)
+		// 每 150ms 触发一次回调，或者读取完成时触发
+		if elapsed >= 150*time.Millisecond || err == io.EOF || (pr.total > 0 && pr.downloaded >= pr.total) {
+			deltaBytes := pr.downloaded - pr.lastBytes
+			var speedStr string
+			if elapsed.Seconds() > 0 {
+				bytesPerSec := float64(deltaBytes) / elapsed.Seconds()
+				if bytesPerSec >= 1024*1024 {
+					speedStr = fmt.Sprintf("%.1f MB/s", bytesPerSec/(1024*1024))
+				} else if bytesPerSec >= 1024 {
+					speedStr = fmt.Sprintf("%.1f KB/s", bytesPerSec/1024)
+				} else {
+					speedStr = fmt.Sprintf("%.0f B/s", bytesPerSec)
+				}
+			}
+			var pct float64
+			if pr.total > 0 {
+				pct = float64(pr.downloaded) / float64(pr.total) * 100
+				if pct > 100 {
+					pct = 100
+				}
+			}
+			if pr.onProgress != nil {
+				pr.onProgress(pr.downloaded, pr.total, speedStr, pct)
+			}
+			pr.lastTime = now
+			pr.lastBytes = pr.downloaded
+		}
+	}
+	return n, err
+}
+
+// downloadWithProgress 把 url 拉到 path（覆盖写），并高频触发进度回调。
+func downloadWithProgress(url, path string, onProgress func(downloaded, total int64, speed string, percent float64)) error {
 	client := &http.Client{Timeout: httpTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -307,8 +467,22 @@ func download(url, path string) error {
 		return err
 	}
 	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
+
+	total := resp.ContentLength
+	pr := &progressReader{
+		reader:     resp.Body,
+		total:      total,
+		lastTime:   time.Now(),
+		onProgress: onProgress,
+	}
+
+	_, err = io.Copy(f, pr)
 	return err
+}
+
+// download 把 url 拉到 path（覆盖写）。
+func download(url, path string) error {
+	return downloadWithProgress(url, path, nil)
 }
 
 // extractExe 从 goreleaser 的 zip 里解出 wbmux.exe 并做最低限度的完整性

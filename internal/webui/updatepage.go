@@ -2,7 +2,13 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/shortcut"
 	"github.com/HMuSeaB/wbmux/internal/update"
@@ -72,3 +78,139 @@ func (s *Server) handleShortcut(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]string{"path": path})
 }
+
+// handleUpdateTargetInfo 返回当前主程序路径与临时下载缓存目录，
+// 供升级弹窗向用户明确呈现"会下载到哪里、会替换哪个文件"。
+func (s *Server) handleUpdateTargetInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+	targetExe, tempDir, err := update.TargetInfo()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{
+		"targetExe": targetExe,
+		"tempDir":   tempDir,
+	})
+}
+
+// handleUpdateApplyStream 通过 SSE 协议流式推送下载解压与替换进度。
+// 客户端可通过 EventSource 实时获取字节数、瞬时速率、百分比与当前处理阶段。
+func (s *Server) handleUpdateApplyStream(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "当前连接不支持事件流")
+		return
+	}
+
+	assetURL := r.URL.Query().Get("assetURL")
+	assetName := r.URL.Query().Get("assetName")
+	sumsURL := r.URL.Query().Get("sumsURL")
+
+	if assetURL == "" || assetName == "" {
+		writeErr(w, http.StatusBadRequest, "缺少必要参数 assetURL 或 assetName")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// 建立连接后立刻推送初始事件，让前端感知就绪
+	fmt.Fprintf(w, ": stream-ready\n\n")
+	fl.Flush()
+
+	onProgress := func(ev update.ProgressEvent) {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+		fl.Flush()
+	}
+
+	msg, err := update.ApplyWithProgress(assetURL, assetName, sumsURL, onProgress)
+	if err != nil {
+		errEv, _ := json.Marshal(map[string]any{
+			"phase": "error",
+			"error": err.Error(),
+		})
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errEv)
+		fl.Flush()
+		return
+	}
+
+	doneEv, _ := json.Marshal(map[string]any{
+		"phase":   "done",
+		"percent": 100,
+		"message": msg,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", doneEv)
+	fl.Flush()
+}
+
+// handleOpenFolder 打开指定的文件或目录所在的位置（调用操作系统资源管理器）。
+// 仅允许打开真实存在的路径。
+func (s *Server) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	targetPath := strings.TrimSpace(req.Path)
+	if targetPath == "" {
+		writeErr(w, http.StatusBadRequest, "路径不能为空")
+		return
+	}
+	cleanPath := filepath.Clean(targetPath)
+	fi, err := os.Stat(cleanPath)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "指定路径不存在: "+err.Error())
+		return
+	}
+
+	if err := openInExplorer(cleanPath, fi.IsDir()); err != nil {
+		writeErr(w, http.StatusInternalServerError, "打开失败: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "path": cleanPath})
+}
+
+// openInExplorer 调用系统文件资源管理器打开目录或高亮选中文件。
+func openInExplorer(path string, isDir bool) error {
+	switch runtime.GOOS {
+	case "windows":
+		var cmd *exec.Cmd
+		if isDir {
+			cmd = exec.Command("explorer.exe", path)
+		} else {
+			cmd = exec.Command("explorer.exe", "/select,"+path)
+		}
+		return cmd.Start()
+	case "darwin":
+		var cmd *exec.Cmd
+		if isDir {
+			cmd = exec.Command("open", path)
+		} else {
+			cmd = exec.Command("open", "-R", path)
+		}
+		return cmd.Start()
+	default:
+		dir := path
+		if !isDir {
+			dir = filepath.Dir(path)
+		}
+		return exec.Command("xdg-open", dir).Start()
+	}
+}
+

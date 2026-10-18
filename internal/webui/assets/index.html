@@ -969,6 +969,111 @@
     justify-content: flex-end;
     gap: 10px;
   }
+
+  /* ---------- 升级进度弹窗与路径透明化 ---------- */
+  .upd-box {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .upd-path-card {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .upd-path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .upd-path-label {
+    color: var(--ink-3);
+    flex: none;
+    width: 68px;
+    font-weight: 550;
+  }
+  .upd-path-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-2);
+    background: var(--g2);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--g4);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: all;
+  }
+  .upd-path-btn {
+    flex: none;
+    padding: 3px 8px;
+    font-size: 11.5px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .upd-progress-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--g5);
+    border-radius: var(--r-sm);
+    padding: 14px;
+  }
+  .upd-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12.5px;
+  }
+  .upd-progress-stage {
+    color: var(--ink-1);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .upd-progress-stats {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--brand);
+    font-weight: 500;
+  }
+  .upd-progress-track {
+    height: 10px;
+    background: var(--g3);
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .upd-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3b82f6 0%, #10b981 100%);
+    border-radius: 5px;
+    transition: width 0.15s ease-out;
+  }
+  .upd-progress-bar.done {
+    background: #10b981;
+  }
+  .upd-progress-bar.error {
+    background: #ef4444;
+  }
+  .upd-detail-text {
+    font-size: 11.5px;
+    color: var(--ink-3);
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
@@ -5319,8 +5424,8 @@
 
   // ---------- 自助升级 ----------
   // 检查：/api/update/check 对比当前版本与 GitHub 最新 release；
-  // 升级：/api/update/apply 下载+解包+原位替换（internal/update 的
-  // 自替换利用"Windows 允许给运行中的 exe 改名"），替换完只欠一次重启。
+  // 升级：/api/update/apply-stream 流式下载+校验+解包+原位安全替换。
+  // 弹窗中直观呈现目标主程序路径、临时下载缓存位置、实时动态进度条与下载速率。
   var updBusy = false;
   document.getElementById("btn-update").onclick = function () {
     if (updBusy) return;
@@ -5334,38 +5439,13 @@
       if (info.upToDate) {
         btn.textContent = "检查更新";
         msg.textContent = "已是最新 " + info.latest;
+        toast("当前已是最新版本 " + info.latest, "ok");
         return;
       }
       msg.textContent = "发现新版本";
       btn.textContent = "升级到 " + info.latest;
       btn.onclick = function () {
-        if (updBusy) return;
-        updBusy = true;
-        msg.textContent = "下载并替换中…（几 MB，链路时通时断，请耐心）";
-        api("/api/update/apply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // 把文件名与 checksums 的地址一起带上：服务端要拿官方的校验和
-          // 核对下载到的包（这是"下到的到底是不是官方那个包"的唯一可靠判据）。
-          body: JSON.stringify({
-            assetURL: info.assetURL,
-            assetName: info.assetName,
-            sumsURL: info.sumsURL
-          }),
-        }).then(function (r) {
-          byeOnce = true; // 升级谢幕页自己接管，别让 SSE 的 bye 再覆盖
-          document.body.innerHTML =
-            '<div class="gone-wrap"><div class="note ok" id="gone-note">' +
-            '<b>升级已就位（' + info.latest + '）。</b>' +
-            '<div>从托盘退出 wbmux，再启动一次即完成升级。</div>' +
-            '<div style="margin-top:6px">国内客户端不用跟着重启。</div></div></div>';
-          setTimeout(function () { window.close(); }, 1500);
-        }).catch(function (e) {
-          updBusy = false;
-          btn.textContent = "升级到 " + info.latest;
-          msg.textContent = "升级失败";
-          toast(e.message, "bad");
-        });
+        showUpdateModal(info);
       };
     }).catch(function (e) {
       updBusy = false;
@@ -5374,6 +5454,292 @@
       toast(e.message, "bad");
     });
   };
+
+  // showUpdateModal 弹出可视化升级对话框，展示下载进度、瞬时速率与下载/替换目录
+  function showUpdateModal(info) {
+    var existing = document.getElementById("update-modal");
+    if (existing) existing.remove();
+
+    var overlay = el("div", { class: "modal-overlay open", id: "update-modal" });
+    var card = el("div", { class: "modal-card", style: "max-width:560px" });
+
+    var inProgress = false;
+    var isDone = false;
+    var eventStream = null;
+
+    function closeModal() {
+      if (inProgress && !confirm("更新正在进行中，关闭弹窗不会中断后台下载。确定关闭吗？")) {
+        return;
+      }
+      if (eventStream) {
+        eventStream.close();
+        eventStream = null;
+      }
+      overlay.classList.remove("open");
+      setTimeout(function () { overlay.remove(); }, 200);
+    }
+
+    // Head
+    var head = el("div", { class: "modal-head" }, [
+      el("div", { class: "modal-title" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-up"/>' }),
+        "版本升级 · " + info.latest
+      ]),
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal })
+    ]);
+
+    // Body
+    var body = el("div", { class: "modal-body" });
+
+    // 路径透明化卡片
+    var pathCard = el("div", { class: "upd-path-card" });
+    var valTargetExe = el("span", { class: "upd-path-val", text: "读取中…" });
+    var btnOpenExeDir = el("button", { class: "ghost upd-path-btn", text: "📂 打开目录" });
+    var valTempDir = el("span", { class: "upd-path-val", text: "读取中…" });
+    var btnOpenTempDir = el("button", { class: "ghost upd-path-btn", text: "📂 打开缓存" });
+
+    pathCard.appendChild(el("div", { class: "upd-path-row" }, [
+      el("span", { class: "upd-path-label", text: "目标主程序" }),
+      valTargetExe,
+      btnOpenExeDir
+    ]));
+    pathCard.appendChild(el("div", { class: "upd-path-row" }, [
+      el("span", { class: "upd-path-label", text: "临时下载" }),
+      valTempDir,
+      btnOpenTempDir
+    ]));
+    body.appendChild(pathCard);
+
+    // 进度条卡片
+    var progressWrap = el("div", { class: "upd-progress-wrap" });
+    var stageLabel = el("div", { class: "upd-progress-stage", text: "正在准备下载环境…" });
+    var statsLabel = el("div", { class: "upd-progress-stats", text: "0% · 0 KB/s" });
+    var progressHeader = el("div", { class: "upd-progress-header" }, [stageLabel, statsLabel]);
+
+    var progressBar = el("div", { class: "upd-progress-bar" });
+    var progressTrack = el("div", { class: "upd-progress-track" }, [progressBar]);
+
+    var detailText = el("div", {
+      class: "upd-detail-text",
+      text: "采用安全自替换机制：直接原位写入新版 exe，下次启动即生效，期间不影响客户端会话。"
+    });
+
+    progressWrap.appendChild(progressHeader);
+    progressWrap.appendChild(progressTrack);
+    progressWrap.appendChild(detailText);
+    body.appendChild(progressWrap);
+
+    // 底部操作区
+    var foot = el("div", { class: "modal-foot", style: "justify-content:space-between" });
+    var footLeft = el("div", { style: "display:flex;align-items:center;font-size:12px;color:var(--ink-3)" });
+    var footRight = el("div", { style: "display:flex;gap:8px" });
+
+    var btnCancel = el("button", { class: "ghost", text: "后台运行", onclick: closeModal });
+    var btnQuitRestart = el("button", {
+      class: "primary ok",
+      style: "display:none;font-weight:600",
+      text: "⚡ 退出以完成更新",
+      onclick: function () {
+        btnQuitRestart.disabled = true;
+        btnQuitRestart.textContent = "正在退出…";
+        api("/api/quit", { method: "POST" }).then(function () {
+          bye();
+        }).catch(function (e) {
+          toast("退出请求失败: " + e.message, "bad");
+        });
+      }
+    });
+
+    footRight.appendChild(btnCancel);
+    footRight.appendChild(btnQuitRestart);
+    foot.appendChild(footLeft);
+    foot.appendChild(footRight);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    card.appendChild(foot);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    // 读取目标主程序路径与临时目录
+    var curTargetExe = "";
+    var curTempDir = "";
+    api("/api/update/target-info").then(function (ti) {
+      curTargetExe = ti.targetExe || "";
+      curTempDir = ti.tempDir || "";
+      valTargetExe.textContent = curTargetExe;
+      valTargetExe.title = curTargetExe;
+      valTempDir.textContent = curTempDir;
+      valTempDir.title = curTempDir;
+    }).catch(function () {
+      valTargetExe.textContent = "获取失败";
+      valTempDir.textContent = "获取失败";
+    });
+
+    btnOpenExeDir.onclick = function () {
+      if (!curTargetExe) return;
+      btnOpenExeDir.disabled = true;
+      api("/api/open-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: curTargetExe })
+      }).then(function () {
+        toast("已在系统资源管理器中定位主程序", "ok");
+      }).catch(function (e) {
+        toast("打开失败: " + e.message, "bad");
+      }).finally(function () { btnOpenExeDir.disabled = false; });
+    };
+
+    btnOpenTempDir.onclick = function () {
+      if (!curTempDir) return;
+      btnOpenTempDir.disabled = true;
+      api("/api/open-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: curTempDir })
+      }).then(function () {
+        toast("已在系统资源管理器中打开临时缓存", "ok");
+      }).catch(function (e) {
+        toast("打开失败: " + e.message, "bad");
+      }).finally(function () { btnOpenTempDir.disabled = false; });
+    };
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return "0 B";
+      var units = ["B", "KB", "MB", "GB"];
+      var i = Math.floor(Math.log(bytes) / Math.log(1024));
+      if (i >= units.length) i = units.length - 1;
+      return (bytes / Math.pow(1024, i)).toFixed(1) + " " + units[i];
+    }
+
+    // 启动流式升级
+    inProgress = true;
+    var streamUrl = "/api/update/apply-stream?assetURL=" + encodeURIComponent(info.assetURL) +
+                    "&assetName=" + encodeURIComponent(info.assetName) +
+                    "&sumsURL=" + encodeURIComponent(info.sumsURL) +
+                    "&t=" + encodeURIComponent(TOKEN);
+
+    eventStream = new EventSource(streamUrl);
+
+    eventStream.addEventListener("progress", function (e) {
+      try {
+        var ev = JSON.parse(e.data);
+        var pct = Math.max(0, Math.min(100, Math.round(ev.percent || 0)));
+        progressBar.style.width = pct + "%";
+
+        if (ev.targetExe && !curTargetExe) {
+          curTargetExe = ev.targetExe;
+          valTargetExe.textContent = curTargetExe;
+          valTargetExe.title = curTargetExe;
+        }
+        if (ev.tempDir && !curTempDir) {
+          curTempDir = ev.tempDir;
+          valTempDir.textContent = curTempDir;
+          valTempDir.title = curTempDir;
+        }
+
+        switch (ev.phase) {
+        case "init":
+          stageLabel.textContent = "准备连接更新源…";
+          statsLabel.textContent = "0%";
+          break;
+        case "downloading":
+          var dStr = formatBytes(ev.downloaded);
+          var tStr = ev.total > 0 ? formatBytes(ev.total) : "未知";
+          var spd = ev.speed || "0 KB/s";
+          stageLabel.textContent = "正在下载更新包 (" + dStr + " / " + tStr + ")…";
+          statsLabel.textContent = pct + "% · " + spd;
+          break;
+        case "verifying":
+          stageLabel.textContent = "正在校验 SHA256 官方指纹…";
+          statsLabel.textContent = pct + "%";
+          break;
+        case "extracting":
+          stageLabel.textContent = "正在解压更新包…";
+          statsLabel.textContent = pct + "%";
+          break;
+        case "replacing":
+          stageLabel.textContent = "正在执行原位安全替换…";
+          statsLabel.textContent = pct + "%";
+          break;
+        default:
+          if (ev.message) stageLabel.textContent = ev.message;
+        }
+      } catch (err) {
+        console.error("解析进度失败:", err);
+      }
+    });
+
+    eventStream.addEventListener("done", function (e) {
+      inProgress = false;
+      isDone = true;
+      if (eventStream) {
+        eventStream.close();
+        eventStream = null;
+      }
+      progressBar.style.width = "100%";
+      progressBar.className = "upd-progress-bar done";
+      stageLabel.innerHTML = '<span style="color:#10b981">🎉 升级已就位 (' + info.latest + ')</span>';
+      statsLabel.textContent = "100%";
+      detailText.innerHTML = '新版本程序已成功原位替换。从托盘退出或点击右下角按钮退出 wbmux，<b>再次启动</b>即可运行新版。<br>运行中的国内客户端无需重启。';
+
+      footLeft.innerHTML = '<span class="pill ok">替换成功</span>';
+      btnCancel.textContent = "稍后自行重启";
+      btnQuitRestart.style.display = "inline-flex";
+
+      var sideBtn = document.getElementById("btn-update");
+      if (sideBtn) {
+        sideBtn.textContent = "已就位 " + info.latest;
+        sideBtn.disabled = true;
+      }
+      var sideMsg = document.getElementById("side-msg");
+      if (sideMsg) sideMsg.textContent = "重启生效";
+      toast("升级已就位，重启即可生效", "ok");
+    });
+
+    eventStream.addEventListener("error", function (e) {
+      var errMsg = "升级失败，请检查网络";
+      if (e.data) {
+        try {
+          var data = JSON.parse(e.data);
+          if (data.error) errMsg = data.error;
+        } catch (_) {}
+      }
+      handleFail(errMsg);
+    });
+
+    eventStream.onerror = function () {
+      if (!isDone) {
+        handleFail("网络连接中断或服务异常");
+      }
+    };
+
+    function handleFail(msg) {
+      inProgress = false;
+      if (eventStream) {
+        eventStream.close();
+        eventStream = null;
+      }
+      progressBar.className = "upd-progress-bar error";
+      stageLabel.innerHTML = '<span style="color:#ef4444">❌ 升级失败</span>';
+      statsLabel.textContent = "失败";
+      detailText.textContent = "错误详情: " + msg;
+      footLeft.innerHTML = '<span class="pill bad">错误</span>';
+      btnCancel.textContent = "关闭";
+      var btnRetry = el("button", {
+        class: "primary",
+        text: "🔄 重试",
+        onclick: function () {
+          closeModal();
+          showUpdateModal(info);
+        }
+      });
+      footRight.innerHTML = "";
+      footRight.appendChild(btnCancel);
+      footRight.appendChild(btnRetry);
+      toast(msg, "bad");
+    }
+  }
 
   // 生命周期事件流：服务端一退（托盘退出/关闭界面/进程被杀），连接立刻断，
   // 页面先谢幕再尝试自关——--app 模式的窗口允许 window.close()；普通标签页
