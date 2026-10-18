@@ -20,6 +20,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
+	"github.com/HMuSeaB/wbmux/internal/modelradar"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -116,13 +117,29 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 		}
 	}
 
+	normalized := normalizeModelName(m)
+	if isAutoFreeAlias(normalized) {
+		fastest, _ := modelradar.Default().FastestFreeModel("deepseek-chat")
+		return upstreamRoute{
+			Label: "智能最速限免",
+			Model: fastest,
+		}
+	}
+
 	// 认不出来 → 内置国际后端（外部工具直连时用的就是官方 id，
 	// 也可能带着我们注入的 wbmux-intl- 前缀，交给 normalizeModelName 剥）。
 	return upstreamRoute{
 		Label: "国际后端",
-		Model: normalizeModelName(m),
+		Model: normalized,
 	}
 }
+
+// isAutoFreeAlias 检查模型名是否属于虚拟智能优选别名。
+func isAutoFreeAlias(m string) bool {
+	lower := strings.ToLower(strings.TrimSpace(m))
+	return lower == "auto" || lower == "auto-free" || lower == "fastest-free" || lower == "auto-fastest"
+}
+
 
 // normalizeModelName 把客户端送来的模型名还原成官方 id。
 //
@@ -301,7 +318,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusServiceUnavailable, msg)
 		return
 	}
-	data := make([]map[string]any, 0, len(live.Models))
+	data := make([]map[string]any, 0, len(live.Models)+2)
 	for _, m := range live.Models {
 		owned := "workbuddy-ai"
 		if m.FreeNow {
@@ -311,6 +328,14 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 			"id": m.ID, "object": "model", "owned_by": owned,
 		})
 	}
+	// 智能优选虚拟模型：自动分发至当前延迟最低且健康的限免模型
+	data = append(data, map[string]any{
+		"id": "auto-free", "object": "model", "owned_by": "wbmux:auto-routing",
+	})
+	data = append(data, map[string]any{
+		"id": "auto", "object": "model", "owned_by": "wbmux:auto-routing",
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"object": "list", "data": data,
@@ -631,7 +656,15 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			}
 		}
 
-		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		msg := upstreamMessage(body)
+		isModelBusy := strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
+
+		if isModelBusy {
+			msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
+		}
+
+		if !isModelBusy && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
 			// 查询当前活跃账号
 			accs, _ := credential.ListAccounts(s.probe(), variant.Intl)
 			var currentActiveID string
@@ -651,7 +684,7 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 					s.note(ProxyLogEntry{
 						Level: "warn",
 						Model: route.Model,
-						Text:  fmt.Sprintf("上游触发 429 限流/配额用尽，自动故障转移至备用账号：%s (%s) 并重发 (第 %d 次重试)", nextAcc.Nickname, nextAcc.UID, attempt+1),
+						Text:  fmt.Sprintf("上游触发 429 账号限流/配额用尽，自动故障转移至备用账号：%s (%s) 并重发 (第 %d 次重试)", nextAcc.Nickname, nextAcc.UID, attempt+1),
 					})
 					usage.InvalidateLiveCache(variant.Intl)
 					reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
@@ -704,8 +737,6 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			}
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-		msg := upstreamMessage(body)
 		s.observe(route.Model, resp.StatusCode, msg)
 		level, verdict := "bad", "拒绝"
 		if resp.StatusCode >= 500 {

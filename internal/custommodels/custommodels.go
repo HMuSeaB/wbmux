@@ -172,6 +172,28 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 	// 注入国际模型：限时免费模型自动注入；自选付费模型（在 selectedSet 中）同时注入。
 	added := 0
 	injectedIDs := make(map[string]bool)
+
+	// 若用户勾选了 auto / auto-free 虚拟模型，注入智能最速限免条目
+	if selectedSet["auto"] || selectedSet["auto-free"] {
+		entry := map[string]any{
+			"id":                IDPrefix + "auto",
+			"name":              "⚡ 最速限免智能优选 (Auto-Free)",
+			"vendor":            "Custom",
+			"url":               chatURL,
+			"apiKey":            apiKey,
+			"useCustomProtocol": true,
+			"onlyReasoning":     false,
+			"supportsToolCall":  true,
+			"supportsImages":    true,
+			"contextWindow":     1000000,
+			"maxInputTokens":    1000000,
+			"maxOutputTokens":   64000,
+		}
+		kept = append(kept, entry)
+		injectedIDs["auto"] = true
+		added++
+	}
+
 	for _, m := range intl {
 		isFree := m.FreeNow
 		isSelected := selectedSet[strings.ToLower(m.ID)]
@@ -315,6 +337,9 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 // 的分叉——那正是清空事故的成因。国际侧看 FreeNow 或在 selectedSet 中，
 // 自备侧看是否有非空模型名。
 func hasAnythingToInject(intl []usage.LiveModel, providers []config.Provider, selectedSet map[string]bool) bool {
+	if selectedSet != nil && (selectedSet["auto"] || selectedSet["auto-free"]) {
+		return true
+	}
 	for _, m := range intl {
 		if m.FreeNow || (selectedSet != nil && selectedSet[strings.ToLower(m.ID)]) {
 			return true
@@ -416,3 +441,14 @@ func parseModelsJSON(raw []byte) ([]map[string]any, bool) {
 	}
 	return nil, false
 }
+
+// hasAnyFreeModel 检查当前国际模型列表中是否存在至少一个 0.00x 限免模型。
+func hasAnyFreeModel(intl []usage.LiveModel) bool {
+	for _, m := range intl {
+		if m.FreeNow {
+			return true
+		}
+	}
+	return false
+}
+

@@ -563,3 +563,38 @@ func TestSyncSelectedIntlDeduplication(t *testing.T) {
 	}
 }
 
+// TestSyncAutoFreeModelInjection 验证当 selectedIntl 包含 auto 时，成功注入智能最速限免虚拟条目。
+func TestSyncAutoFreeModelInjection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "models.json")
+
+	intl := []usage.LiveModel{
+		{ID: "deepseek-chat", Name: "DeepSeek V3", FreeNow: true, Rate: 0.0},
+	}
+
+	added, err := Sync(path, "http://127.0.0.1:8817/v1/chat/completions", "gui-token", intl, nil, []string{"auto"})
+	if err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+	if added != 2 {
+		t.Fatalf("应注入 1 个常规免费模型 + 1 个 auto 虚拟模型，得到 %d", added)
+	}
+
+	raw := mustRead(t, path)
+	list := mustParse(t, raw)
+	foundAuto := false
+	for _, m := range list {
+		if m["id"] == IDPrefix+"auto" {
+			foundAuto = true
+			if m["name"] != "⚡ 最速限免智能优选 (Auto-Free)" {
+				t.Errorf("auto 条目名称不符: %v", m["name"])
+			}
+			break
+		}
+	}
+	if !foundAuto {
+		t.Errorf("未在注入列表中找到 %s 条目", IDPrefix+"auto")
+	}
+}
+
+

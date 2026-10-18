@@ -220,8 +220,9 @@ func SaveAccount(p *variant.Probe, side variant.ID, acc Account, setAsActive boo
 		return nil, err
 	}
 
-	// 若激活该账号，原子同步写入官方凭据文件
-	if setAsActive && p != nil {
+	// 若激活该账号，原子同步写入官方凭据文件。
+	// 安全防护：真实客户端 Token 为长 JWT（通常上千字符），拦截短测试桩或异常数据，防止误登出客户端。
+	if setAsActive && p != nil && (strings.HasPrefix(acc.Token, "eyJ") || len(acc.Token) >= 30) {
 		cred := Credential{
 			Token:              acc.Token,
 			RefreshToken:       acc.RefreshToken,
@@ -267,7 +268,8 @@ func SwitchAccount(p *variant.Probe, side variant.ID, accountID string) (*Accoun
 		return nil, err
 	}
 
-	if p != nil {
+	// 安全防护：仅当 Token 符合 JWT/正常格式时才写出至官方客户端
+	if p != nil && (strings.HasPrefix(target.Token, "eyJ") || len(target.Token) >= 30) {
 		cred := Credential{
 			Token:              target.Token,
 			RefreshToken:       target.RefreshToken,

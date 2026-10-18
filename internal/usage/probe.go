@@ -42,14 +42,16 @@ type ChatProbeResult struct {
 	Delta          string `json:"delta,omitempty"`
 }
 
-// pickProbeModel 挑测试模型：限时免费 > 0 倍率 > 最低倍率。
-// 返回空串表示清单里没有任何可安全测试的模型。
-func pickProbeModel(models []LiveModel) string {
+// pickProbeCandidates 挑候选测试模型列表：所有限时免费 > 0 倍率 > 最低倍率。
+// 返回空切片表示清单里没有任何可安全测试的模型。
+func pickProbeCandidates(models []LiveModel) []string {
+	var freeNows []string
 	var zero, cheapest string
 	cheapestRate := -1.0
 	for _, m := range models {
 		if m.FreeNow {
-			return m.ID // 限时免费：零成本且明确，直接用
+			freeNows = append(freeNows, m.ID)
+			continue
 		}
 		if m.Rate == 0 && zero == "" {
 			zero = m.ID
@@ -60,10 +62,26 @@ func pickProbeModel(models []LiveModel) string {
 			}
 		}
 	}
-	if zero != "" {
-		return zero
+	if len(freeNows) > 0 {
+		return freeNows
 	}
-	return cheapest
+	if zero != "" {
+		return []string{zero}
+	}
+	if cheapest != "" {
+		return []string{cheapest}
+	}
+	return nil
+}
+
+// pickProbeModel 挑首选测试模型：限时免费 > 0 倍率 > 最低倍率。
+// 返回空串表示清单里没有任何可安全测试的模型。
+func pickProbeModel(models []LiveModel) string {
+	cands := pickProbeCandidates(models)
+	if len(cands) > 0 {
+		return cands[0]
+	}
+	return ""
 }
 
 // 2026-10-16 官方国际版新增严格渠道校验，缺失整套身份头会报 HTTP 400 code 11128
@@ -124,7 +142,12 @@ func sendProbeMessage(endpoint string, cred credential.Credential, id variant.ID
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 160))
+		rawStr := string(raw)
+		if strings.Contains(rawStr, "14003") || strings.Contains(strings.ToLower(rawStr), "model busy") {
+			err = fmt.Errorf("HTTP 429 [官方该模型算力繁忙 Model Busy，非账号额度问题]: %s", truncate(rawStr, 140))
+		} else {
+			err = fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(rawStr, 160))
+		}
 		return
 	}
 	// SSE 解析：data: {...} 行，[DONE] 结束。
@@ -231,24 +254,31 @@ func SendChatProbe(probe *variant.Probe, id variant.ID) *ChatProbeResult {
 		res.Err = "拉模型清单失败：" + err.Error()
 		return res
 	}
-	model := pickProbeModel(models)
-	if model == "" {
+	candidates := pickProbeCandidates(models)
+	if len(candidates) == 0 {
 		res.Err = "清单里没有可安全测试的模型（避免盲选计费模型），未发送"
 		return res
 	}
 
-	served, reply, ptok, ctok, credit, err := sendProbeMessage(endpoint, cred, id, model)
-	if err != nil {
-		res.Err = err.Error()
-		res.Model = model
-		return res
+	for i, candModel := range candidates {
+		served, reply, ptok, ctok, credit, err := sendProbeMessage(endpoint, cred, id, candModel)
+		if err != nil {
+			res.Err = err.Error()
+			res.Model = candModel
+			// 若遇到 429 算力过载且仍有备用候选模型，自动尝试下一个
+			if (strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "14003") || strings.Contains(err.Error(), "Model Busy")) && i < len(candidates)-1 {
+				continue
+			}
+			return res
+		}
+		res.OK = true
+		res.Model = served
+		res.Reply = truncate(strings.TrimSpace(reply), 60)
+		res.PromptTok = ptok
+		res.CompletionTok = ctok
+		res.Credit = credit
+		break
 	}
-	res.OK = true
-	res.Model = served
-	res.Reply = truncate(strings.TrimSpace(reply), 60)
-	res.PromptTok = ptok
-	res.CompletionTok = ctok
-	res.Credit = credit
 
 	if after, err := fetchLivePackages(endpoint, cred); err == nil {
 		res.Delta = packagesDelta(before, after)

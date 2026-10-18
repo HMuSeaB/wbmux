@@ -279,6 +279,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/update/apply", s.guard(s.handleUpdateApply))
 	mux.HandleFunc("/api/gateway/stats", s.guard(s.handleGatewayStats))
 	mux.HandleFunc("/api/gateway/clear", s.guard(s.handleGatewayClear))
+	mux.HandleFunc("/api/model-radar/status", s.guard(s.handleModelRadarStatus))
+	mux.HandleFunc("/api/model-radar/ping", s.guard(s.handleModelRadarPing))
 	mux.HandleFunc("/api/shortcut", s.guard(s.handleShortcut))
 	mux.HandleFunc("/api/usage", s.guard(s.handleUsage))
 	mux.HandleFunc("/api/sessions", s.guard(s.handleSessionsAPI))

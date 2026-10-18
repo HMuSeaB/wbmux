@@ -477,6 +477,83 @@
     font-size: 11.5px; color: var(--ink-3); display: flex; align-items: center; gap: 6px;
   }
 
+  /* ---------- 连通性雷达样式 ---------- */
+  .mfold-radar-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 7px 12px; margin-bottom: 8px;
+    background: linear-gradient(135deg, rgba(99, 179, 196, 0.08) 0%, rgba(25, 27, 31, 0.6) 100%);
+    border: 1px solid rgba(99, 179, 196, 0.22);
+    border-radius: var(--r-sm);
+    font-size: 11.5px;
+  }
+  .mfold-radar-info {
+    display: flex; align-items: center; gap: 8px; color: var(--ink-2); flex-wrap: wrap;
+  }
+  .btn-radar-ping {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; font-size: 11px; font-weight: 600;
+    border-radius: 4px; border: 1px solid rgba(99, 179, 196, 0.35);
+    background: var(--g1); color: var(--brand);
+    cursor: pointer; transition: all .15s cubic-bezier(0.16, 1, 0.3, 1);
+    white-space: nowrap; flex: none;
+  }
+  .btn-radar-ping:hover {
+    background: rgba(99, 179, 196, 0.15);
+    border-color: var(--brand);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(99, 179, 196, 0.2);
+  }
+  .btn-radar-ping:disabled {
+    opacity: 0.6; cursor: wait; transform: none; box-shadow: none;
+  }
+  .radar-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px; font-size: 10px; font-family: var(--mono);
+    border-radius: 10px; border: 1px solid transparent;
+    cursor: pointer; transition: all .12s ease;
+    user-select: none; flex: none; line-height: 1.4;
+  }
+  .radar-pill:hover {
+    filter: brightness(1.2);
+    transform: scale(1.03);
+  }
+  .radar-pill.fast {
+    background: rgba(74, 157, 106, 0.15);
+    border-color: rgba(74, 157, 106, 0.35);
+    color: var(--ok);
+  }
+  .radar-pill.normal {
+    background: rgba(91, 141, 214, 0.12);
+    border-color: rgba(91, 141, 214, 0.3);
+    color: #93c5fd;
+  }
+  .radar-pill.slow {
+    background: rgba(184, 134, 59, 0.15);
+    border-color: rgba(184, 134, 59, 0.35);
+    color: var(--warn);
+  }
+  .radar-pill.down {
+    background: rgba(194, 85, 80, 0.15);
+    border-color: rgba(194, 85, 80, 0.35);
+    color: var(--bad);
+  }
+  .radar-pill.untested {
+    background: var(--g3);
+    border-color: var(--g4);
+    color: var(--ink-3);
+  }
+  .radar-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; display: inline-block;
+  }
+  .radar-spinning {
+    animation: radar-spin 1s linear infinite;
+  }
+  @keyframes radar-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
   /* ---------- 改动清单表格 ---------- */
   table.changes { width: 100%; border-collapse: collapse; font-size: 12px; }
   table.changes th {
@@ -1222,7 +1299,7 @@
           </div>
         </div>
         <div class="hero-desc">
-          将国际端限时免费的顶级模型（DeepSeek-V4.1-Flash / Hy4 preview 等 0.00x 费率）一键注入国内客户端自定义模型清单。<br>
+          将国际端限时免费的顶级模型（DeepSeek-V4.1-Flash / Step-5-Preview / Hy3 等 0.00x 费率）一键注入国内客户端自定义模型清单。<br>
           国内客户端继续使用小程序远程控制，同时零成本享受国际大模型。注入后点击重启客户端即可生效。
         </div>
         <div class="hero-actions">
@@ -1255,7 +1332,7 @@
     <details class="fold" style="margin-bottom:10px">
       <summary>三种用法、怎么分清当前窗口、扣哪个额度</summary>
       <div class="desc" style="margin-top:6px">
-        <div>① <b>同时用两个（推荐）</b>：目标后端区块点「双开两侧」——国内客户端管小程序远程控制+国内额度；国际客户端用国际模型+国际额度。想不花钱：国际侧 DeepSeek-V4.1-Flash / Hy4 preview / Hy3 限时免费（0.00x）到 10 月上旬。</div>
+        <div>① <b>同时用两个（推荐）</b>：目标后端区块点「双开两侧」——国内客户端管小程序远程控制+国内额度；国际客户端用国际模型+国际额度。想不花钱：国际侧 DeepSeek-V4.1-Flash / Step-5-Preview / Hy3 官方限时免费（0.00x）。</div>
         <div>② <b>切换（宿主壳子连国际）</b>：<span style="color:var(--bad)">5.6.2 宿主实测会静默回落国内</span>——界面显示已选国际，实际扣的还是国内额度。别用，等会话切换方案。</div>
         <div>③ <b>分清当前窗口</b>：标题/任务栏 WorkBuddy=国内、WorkBuddy AI=国际；模型清单有 Primary/极致/GPT-6-Astra=国际，有"夜间折扣"=国内。</div>
         <div>④ <b>一键测试</b>：这个按钮两侧各发一条最小消息并对比账单，直接告诉你走哪个模型、扣哪边多少积分（自动挑免费模型）。</div>
@@ -1733,6 +1810,128 @@
   var nativeMode = false;
   var busy = false;
   var selectedIntlModels = [];
+
+  // ---------- 连通性雷达状态池 ----------
+  var radarRecordsMap = {};
+  var fastestFreeModelId = "";
+  var hasHealthyFreeModel = false;
+  var radarLoading = false;
+
+  function loadModelRadar(silent, callback) {
+    api("/api/model-radar/status")
+      .then(function (res) {
+        if (res && res.records) {
+          res.records.forEach(function (r) {
+            if (r && r.model) radarRecordsMap[String(r.model).toLowerCase()] = r;
+          });
+        }
+        if (res && res.fastestFreeModel) fastestFreeModelId = res.fastestFreeModel;
+        if (res && res.hasHealthyFree !== undefined) hasHealthyFreeModel = res.hasHealthyFree;
+        if (callback) callback();
+      }).catch(function () {});
+  }
+
+  function pingAllFreeRadar(btnEl) {
+    if (radarLoading) return;
+    radarLoading = true;
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.innerHTML = '<span class="radar-spinning">' + ICO("reload", "ico-sm") + '</span> 测速中…';
+    }
+
+    api("/api/model-radar/ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    }).then(function (res) {
+      radarLoading = false;
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = ICO("scan", "ico-sm") + " 一键测速全部";
+      }
+      if (res && res.records) {
+        res.records.forEach(function (r) {
+          if (r && r.model) radarRecordsMap[String(r.model).toLowerCase()] = r;
+        });
+      }
+      if (res && res.fastestFreeModel) fastestFreeModelId = res.fastestFreeModel;
+      if (res && res.hasHealthyFree !== undefined) hasHealthyFreeModel = res.hasHealthyFree;
+      var fastestName = fastestFreeModelId ? prettyModel(fastestFreeModelId) : "完成";
+      toast("全量限免模型测速完成！当前推荐最速：" + fastestName, "ok");
+      renderUsage();
+    }).catch(function (err) {
+      radarLoading = false;
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = ICO("scan", "ico-sm") + " 一键测速全部";
+      }
+      toast("批量测速失败：" + err.message, "bad");
+    });
+  }
+
+  function renderModelRadarPill(modelId) {
+    var mid = String(modelId || "").toLowerCase();
+    var rec = radarRecordsMap[mid];
+    var pillClass = "untested";
+    var pillHtml = '<span class="radar-dot"></span> 未测速';
+    var tip = "点击对该模型进行即时单点测速";
+
+    if (rec) {
+      if (rec.status === "fast") {
+        pillClass = "fast";
+        pillHtml = '<span class="radar-dot"></span> ' + (rec.ttftMs || 0) + 'ms 极速';
+        tip = "首字延迟 " + rec.ttftMs + "ms · 连通畅快（点击重测）";
+      } else if (rec.status === "normal") {
+        pillClass = "normal";
+        pillHtml = '<span class="radar-dot"></span> ' + (rec.ttftMs || 0) + 'ms 正常';
+        tip = "首字延迟 " + rec.ttftMs + "ms · 正常连通（点击重测）";
+      } else if (rec.status === "slow") {
+        pillClass = "slow";
+        pillHtml = '<span class="radar-dot"></span> ' + (rec.ttftMs || 0) + 'ms 延迟';
+        tip = "首字延迟 " + rec.ttftMs + "ms · 响应偏慢（点击重测）";
+      } else if (rec.status === "down") {
+        pillClass = "down";
+        pillHtml = '<span class="radar-dot"></span> ' + (rec.statusCode ? rec.statusCode + " 异常" : "不可达");
+        tip = (rec.errorMsg || "上游超时或不可达") + "（点击重试）";
+      }
+    }
+
+    var pill = el("span", {
+      class: "radar-pill " + pillClass,
+      html: pillHtml,
+      title: tip
+    });
+
+    pill.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (pill.getAttribute("data-loading")) return;
+      pill.setAttribute("data-loading", "true");
+      pill.innerHTML = '<span class="radar-spinning">' + ICO("reload", "ico-sm") + '</span> 测速中…';
+
+      api("/api/model-radar/ping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelId })
+      }).then(function (res) {
+        pill.removeAttribute("data-loading");
+        if (res && res.records && res.records.length) {
+          var r = res.records[0];
+          if (r && r.model) radarRecordsMap[String(r.model).toLowerCase()] = r;
+        }
+        if (res && res.fastestFreeModel) fastestFreeModelId = res.fastestFreeModel;
+        if (res && res.hasHealthyFree !== undefined) hasHealthyFreeModel = res.hasHealthyFree;
+        var latencyStr = (res && res.records && res.records[0] && res.records[0].ttftMs) ? res.records[0].ttftMs + "ms" : "完成";
+        toast("已完成 " + prettyModel(modelId) + " 探针测速（" + latencyStr + "）", "ok");
+        renderUsage();
+      }).catch(function (err) {
+        pill.removeAttribute("data-loading");
+        toast("测速失败：" + err.message, "bad");
+        renderUsage();
+      });
+    });
+
+    return pill;
+  }
 
   function isIntlModelSelected(modelId) {
     if (!modelId) return false;
@@ -4850,6 +5049,28 @@
       statLabel = el("div", { class: "mfold-stats" });
       toolbar.appendChild(statLabel);
       details.appendChild(toolbar);
+
+      // 📡 连通性测速雷达控制条
+      var radarBar = el("div", { class: "mfold-radar-bar" });
+      var radarInfo = el("div", { class: "mfold-radar-info" });
+      radarInfo.appendChild(el("span", { class: "pulse-dot" }));
+      var fastestLabel = fastestFreeModelId
+        ? ("⚡ 当前实测最速限免: " + prettyModel(fastestFreeModelId) + (radarRecordsMap[fastestFreeModelId.toLowerCase()] ? " (" + radarRecordsMap[fastestFreeModelId.toLowerCase()].ttftMs + "ms)" : ""))
+        : "⚡ 连通性雷达已就绪 · 点击一键测速";
+      radarInfo.appendChild(el("span", { style: "font-weight:600;color:var(--ink-1)", text: fastestLabel }));
+      radarBar.appendChild(radarInfo);
+
+      var btnPingAll = el("button", {
+        type: "button",
+        class: "btn-radar-ping",
+        html: ICO("scan", "ico-sm") + " 一键测速全部",
+        title: "并发向所有限免大模型发送 1-Token 测试探针，毫秒级测算首字延迟 (TTFT)"
+      });
+      btnPingAll.addEventListener("click", function () {
+        pingAllFreeRadar(btnPingAll);
+      });
+      radarBar.appendChild(btnPingAll);
+      details.appendChild(radarBar);
     }
 
     list.forEach(function (r) {
@@ -4878,6 +5099,8 @@
         if (r.tools) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "Agent工具" }));
         if (r.images) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "多模态" }));
         if (r.maxOutput) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "单次" + Math.round(r.maxOutput / 1000) + "K" }));
+        // 挂接单模型实时雷达测速胶囊
+        capsWrap.appendChild(renderModelRadarPill(r.id));
         foot.appendChild(capsWrap);
 
         if (isFree) {
@@ -5292,7 +5515,22 @@
 
     // 🔥 限时免费大模型挂件专区 (Featured Promos)
     var promoSec = el("div", {});
-    promoSec.appendChild(el("div", { class: "dash-sec-title", text: "限时免费大模型 (0.00x)" }));
+    var promoTitleRow = el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px" }, [
+      el("div", { class: "dash-sec-title", style: "margin:0", text: "限时免费大模型 (0.00x)" }),
+      el("button", {
+        type: "button",
+        class: "btn-radar-ping",
+        style: "padding:2px 8px;font-size:10.5px",
+        html: ICO("scan", "ico-sm") + " 测速雷达",
+        title: "轻量测试当前所有限免模型的真实连通性与响应速度",
+        onclick: function (e) {
+          e.preventDefault();
+          pingAllFreeRadar(this);
+        }
+      })
+    ]);
+    promoSec.appendChild(promoTitleRow);
+
     var promoList = el("div", { class: "promo-list" });
     if (!promoItems.length) {
       promoList.appendChild(el("div", { class: "hint", text: "当前无官方限免公告" }));
@@ -5303,12 +5541,19 @@
         var countdownTxt = d !== null && d >= 0 ? ("⏳ 剩 " + d + " 天") : (p.validUntil ? freeUntil(p.validUntil) : "限时免费");
         var modelNames = (p.modelIds || []).map(function (m) { return prettyModel(m); }).join(" / ") || (p.label || "特惠模型");
 
+        var primaryId = (p.modelIds && p.modelIds[0]) || "";
+        var itemRight = el("div", { style: "display:flex;align-items:center;gap:6px" });
+        if (primaryId) {
+          itemRight.appendChild(renderModelRadarPill(primaryId));
+        }
+        itemRight.appendChild(el("span", { class: "promo-countdown" + (isUrgent ? " urgent" : ""), text: countdownTxt }));
+
         promoList.appendChild(el("div", { class: "promo-item", title: p.textZh || "" }, [
           el("div", { class: "promo-model" }, [
             el("span", { class: "promo-free-tag", text: "0.00x" }),
             el("span", { text: modelNames })
           ]),
-          el("span", { class: "promo-countdown" + (isUrgent ? " urgent" : ""), text: countdownTxt })
+          itemRight
         ]));
       });
     }
@@ -5342,7 +5587,7 @@
     apiGrid.appendChild(el("div", { class: "api-val", text: "GET " + location.origin + "/v1/models" }));
     apiCard.appendChild(apiGrid);
     apiCard.appendChild(el("div", { class: "hint", style: "margin-top:8px",
-      text: "仅转发国际侧模型；限时免费：DeepSeek-V4.1-Flash / Hy4 preview / Hy3，零成本直接接入任意 AI 客户端。" }));
+      text: "仅转发国际侧模型；限时免费：DeepSeek-V4.1-Flash / Step-5-Preview / Hy3，零成本直接接入任意 AI 客户端。" }));
     box.appendChild(apiCard);
 
     // ④ 排障参考与历史记录：收进底部折叠
@@ -5552,6 +5797,8 @@
 
     // 状态拉取成功后，强制无阻塞拉取双端资产与额度，确保 selectedIntlModels 完美应用到卡片渲染中
     loadUsage(true, true);
+    // 异步拉取模型连通性雷达快照
+    loadModelRadar(true);
 
     // 每日签到同样在**打开界面时**就跑，不要求用户切到那个 tab。
     //
