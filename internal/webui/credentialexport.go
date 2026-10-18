@@ -35,41 +35,48 @@ func (s *Server) handleCredentialExport(w http.ResponseWriter, r *http.Request) 
 	isDownload := r.URL.Query().Get("download") == "true"
 	targetAccountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
 
-	// 1. 尝试从多账号保险库读取
 	accs, _ := credential.ListAccounts(s.probe(), targetID)
-	var activeAcc *credential.Account
 
-	if targetAccountID != "" && targetAccountID != "active" {
-		for i := range accs {
-			if accs[i].ID == targetAccountID {
-				activeAcc = &accs[i]
-				break
-			}
-		}
-	} else {
-		for i := range accs {
-			if accs[i].Active {
-				activeAcc = &accs[i]
-				break
-			}
-		}
-	}
-
-	// 2. 若多账号库未命中，直接探测官方客户端凭据
+	// 1. 若导出当前活跃账号（未显式指定 account_id），权威源首选官方客户端当前真实活跃凭据！
+	native, nativeErr := credential.Resolve(s.probe(), targetID)
 	token, refToken, uid, nickname, domain := "", "", "", "", ""
 	var expiresAtMs, refExpiresAtMs int64
 
-	if activeAcc != nil && activeAcc.Token != "" {
-		token = activeAcc.Token
-		refToken = activeAcc.RefreshToken
-		uid = activeAcc.UID
-		nickname = activeAcc.Nickname
-		domain = activeAcc.Domain
-		expiresAtMs = activeAcc.ExpiresAt
-		refExpiresAtMs = activeAcc.RefreshExpiresAt
+	if (targetAccountID == "" || targetAccountID == "active") && nativeErr == nil && native.Token != "" {
+		token = native.Token
+		refToken = native.RefreshToken
+		uid = native.UID
+		nickname = native.Nickname
+		domain = native.Domain
+		expiresAtMs = native.ExpiresAtMs
+		refExpiresAtMs = native.RefreshExpiresAtMs
 	} else {
-		native, err := credential.Resolve(s.probe(), targetID)
-		if err == nil && native.Token != "" {
+		// 2. 从多账号保险库中查找指定账号
+		var matchedAcc *credential.Account
+		if targetAccountID != "" && targetAccountID != "active" {
+			for i := range accs {
+				if accs[i].ID == targetAccountID {
+					matchedAcc = &accs[i]
+					break
+				}
+			}
+		} else {
+			for i := range accs {
+				if accs[i].Active {
+					matchedAcc = &accs[i]
+					break
+				}
+			}
+		}
+		if matchedAcc != nil && matchedAcc.Token != "" {
+			token = matchedAcc.Token
+			refToken = matchedAcc.RefreshToken
+			uid = matchedAcc.UID
+			nickname = matchedAcc.Nickname
+			domain = matchedAcc.Domain
+			expiresAtMs = matchedAcc.ExpiresAt
+			refExpiresAtMs = matchedAcc.RefreshExpiresAt
+		} else if nativeErr == nil && native.Token != "" {
 			token = native.Token
 			refToken = native.RefreshToken
 			uid = native.UID

@@ -114,7 +114,7 @@ func listAccountsLocked(p *variant.Probe, side variant.ID) ([]Account, error) {
 	// 零配置平滑迁移：若账号库为空，自动检查官方当前已有凭据
 	if len(list) == 0 && p != nil {
 		curr, err := Read(p, side)
-		if err == nil && curr.Token != "" {
+		if err == nil && curr.Token != "" && (strings.HasPrefix(curr.Token, "eyJ") || len(curr.Token) >= 30) {
 			name := curr.Nickname
 			if name == "" {
 				name = "默认账号"
@@ -334,6 +334,7 @@ func saveListLocked(side variant.ID, list []Account) error {
 	if err != nil {
 		return err
 	}
+	config.GuardRealWrite(fpath)
 	raw, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
