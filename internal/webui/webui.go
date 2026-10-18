@@ -303,6 +303,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
 	mux.HandleFunc("/api/telemetry", s.guard(s.handleTelemetry))
 	mux.HandleFunc("/api/credentials/import", s.guard(s.handleCredentialImport))
+	mux.HandleFunc("/api/credentials/export", s.guard(s.handleCredentialExport))
 	mux.HandleFunc("/api/accounts/list", s.guard(s.handleAccountsList))
 	mux.HandleFunc("/api/accounts/switch", s.guard(s.handleAccountSwitch))
 	mux.HandleFunc("/api/accounts/delete", s.guard(s.handleAccountDelete))

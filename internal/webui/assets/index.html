@@ -1327,7 +1327,12 @@
   <section id="usage-sec">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <h2 style="margin:0"><svg class="ico-sm" aria-hidden="true"><use href="#i-gauge"/></svg>额度与计费</h2>
-      <button class="ghost" id="btn-usage-scan" style="padding:4px 10px;font-size:12px"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>刷新额度</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="ghost" id="btn-export-cred" style="padding:4px 10px;font-size:12px;color:var(--accent);border-color:rgba(var(--accent-rgb),0.35)" title="安全导出/备份国际版凭据 (Token / 灾备 JSON 备份)">
+          <svg class="ico ico-sm" aria-hidden="true"><use href="#i-down"/></svg> 导出国际版凭据
+        </button>
+        <button class="ghost" id="btn-usage-scan" style="padding:4px 10px;font-size:12px"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>刷新额度</button>
+      </div>
     </div>
     <details class="fold" style="margin-bottom:10px">
       <summary>三种用法、怎么分清当前窗口、扣哪个额度</summary>
@@ -4395,7 +4400,18 @@
         el("svg", { class: "ico ico-sm", html: '<use href="#i-check"/>' }),
         "切换后，无缝模型注入与遥测心跳将即刻自动生效。"
       ]),
-      el("div", { style: "display:flex;gap:8px" }, [btnAdd, btnClose])
+      el("div", { style: "display:flex;gap:8px" }, [
+        el("button", {
+          class: "ghost",
+          style: "padding:5px 12px;font-size:12px;color:var(--accent);border-color:rgba(var(--accent-rgb),0.35)",
+          text: "🛡️ 导出/备份凭据",
+          onclick: function () {
+            showCredentialExportModal(side);
+          }
+        }),
+        btnAdd,
+        btnClose
+      ])
     ]);
 
     card.appendChild(head);
@@ -4415,6 +4431,154 @@
     document.body.appendChild(overlay);
     overlay.offsetHeight;
     overlay.classList.add("open");
+  }
+
+  // showCredentialExportModal 弹出国际版凭据安全导出与备份窗口
+  function showCredentialExportModal(side) {
+    side = side || "intl";
+    var existing = document.getElementById("cred-export-modal");
+    if (existing) existing.remove();
+
+    var overlay = el("div", { class: "modal-overlay", id: "cred-export-modal" });
+    var card = el("div", { class: "modal-card", style: "max-width:620px" });
+
+    function closeModal() {
+      overlay.classList.remove("open");
+      setTimeout(function () { overlay.remove(); }, 200);
+    }
+
+    var head = el("div", { class: "modal-head" }, [
+      el("div", { class: "modal-title" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-shield"/>' }),
+        side === "intl" ? "国际版凭据安全导出与灾备备份" : "国内版凭据安全导出"
+      ]),
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal })
+    ]);
+
+    var body = el("div", { class: "modal-body" });
+    body.appendChild(el("div", { class: "hint", text: "正在安全提取当前登录凭据…" }));
+
+    card.appendChild(head);
+    card.appendChild(body);
+    overlay.appendChild(card);
+    overlay.onclick = function (e) {
+      if (e.target === overlay) closeModal();
+    };
+    document.body.appendChild(overlay);
+    overlay.offsetHeight;
+    overlay.classList.add("open");
+
+    api("/api/credentials/export?side=" + side).then(function (res) {
+      clear(body);
+      if (!res || !res.account) {
+        body.appendChild(el("div", { class: "bad", text: "未获取到有效凭据" }));
+        return;
+      }
+      var acc = res.account;
+      var rawJson = JSON.stringify(res.officialFormat || res, null, 2);
+
+      // 顶部账号概要卡片
+      var banner = el("div", {
+        style: "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:12px"
+      }, [
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" }, [
+          el("div", { style: "font-weight:600;font-size:13.5px;color:var(--text)" }, [
+            "当前凭据：",
+            el("span", { style: "color:var(--accent)" }, acc.nickname || acc.uid)
+          ]),
+          el("span", { class: "pill ok", text: acc.expiresAtHuman ? "到期：" + acc.expiresAtHuman : "长期有效" })
+        ]),
+        el("div", { style: "font-size:11.5px;color:var(--g8);word-break:break-all" }, "UID: " + (acc.uid || "未知") + " · 域名: " + (acc.domain || "www.workbuddy.ai"))
+      ]);
+      body.appendChild(banner);
+
+      // 工具栏：下载备份 / 复制 Token / 复制完整 JSON / 脱敏开关
+      var actions = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" });
+
+      // 下载按钮
+      var btnDownload = el("button", { class: "btn-hero", style: "padding:6px 14px;font-size:12px", title: "下载完整 JSON 配置文件备份" }, [
+        el("svg", { class: "ico ico-sm", html: '<use href="#i-down"/>' }),
+        "下载凭据备份 (.json)"
+      ]);
+      btnDownload.onclick = function () {
+        var blob = new Blob([rawJson], { type: "application/json;charset=utf-8" });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = "workbuddy-" + side + "-credential-" + (acc.uid ? acc.uid.slice(0, 8) : "backup") + ".json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast("凭据备份已开始下载！", "ok");
+      };
+      actions.appendChild(btnDownload);
+
+      // 复制 Access Token 按钮
+      var btnCopyToken = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px" }, "📋 复制 Access Token");
+      btnCopyToken.onclick = function () {
+        navigator.clipboard.writeText(acc.token).then(function () {
+          btnCopyToken.textContent = "✓ 已复制 Token!";
+          toast("Access Token 已复制到剪贴板", "ok");
+          setTimeout(function () { btnCopyToken.textContent = "📋 复制 Access Token"; }, 2000);
+        });
+      };
+      actions.appendChild(btnCopyToken);
+
+      // 复制完整配置按钮
+      var btnCopyAll = el("button", { class: "ghost", style: "padding:6px 12px;font-size:12px" }, "📄 复制官方格式 JSON");
+      btnCopyAll.onclick = function () {
+        navigator.clipboard.writeText(rawJson).then(function () {
+          btnCopyAll.textContent = "✓ 已复制 JSON!";
+          toast("官方凭据 JSON 已复制到剪贴板", "ok");
+          setTimeout(function () { btnCopyAll.textContent = "📄 复制官方格式 JSON"; }, 2000);
+        });
+      };
+      actions.appendChild(btnCopyAll);
+
+      // 脱敏开关
+      var isMasked = true;
+      var btnToggleMask = el("button", { class: "ghost", style: "padding:6px 10px;font-size:12px;margin-left:auto" }, "👁️ 显示明文");
+      actions.appendChild(btnToggleMask);
+
+      body.appendChild(actions);
+
+      // 预览窗
+      function getDisplayText() {
+        if (!isMasked) return rawJson;
+        var maskedToken = acc.token.length > 20 ? (acc.token.slice(0, 10) + "••••••••••••••••••••••••••••••••••••" + acc.token.slice(-8)) : "••••••••";
+        var maskedRef = acc.refreshToken && acc.refreshToken.length > 20 ? (acc.refreshToken.slice(0, 8) + "••••••••••••••••" + acc.refreshToken.slice(-6)) : "••••••••";
+        return rawJson.replace(acc.token, maskedToken).replace(acc.refreshToken, maskedRef);
+      }
+
+      var pre = el("pre", {
+        style: "background:#0d1117;color:#c9d1d9;padding:12px;border-radius:var(--r-sm);font-size:11.5px;max-height:220px;overflow-y:auto;user-select:all;border:1px solid rgba(255,255,255,0.06);white-space:pre-wrap;word-break:break-all",
+        text: getDisplayText()
+      });
+      body.appendChild(pre);
+
+      btnToggleMask.onclick = function () {
+        isMasked = !isMasked;
+        btnToggleMask.textContent = isMasked ? "👁️ 显示明文" : "🔒 隐藏脱敏";
+        pre.textContent = getDisplayText();
+      };
+
+      // 底部指引
+      var tip = el("div", {
+        class: "hint",
+        style: "margin-top:12px;font-size:11.5px;color:var(--g8);line-height:1.6",
+        html: "💡 <b>用法指引：</b><br>" +
+              "• <b>免安装恢复 / 灾备</b>：保存此 JSON 配置文件，重装或更换设备后可直接一键导入载入登录态；<br>" +
+              "• <b>第三方客户端调用</b>：复制上面的 Access Token 作为 API 密钥，直接接入 Cherry Studio / NextChat / Cursor 等工具。"
+      });
+      body.appendChild(tip);
+
+    }).catch(function (err) {
+      clear(body);
+      body.appendChild(el("div", { class: "bad", style: "padding:12px;background:rgba(239,68,68,0.1);border-radius:var(--r-sm)" }, [
+        "获取凭据失败：" + err.message + "。请确认官方客户端已处于登录状态。"
+      ]));
+    });
   }
 
   // 档位 id → 显示名。注意 /api/state 里那个字段叫 displayName，不叫 name。
@@ -5664,6 +5828,12 @@
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
   document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
+  var btnExportCred = document.getElementById("btn-export-cred");
+  if (btnExportCred) {
+    btnExportCred.addEventListener("click", function () {
+      showCredentialExportModal("intl");
+    });
+  }
   document.getElementById("btn-probe").addEventListener("click", runProbe);
   document.getElementById("btn-inject").addEventListener("click", runInject);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
