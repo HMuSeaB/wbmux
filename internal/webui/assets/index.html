@@ -419,8 +419,8 @@
     background: var(--g3); padding: 1px 5px; border-radius: 3px; font-size: 10px;
   }
   .btn-m-action {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-size: 11px; font-weight: 550; padding: 2px 8px; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-size: 11px; font-weight: 550; padding: 3px 9px; border-radius: 4px;
     border: 1px solid var(--g4); background: var(--g1);
     color: var(--ink-2); cursor: pointer; transition: all .15s ease;
     white-space: nowrap; flex: none; line-height: 1.4;
@@ -436,8 +436,12 @@
   }
   .btn-m-action.added:hover {
     border-color: var(--bad); color: var(--bad);
-    background: color-mix(in srgb, var(--bad) 10%, var(--g1));
+    background: color-mix(in srgb, var(--bad) 12%, var(--g1));
   }
+  .btn-m-action.added .act-remove { display: none; }
+  .btn-m-action.added .act-added { display: inline-flex; align-items: center; gap: 4px; }
+  .btn-m-action.added:hover .act-added { display: none; }
+  .btn-m-action.added:hover .act-remove { display: inline-flex; align-items: center; gap: 4px; color: var(--bad); }
   .btn-m-action.free-default {
     background: color-mix(in srgb, var(--g4) 50%, transparent);
     border-color: transparent; color: var(--ink-3); cursor: default;
@@ -871,6 +875,17 @@
     color: var(--ink-2);
     font-weight: 600;
   }
+  .gw-audit-row {
+    border-bottom: 1px solid var(--g3);
+    transition: background .12s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .gw-audit-row:hover {
+    background: var(--g3);
+  }
+  .gw-latency-fast { color: var(--ok) !important; font-weight: 600; }
+  .gw-latency-mid { color: var(--ink-2); }
+  .gw-latency-slow { color: var(--warn) !important; font-weight: 600; }
+
   .bar-fill.cn {
     background: linear-gradient(90deg, #2563eb, #38bdf8) !important;
   }
@@ -1124,6 +1139,9 @@
     font-size: 11px;
     color: #6ee7b7;
   }
+  .gw-table tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
 </style>
 </head>
 <body>
@@ -1145,6 +1163,7 @@
         <div class="nav-item active" data-page="status"><svg class="ico" aria-hidden="true"><use href="#i-gauge"/></svg>概览与额度</div>
         <div class="nav-item" data-page="providers"><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg>自定义模型 (BYOK)</div>
         <div class="nav-item" data-page="compact"><svg class="ico" aria-hidden="true"><use href="#i-layers"/></svg>上下文保活 (1M)</div>
+        <div class="nav-item" data-page="gateway"><svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg>网关调用分析</div>
         <div class="nav-item" data-page="log"><svg class="ico" aria-hidden="true"><use href="#i-term"/></svg>代理日志</div>
       </div>
 
@@ -1275,6 +1294,112 @@
     <div id="log-body" style="margin-top:12px"></div>
   </section>
 
+    </div>
+    <div data-page="gateway" hidden>
+      <section id="gateway-sec">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+          <div>
+            <h2 style="margin:0 0 4px"><svg class="ico-sm" aria-hidden="true"><use href="#i-scan"/></svg>网关调用分析与实时审计</h2>
+            <p class="hint" style="margin:0">
+              精准捕获通过本机 <code>/v1/chat/completions</code> 代理的所有模型调用。全链路记录耗时、首字延迟 (TTFT)、Token 吞吐及 429 故障转移。
+            </p>
+          </div>
+          <div class="row" style="margin:0">
+            <button id="btn-gw-refresh" class="ghost" style="padding:5px 12px;font-size:12px"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>刷新</button>
+            <button id="btn-gw-clear" class="ghost danger" style="padding:5px 12px;font-size:12px"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-trash"/></svg>清空流水</button>
+          </div>
+        </div>
+
+        <!-- 4 联核心 KPI 仪表卡片 -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px" id="gw-kpi-container">
+          <div class="kpi-card">
+            <div class="kpi-head">
+              <span class="kpi-title">累计调用 / 成功率</span>
+              <span class="pill ok" id="gw-kpi-rate">100%</span>
+            </div>
+            <div class="kpi-num" id="gw-kpi-total">0 <span class="kpi-unit">次</span></div>
+            <div class="kpi-foot" id="gw-kpi-status-foot">
+              <span>成功 <b>0</b></span> · <span>失败 <b>0</b></span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-head">
+              <span class="kpi-title">Token 总吞吐</span>
+              <span class="pill" style="color:var(--brand);border-color:rgba(99,179,196,0.3)">Tokens</span>
+            </div>
+            <div class="kpi-num" id="gw-kpi-tokens">0 <span class="kpi-unit">tok</span></div>
+            <div class="kpi-foot" id="gw-kpi-tokens-foot">
+              <span>输入 <b>0</b></span> · <span>输出 <b>0</b></span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-head">
+              <span class="kpi-title">平均首字延迟 (TTFT)</span>
+              <span class="pill" style="color:#a78bfa;border-color:rgba(167,139,250,0.3)">Latency</span>
+            </div>
+            <div class="kpi-num" id="gw-kpi-ttft">0 <span class="kpi-unit">ms</span></div>
+            <div class="kpi-foot" id="gw-kpi-duration-foot">
+              <span>平均总用时 <b>0 ms</b></span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-head">
+              <span class="kpi-title">无感故障转移 (Failover)</span>
+              <span class="pill ok" id="gw-kpi-failover-pill">全量健康</span>
+            </div>
+            <div class="kpi-num" id="gw-kpi-failover">0 <span class="kpi-unit">次换号</span></div>
+            <div class="kpi-foot">
+              <span class="pulse-dot"></span> <span>429/402 自动无感续杯</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 模型调用分布图谱 -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-head" style="margin-bottom:10px">
+            <span class="card-title" style="font-size:13px;display:flex;align-items:center;gap:6px">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>模型调用热度分布
+            </span>
+            <span class="card-sub" id="gw-model-count-label">共 0 个模型</span>
+          </div>
+          <div id="gw-model-dist-body" style="display:flex;flex-direction:column;gap:8px">
+            <div style="color:var(--ink-3);font-size:12px;text-align:center;padding:12px 0">暂无模型调用数据</div>
+          </div>
+        </div>
+
+        <!-- 实时审计流水明细表格 -->
+        <div class="card" style="padding:14px">
+          <div class="card-head" style="margin-bottom:12px">
+            <span class="card-title" style="font-size:13px;display:flex;align-items:center;gap:6px">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-term"/></svg>实时请求审计流水 (最近 100 条)
+            </span>
+            <span class="card-sub" id="gw-table-status-label">就绪</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="gw-table" style="width:100%;border-collapse:collapse;font-size:12px;text-align:left">
+              <thead>
+                <tr style="border-bottom:1px solid var(--g4);color:var(--ink-3);font-size:11.5px">
+                  <th style="padding:8px 6px">时间</th>
+                  <th style="padding:8px 6px">请求模型</th>
+                  <th style="padding:8px 6px">调用账号</th>
+                  <th style="padding:8px 6px">模式</th>
+                  <th style="padding:8px 6px">状态</th>
+                  <th style="padding:8px 6px">TTFT</th>
+                  <th style="padding:8px 6px">总用时</th>
+                  <th style="padding:8px 6px">Tokens (输入/输出)</th>
+                  <th style="padding:8px 6px">说明</th>
+                </tr>
+              </thead>
+              <tbody id="gw-audit-tbody">
+                <tr><td colspan="9" style="text-align:center;padding:32px 0;color:var(--ink-3)">等待网关请求中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
     <div data-page="providers" hidden>
   <section id="prov-sec">
@@ -2485,6 +2610,7 @@
     if (page === "recycle") loadRecycle();
     if (page === "providers") loadProviders(true);
     if (page === "compact") loadCompact();
+    if (page === "gateway") loadGatewayAudit(true);
     if (page === "zcode") loadZCode(false);
     if (page === "sessions") {
       var fr = document.getElementById("sessions-frame");
@@ -4317,6 +4443,9 @@
     }
     return api("/api/usage").then(function (u) {
       usageData = u;
+      if (u && Array.isArray(u.selectedIntlModels)) {
+        selectedIntlModels = u.selectedIntlModels;
+      }
       renderUsage();
     }).catch(function (e) {
       if (!silent && box) {
@@ -4759,12 +4888,16 @@
           });
           foot.appendChild(freeTag);
         } else {
+          var actBtnHtml = isSel
+            ? '<span class="act-added">' + ICO("check", "ico-sm") + ' 已加入国内端</span>' +
+              '<span class="act-remove">' + ICO("x", "ico-sm") + ' 移出国内端</span>'
+            : ICO("plus", "ico-sm") + ' 加入国内端';
+
           var actBtn = el("button", {
             type: "button",
             class: "btn-m-action" + (isSel ? " added" : ""),
-            html: (isSel ? ICO("check", "ico-sm") : ICO("plus", "ico-sm")) +
-                  (isSel ? " 已加入国内客户端" : " 加入国内客户端"),
-            title: isSel ? "已加入国内客户端自定义模型（重启客户端后生效）。点击可从国内端移出。" : "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）"
+            html: actBtnHtml,
+            title: isSel ? "已加入国内客户端自定义模型（鼠标移上点击即可从国内端移出）" : "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）"
           });
 
           (function (modelItem, buttonEl, cardEl) {
@@ -4785,13 +4918,14 @@
                 buttonEl.disabled = false;
                 if (nowIn) {
                   buttonEl.className = "btn-m-action added";
-                  buttonEl.innerHTML = ICO("check", "ico-sm") + " 已加入国内客户端";
-                  buttonEl.title = "已加入国内客户端自定义模型（重启客户端后生效）。点击可从国内端移出。";
+                  buttonEl.innerHTML = '<span class="act-added">' + ICO("check", "ico-sm") + ' 已加入国内端</span>' +
+                                       '<span class="act-remove">' + ICO("x", "ico-sm") + ' 移出国内端</span>';
+                  buttonEl.title = "已加入国内客户端自定义模型（鼠标移上点击即可从国内端移出）";
                   cardEl.classList.add("injected");
                   toast("已加入国内客户端：" + (modelItem.name || modelItem.id) + "（费率 " + (modelItem.rate ? modelItem.rate.toFixed(2) + "x" : "标准") + "，重启客户端生效）", "ok");
                 } else {
                   buttonEl.className = "btn-m-action";
-                  buttonEl.innerHTML = ICO("plus", "ico-sm") + " 加入国内客户端";
+                  buttonEl.innerHTML = ICO("plus", "ico-sm") + " 加入国内端";
                   buttonEl.title = "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）";
                   cardEl.classList.remove("injected");
                   toast("已从国内客户端移出：" + (modelItem.name || modelItem.id) + "（重启客户端生效）", "warn");
@@ -5416,9 +5550,8 @@
     migFrom = other ? other.id : null;
     document.getElementById("mig-direction").textContent = migFrom ? migTitle() : "";
 
-    // 限流状态默认就查一次：用户打开界面时，最想知道的往往就是
-    // "刚才那次 429 到底是哪一侧"。让他再点一次按钮才看到，等于没解决。
-    loadUsage();
+    // 状态拉取成功后，强制无阻塞拉取双端资产与额度，确保 selectedIntlModels 完美应用到卡片渲染中
+    loadUsage(true, true);
 
     // 每日签到同样在**打开界面时**就跑，不要求用户切到那个 tab。
     //
@@ -5931,6 +6064,211 @@
     });
   }, 60000);
 
+  // ---------- 网关调用分析与实时审计 (Phase 17) ----------
+  var gwLoading = false;
+  function loadGatewayAudit(manual) {
+    if (gwLoading) return;
+    gwLoading = true;
+    var statusLabel = document.getElementById("gw-table-status-label");
+    if (statusLabel) statusLabel.textContent = "正在拉取网关审计数据…";
+
+    api("/api/gateway/stats?limit=100")
+      .then(function (summary) {
+        gwLoading = false;
+        if (statusLabel) statusLabel.textContent = "已更新 (" + new Date().toLocaleTimeString() + ")";
+        renderGatewayAudit(summary);
+      })
+      .catch(function (err) {
+        gwLoading = false;
+        if (statusLabel) statusLabel.textContent = "拉取失败：" + err.message;
+        if (manual) toast("拉取网关统计失败：" + err.message, "bad");
+      });
+  }
+
+  function renderGatewayAudit(s) {
+    if (!s) return;
+    // 1. KPI 统计渲染
+    var total = s.totalRequests || 0;
+    var succ = s.successCount || 0;
+    var fail = s.failCount || 0;
+    var rate = total > 0 ? (s.successRate || 0).toFixed(1) + "%" : "100%";
+    var totalTokens = s.totalTokens || 0;
+    var promptTokens = s.totalPromptTokens || 0;
+    var compTokens = s.totalCompTokens || 0;
+    var avgTtft = s.avgTtftMs || 0;
+    var avgDur = s.avgDurationMs || 0;
+    var failover = s.failoverCount || 0;
+
+    var totalEl = document.getElementById("gw-kpi-total");
+    if (totalEl) totalEl.innerHTML = total.toLocaleString() + ' <span class="kpi-unit">次</span>';
+    var rateEl = document.getElementById("gw-kpi-rate");
+    if (rateEl) {
+      rateEl.textContent = rate;
+      rateEl.className = "pill " + (fail === 0 ? "ok" : "warn");
+    }
+    var statusFoot = document.getElementById("gw-kpi-status-foot");
+    if (statusFoot) {
+      statusFoot.innerHTML = '<span>成功 <b>' + succ.toLocaleString() + '</b></span> · <span>失败 <b>' + fail.toLocaleString() + '</b></span>';
+    }
+
+    var tokensEl = document.getElementById("gw-kpi-tokens");
+    if (tokensEl) tokensEl.innerHTML = totalTokens.toLocaleString() + ' <span class="kpi-unit">tok</span>';
+    var tokensFoot = document.getElementById("gw-kpi-tokens-foot");
+    if (tokensFoot) {
+      tokensFoot.innerHTML = '<span>输入 <b>' + promptTokens.toLocaleString() + '</b></span> · <span>输出 <b>' + compTokens.toLocaleString() + '</b></span>';
+    }
+
+    var ttftEl = document.getElementById("gw-kpi-ttft");
+    if (ttftEl) ttftEl.innerHTML = avgTtft.toLocaleString() + ' <span class="kpi-unit">ms</span>';
+    var durFoot = document.getElementById("gw-kpi-duration-foot");
+    if (durFoot) {
+      durFoot.innerHTML = '<span>平均总用时 <b>' + avgDur.toLocaleString() + ' ms</b></span>';
+    }
+
+    var failoverEl = document.getElementById("gw-kpi-failover");
+    if (failoverEl) failoverEl.innerHTML = failover.toLocaleString() + ' <span class="kpi-unit">次换号</span>';
+    var failoverPill = document.getElementById("gw-kpi-failover-pill");
+    if (failoverPill) {
+      if (failover > 0) {
+        failoverPill.textContent = "已激活容灾";
+        failoverPill.className = "pill warn";
+      } else {
+        failoverPill.textContent = "全量健康";
+        failoverPill.className = "pill ok";
+      }
+    }
+
+    // 2. 模型调用分布条形排布
+    var modelDistBody = document.getElementById("gw-model-dist-body");
+    if (modelDistBody) {
+      clear(modelDistBody);
+      var modelCounts = s.modelCounts || {};
+      var models = Object.keys(modelCounts);
+      var countLabel = document.getElementById("gw-model-count-label");
+      if (countLabel) countLabel.textContent = "共 " + models.length + " 个模型";
+      if (models.length === 0) {
+        modelDistBody.appendChild(el("div", {
+          style: "color:var(--ink-3);font-size:12px;text-align:center;padding:12px 0",
+          text: "暂无模型调用数据"
+        }));
+      } else {
+        models.sort(function (a, b) { return modelCounts[b] - modelCounts[a]; });
+        models.forEach(function (m) {
+          var count = modelCounts[m];
+          var pct = total > 0 ? ((count / total) * 100).toFixed(1) : "0.0";
+          var row = el("div", { style: "display:flex;flex-direction:column;gap:3px;margin-bottom:4px" }, [
+            el("div", { style: "display:flex;justify-content:space-between;align-items:center;font-size:12px" }, [
+              el("span", { style: "font-family:var(--mono);color:var(--ink-1);font-weight:600", text: m }),
+              el("span", { style: "font-size:11.5px;color:var(--ink-3)" }, [
+                el("b", { style: "color:var(--ink-2)", text: count.toLocaleString() }),
+                " 次 (" + pct + "%)"
+              ])
+            ]),
+            el("div", { style: "height:6px;background:var(--g3);border-radius:3px;overflow:hidden" }, [
+              el("div", {
+                style: "height:100%;width:" + pct + "%;background:linear-gradient(90deg, #38bdf8, #818cf8);border-radius:3px;transition:width .2s ease"
+              })
+            ])
+          ]);
+          modelDistBody.appendChild(row);
+        });
+      }
+    }
+
+    // 3. 实时流水明细渲染
+    var tbody = document.getElementById("gw-audit-tbody");
+    if (tbody) {
+      clear(tbody);
+      var records = s.recentRecords || [];
+      if (records.length === 0) {
+        tbody.appendChild(el("tr", {}, [
+          el("td", {
+            colspan: "9",
+            style: "text-align:center;padding:36px 16px;color:var(--ink-3)"
+          }, [
+            el("div", { style: "display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:20px;background:var(--g3);margin-bottom:10px;color:var(--ink-2)" }, [
+              el("svg", { class: "ico", "aria-hidden": "true" }, [el("use", { href: "#i-scan" })])
+            ]),
+            el("div", { style: "font-size:13px;font-weight:600;color:var(--ink-2);margin-bottom:4px", text: "网关就绪 · 暂无请求流水" }),
+            el("div", { style: "font-size:11.5px;color:var(--ink-3);line-height:1.6" }, [
+              "在 Cursor、Cline、Continue 或任意客户端配置本机 ",
+              el("code", { style: "font-family:var(--mono);color:var(--brand);background:var(--g2);padding:1px 5px;border-radius:3px", text: "http://127.0.0.1:<port>/v1" }),
+              " 发起对话即可实时捕获全链路审计"
+            ])
+          ])
+        ]));
+        return;
+      }
+
+      records.forEach(function (r) {
+        var tStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
+        var codePillClass = (r.statusCode >= 200 && r.statusCode < 300) ? "ok" : (r.statusCode >= 500 ? "danger" : "warn");
+        var isFailover = r.failoverTriggered;
+
+        var ttftClass = "gw-latency-mid";
+        if (r.ttftMs > 0) {
+          if (r.ttftMs < 1000) ttftClass = "gw-latency-fast";
+          else if (r.ttftMs > 3000) ttftClass = "gw-latency-slow";
+        }
+        var durClass = "gw-latency-mid";
+        if (r.durationMs > 0) {
+          if (r.durationMs < 2000) durClass = "gw-latency-fast";
+          else if (r.durationMs > 6000) durClass = "gw-latency-slow";
+        }
+
+        var tr = el("tr", { class: "gw-audit-row" }, [
+          el("td", { style: "padding:9px 6px;font-family:var(--mono);color:var(--ink-3);font-size:11px", text: tStr }),
+          el("td", { style: "padding:9px 6px;font-family:var(--mono);font-weight:600;color:var(--ink-1)" }, [
+            r.modelRequested || r.modelMapped || "unknown",
+            (r.modelMapped && r.modelMapped !== r.modelRequested) ? el("span", { style: "color:var(--ink-3);font-size:10.5px;display:block", text: "→ " + r.modelMapped }) : null
+          ]),
+          el("td", { style: "padding:9px 6px;color:var(--ink-2);font-size:11.5px" }, [
+            r.accountMask || r.accountId || "默认",
+            isFailover ? el("span", { class: "pill warn", style: "margin-left:4px;font-size:10px", text: "429换号" }) : null
+          ]),
+          el("td", { style: "padding:9px 6px" }, [
+            el("span", { class: "pill", style: "font-size:10.5px;color:var(--ink-2);border-color:var(--g4)", text: r.isStream ? "流式" : "非流式" })
+          ]),
+          el("td", { style: "padding:9px 6px" }, [
+            el("span", { class: "pill " + codePillClass, style: "font-size:11px", text: String(r.statusCode || 200) })
+          ]),
+          el("td", { class: ttftClass, style: "padding:9px 6px;font-family:var(--mono)" }, [
+            (r.ttftMs > 0 ? r.ttftMs + "ms" : "--")
+          ]),
+          el("td", { class: durClass, style: "padding:9px 6px;font-family:var(--mono)" }, [
+            (r.durationMs > 0 ? r.durationMs + "ms" : "--")
+          ]),
+          el("td", { style: "padding:9px 6px;font-family:var(--mono);color:var(--ink-2)" }, [
+            el("span", { style: "color:var(--ink-1);font-weight:600", text: String(r.totalTokens || (r.promptTokens + r.completionTokens)) }),
+            el("span", { style: "color:var(--ink-3);font-size:10.5px", text: " (" + r.promptTokens + " / " + r.completionTokens + ")" })
+          ]),
+          el("td", { style: "padding:9px 6px;color:var(--ink-3);font-size:11px;max-width:180px;word-break:break-all" }, [
+            r.errorMsg ? el("span", { style: "color:var(--bad);font-weight:550", text: r.errorMsg }) : (isFailover ? el("span", { style: "color:var(--warn)", text: "触发限流自动故障转移" }) : "正常转发")
+          ])
+        ]);
+        tbody.appendChild(tr);
+      });
+
+    }
+  }
+
+  function clearGatewayAudit() {
+    if (!confirm("确定要清空全部网关调用统计与请求流水明细吗？")) return;
+    api("/api/gateway/clear", { method: "POST" })
+      .then(function () {
+        toast("网关调用流水已清空", "ok");
+        loadGatewayAudit(true);
+      })
+      .catch(function (err) {
+        toast("清空失败：" + err.message, "bad");
+      });
+  }
+
+  var btnGwRefresh = document.getElementById("btn-gw-refresh");
+  if (btnGwRefresh) btnGwRefresh.addEventListener("click", function () { loadGatewayAudit(true); });
+  var btnGwClear = document.getElementById("btn-gw-clear");
+  if (btnGwClear) btnGwClear.addEventListener("click", clearGatewayAudit);
+
   // 定期检查遥测守护状态并刷新徽章提示
   function updateTelemetryBadge() {
     api("/api/telemetry").then(function (st) {
@@ -5952,8 +6290,10 @@
   updateTelemetryBadge();
   setInterval(updateTelemetryBadge, 60000);
 
-  // 页面进入时加载额度与资产数据（单次初始化，后台挂机零请求以绝风控隐患）
-  loadUsage(false);
+  // 兜底启动：若 500ms 内 state 仍未完成加载，自动补充拉取一次
+  setTimeout(function () {
+    if (!usageData) loadUsage(true, true);
+  }, 500);
 })();
 </script>
 </body>

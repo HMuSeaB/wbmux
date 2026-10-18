@@ -10,13 +10,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
+	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -496,7 +499,7 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	req2, err := http.NewRequest("POST", route.Endpoint, bytes.NewReader(out))
+	req2, err := http.NewRequestWithContext(r.Context(), "POST", route.Endpoint, bytes.NewReader(out))
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -512,10 +515,67 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 // 抽出来是因为"内置后端"与"自备提供方"两条路的后半段完全一样：
 // 都是流式转发/聚合、都要透传上游状态码、都要在日志里写清楚是谁拒绝的。
 func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody []byte, route upstreamRoute, up upstreamRequest, started time.Time) {
+	accID := req.Header.Get("X-User-Id")
+	accName := route.Label
+	if route.Provider == nil {
+		accName = "国际账号"
+		if accs, err := credential.ListAccounts(s.probe(), variant.Intl); err == nil {
+			for _, a := range accs {
+				if a.UID == accID || (accID == "" && a.Active) {
+					if a.Nickname != "" {
+						accName = a.Nickname
+					} else if a.UID != "" {
+						accName = a.UID
+					}
+					break
+				}
+			}
+		}
+	}
+
+	recordAudit := func(statusCode int, m chatMetrics, failover bool, errMsg string) {
+		pTok := m.promptTokens
+		cTok := m.completionTokens
+		if pTok == 0 && len(rawBody) > 0 {
+			pTok = len(rawBody) / 3
+			if pTok < 1 {
+				pTok = 1
+			}
+		}
+		if cTok == 0 && m.bytesSent > 0 {
+			cTok = int(m.bytesSent) / 3
+			if cTok < 1 {
+				cTok = 1
+			}
+		}
+		ttft := m.ttftMs
+		if ttft <= 0 && statusCode == http.StatusOK {
+			ttft = time.Since(started).Milliseconds()
+		}
+		gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
+			ID:                fmt.Sprintf("req-%d", time.Now().UnixNano()),
+			Timestamp:         started,
+			ModelRequested:    up.Model,
+			ModelMapped:       route.Model,
+			AccountID:         accID,
+			AccountMask:       accName,
+			IsStream:          up.ClientStream,
+			StatusCode:        statusCode,
+			PromptTokens:      pTok,
+			CompletionTokens:  cTok,
+			TotalTokens:       pTok + cTok,
+			TTFTMs:            ttft,
+			DurationMs:        time.Since(started).Milliseconds(),
+			FailoverTriggered: failover,
+			ErrorMsg:          errMsg,
+		})
+	}
+
 	resp, err := probeHTTPClient().Do(req)
 	if err != nil {
 		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
 			Text: fmt.Sprintf("转发失败 model=%s 经%s：%s", route.Model, route.Label, compactError(err.Error()))})
+		recordAudit(http.StatusBadGateway, chatMetrics{}, false, err.Error())
 		writeOpenAIError(w, http.StatusBadGateway, "上游请求失败："+err.Error())
 		return
 	}
@@ -545,12 +605,13 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 					if errRetry == nil && respRetry.StatusCode == http.StatusOK {
 						defer respRetry.Body.Close()
 						s.observe(route.Model, http.StatusOK, "")
-						var sent int64
+						var m chatMetrics
 						if up.ClientStream {
-							sent = s.streamChatThrough(w, respRetry.Body)
+							m = s.streamChatThrough(w, respRetry.Body, started)
 						} else {
-							sent = s.aggregateChat(w, respRetry.Body)
+							m = s.aggregateChat(w, respRetry.Body, started)
 						}
+						recordAudit(http.StatusOK, m, false, "")
 						s.note(ProxyLogEntry{
 							Level:  "ok",
 							Model:  route.Model,
@@ -559,7 +620,7 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 							MS:     time.Since(started).Milliseconds(),
 							Text: fmt.Sprintf("重试转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
 								route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
-								describeBytes(sent), time.Since(started).Round(time.Millisecond)),
+								describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
 						})
 						return
 					}
@@ -611,12 +672,15 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 					if respRetry.StatusCode == http.StatusOK {
 						defer respRetry.Body.Close()
 						s.observe(route.Model, http.StatusOK, "")
-						var sent int64
+						accName = nextAcc.Nickname
+						accID = nextAcc.UID
+						var m chatMetrics
 						if up.ClientStream {
-							sent = s.streamChatThrough(w, respRetry.Body)
+							m = s.streamChatThrough(w, respRetry.Body, started)
 						} else {
-							sent = s.aggregateChat(w, respRetry.Body)
+							m = s.aggregateChat(w, respRetry.Body, started)
 						}
+						recordAudit(http.StatusOK, m, true, "")
 						s.note(ProxyLogEntry{
 							Level:  "ok",
 							Model:  route.Model,
@@ -625,7 +689,7 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 							MS:     time.Since(started).Milliseconds(),
 							Text: fmt.Sprintf("故障转移重发成功 model=%s 经%s (账号: %s) stream=%v 回给客户端 %s 用时 %s",
 								route.Model, route.Label, nextAcc.Nickname, up.ClientStream,
-								describeBytes(sent), time.Since(started).Round(time.Millisecond)),
+								describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
 						})
 						return
 					}
@@ -642,18 +706,7 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		msg := upstreamMessage(body)
-		// 记下"这个模型此刻不能用"——面板据此告诉用户现在能切哪个、
-		// 什么时候恢复（客户端那边的记录只增不减，答不了这个）。
-		// 成功时 observe 会清掉状态，见 quotalive.go。
 		s.observe(route.Model, resp.StatusCode, msg)
-		// 透传上游的真实状态码，而不是一律 502：502 等于告诉客户端
-		// "网关挂了"，客户端会据此触发模型故障转移，把用户的问题
-		// 从"模型名不对"带偏成"后端不稳"。
-		//
-		// 日志里把**上游 5xx** 和其余拒绝分开：429 是"你的额度/频率"
-		// （用户侧，该换模型或等恢复），400 是"请求本身不对"（用户侧），
-		// 而 5xx 是"上游自己挂了"——等它恢复即可，用户什么都不用改。
-		// 混在一起都标成 bad，用户会以为是自己哪里配错了，反复重试。
 		level, verdict := "bad", "拒绝"
 		if resp.StatusCode >= 500 {
 			level, verdict = "warn", "上游故障"
@@ -662,23 +715,25 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			MS: time.Since(started).Milliseconds(),
 			Text: fmt.Sprintf("被%s%s model=%s 上游 HTTP %d: %s",
 				route.Label, verdict, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
+		recordAudit(resp.StatusCode, chatMetrics{}, false, msg)
 		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 		return
 	}
 	// 上游 200：这个模型现在是好的，把之前记下的限流状态清掉。
 	s.observe(route.Model, http.StatusOK, "")
 
-	var sent int64
+	var m chatMetrics
 	if up.ClientStream {
-		sent = s.streamChatThrough(w, resp.Body)
+		m = s.streamChatThrough(w, resp.Body, started)
 	} else {
-		sent = s.aggregateChat(w, resp.Body)
+		m = s.aggregateChat(w, resp.Body, started)
 	}
+	recordAudit(http.StatusOK, m, false, "")
 	s.note(ProxyLogEntry{Level: "ok", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
 		MS: time.Since(started).Milliseconds(),
 		Text: fmt.Sprintf("转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
 			route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
-			describeBytes(sent), time.Since(started).Round(time.Millisecond))})
+			describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond))})
 }
 
 // providers 读一次自备提供方配置。
@@ -694,20 +749,58 @@ func (s *Server) providers() []config.Provider {
 	return cfg.Providers
 }
 
+type chatMetrics struct {
+	bytesSent        int64
+	ttftMs           int64
+	promptTokens     int
+	completionTokens int
+}
+
+var (
+	rePromptTokens     = regexp.MustCompile(`"prompt_tokens"\s*:\s*(\d+)`)
+	reCompletionTokens = regexp.MustCompile(`"completion_tokens"\s*:\s*(\d+)`)
+)
+
+// extractUsageFromBytes 尝试从上游 SSE 的 chunk 中提取官方返回的 usage 字段。
+func extractUsageFromBytes(b []byte) (int, int) {
+	if !bytes.Contains(b, []byte(`"usage"`)) {
+		return 0, 0
+	}
+	// 1. 尝试按行切分并以标准 JSON 反序列化解析
+	lines := bytes.Split(b, []byte("\n"))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		line = bytes.TrimPrefix(line, []byte("data:"))
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
+			continue
+		}
+		var u struct {
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(line, &u); err == nil && u.Usage != nil {
+			return u.Usage.PromptTokens, u.Usage.CompletionTokens
+		}
+	}
+
+	// 2. 兜底策略：若 chunk 跨行或被反代截断，通过正则表达式直接匹配 Token 数量
+	pMatch := rePromptTokens.FindSubmatch(b)
+	cMatch := reCompletionTokens.FindSubmatch(b)
+	var pTok, cTok int
+	if len(pMatch) == 2 {
+		pTok, _ = strconv.Atoi(string(pMatch[1]))
+	}
+	if len(cMatch) == 2 {
+		cTok, _ = strconv.Atoi(string(cMatch[1]))
+	}
+	return pTok, cTok
+}
+
 // streamChatThrough 把上游 SSE 转发给调用方。
-//
-// # 必须逐字节原样，不能按行重建
-//
-// SSE 的事件分隔符是**空行**：解析方读到空行才认为一个事件完整、才去
-// 解析它的 data 段。原实现按行扫描并跳过空行（当时只想"别转发空行"），
-// 结果整段流在客户端眼里成了"一个永远没结束的事件"，表现正是
-// "跑了几秒、什么都没收到"+ 报一个没头没尾的错误码（2026-09-27 实测：
-// 直连上游 16 个空行，经代理 0 个）。
-//
-// 所以这里不再自己拼行，直接搬字节；只在每块之后 Flush 一次，
-// 保住"边收边给"的实时性。返回值是搬了多少字节（日志里要，用来判断
-// 这次是"秒回"还是"吐了半天"）。
-func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) int64 {
+func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader, started time.Time) chatMetrics {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	// 万一前面挂了反代/网关，别让它缓冲——缓冲会让流式退化成一次性返回。
@@ -718,22 +811,33 @@ func (s *Server) streamChatThrough(w http.ResponseWriter, upstream io.Reader) in
 		// 先甩出响应头：否则调用方要等到第一块正文才知道请求已被接受。
 		flusher.Flush()
 	}
-	var sent int64
+	var m chatMetrics
 	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := upstream.Read(buf)
 		if n > 0 {
-			written, err := w.Write(buf[:n])
-			sent += int64(written)
+			if m.ttftMs == 0 {
+				m.ttftMs = time.Since(started).Milliseconds()
+			}
+			chunk := buf[:n]
+			if bytes.Contains(chunk, []byte(`"usage"`)) {
+				p, c := extractUsageFromBytes(chunk)
+				if p > 0 || c > 0 {
+					m.promptTokens = p
+					m.completionTokens = c
+				}
+			}
+			written, err := w.Write(chunk)
+			m.bytesSent += int64(written)
 			if err != nil {
-				return sent // 调用方断开，上游留给 defer 关
+				return m // 调用方断开，上游留给 defer 关
 			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
 		if readErr != nil {
-			return sent // io.EOF 或上游中断，流到此结束
+			return m // io.EOF 或上游中断，流到此结束
 		}
 	}
 }
@@ -750,8 +854,7 @@ type toolCallAcc struct {
 }
 
 // aggregateChat 聚合上游流式块，组装成一份非流式的 OpenAI 响应。
-// 返回回给客户端的字节数（日志用）。
-func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) int64 {
+func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader, started time.Time) chatMetrics {
 	var served string
 	var finish string
 	var content strings.Builder
@@ -833,7 +936,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) int64 
 	}
 	if served == "" {
 		writeOpenAIError(w, http.StatusBadGateway, "上游没有返回任何内容")
-		return 0
+		return chatMetrics{}
 	}
 
 	msg := map[string]any{"role": "assistant", "content": content.String()}
@@ -877,10 +980,15 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader) int64 
 	})
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
-		return 0
+		return chatMetrics{}
 	}
 	written, _ := w.Write(encoded)
-	return int64(written)
+	return chatMetrics{
+		bytesSent:        int64(written),
+		ttftMs:           time.Since(started).Milliseconds(),
+		promptTokens:     promptTok,
+		completionTokens: completionTok,
+	}
 }
 
 // upstreamMessage 从上游的错误体里挑一句人能看的话。

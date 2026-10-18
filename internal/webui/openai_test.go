@@ -675,3 +675,61 @@ func TestWithIdentityHeadersNeverForwardsAuth(t *testing.T) {
 		}
 	}
 }
+
+// TestExtractUsageFromBytes 验证从各类 SSE chunk 中提取 Token 消耗的健壮性。
+func TestExtractUsageFromBytes(t *testing.T) {
+	cases := []struct {
+		name      string
+		chunk     []byte
+		wantP     int
+		wantC     int
+	}{
+		{
+			name:  "标准单行 SSE chunk",
+			chunk: []byte("data: {\"id\":\"chatcmpl-1\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":34,\"total_tokens\":46}}\n\n"),
+			wantP: 12,
+			wantC: 34,
+		},
+		{
+			name:  "带有 tokens_details 嵌套结构",
+			chunk: []byte("data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":250,\"prompt_tokens_details\":{\"cached_tokens\":50}}}\n\n"),
+			wantP: 100,
+			wantC: 250,
+		},
+		{
+			name: "多行连续 SSE 流块",
+			chunk: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":9}}\n\n" +
+				"data: [DONE]\n\n"),
+			wantP: 7,
+			wantC: 9,
+		},
+		{
+			name:  "截断跨包或无换行通过正则兜底",
+			chunk: []byte(`{"id":"chunk-9","usage":{"prompt_tokens": 55, "completion_tokens": 88`),
+			wantP: 55,
+			wantC: 88,
+		},
+		{
+			name:  "普通增量 chunk 不包含 usage",
+			chunk: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"),
+			wantP: 0,
+			wantC: 0,
+		},
+		{
+			name:  "空数据块",
+			chunk: []byte(""),
+			wantP: 0,
+			wantC: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotP, gotC := extractUsageFromBytes(tc.chunk)
+			if gotP != tc.wantP || gotC != tc.wantC {
+				t.Errorf("extractUsageFromBytes() = (%d, %d), want (%d, %d)", gotP, gotC, tc.wantP, tc.wantC)
+			}
+		})
+	}
+}

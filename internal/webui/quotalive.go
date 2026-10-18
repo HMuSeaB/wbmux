@@ -494,6 +494,8 @@ type usageResponse struct {
 	// **可用性以它为准**：Survey 里的 byModel/limits 是客户端落盘的历史记录，
 	// 只增不减，无法反映"已经恢复"。
 	ProxyQuota []ProxyQuota `json:"proxyQuota"`
+	// SelectedIntlModels 是用户已选定注入国内端的国际付费大模型 ID 列表。
+	SelectedIntlModels []string `json:"selectedIntlModels"`
 }
 
 // handleUsage 返回额度账单 + 代理观察到的当前可用性。
@@ -502,9 +504,15 @@ type usageResponse struct {
 // ProxyQuota 是代理自己的观察，答的是"现在能不能用"。两块都在一个响应里
 // 是因为界面要一起渲染——但**结论以 ProxyQuota 为准**。
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.Load()
+	var selected []string
+	if err == nil {
+		selected = cfg.SelectedIntlModels
+	}
 	writeJSON(w, usageResponse{
-		Survey:     usage.Build(s.probe()),
-		ProxyQuota: s.quotaSnapshot(),
-		ProxyOK:    s.quotaOKSnapshot(),
+		Survey:             usage.Build(s.probe()),
+		ProxyQuota:         s.quotaSnapshot(),
+		ProxyOK:            s.quotaOKSnapshot(),
+		SelectedIntlModels: selected,
 	})
 }
