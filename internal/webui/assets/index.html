@@ -353,21 +353,21 @@
   .tile .big.bad  { color: var(--bad); }
   .tile .big.ok   { color: var(--ok); }
 
-  .bar-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   .bar-name {
-    width: 190px; flex: none; font-size: 12px; white-space: nowrap;
+    width: 110px; flex: none; font-size: 12px; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; color: var(--ink-2);
   }
   .bar-track {
     flex: 1; height: 6px; background: var(--g3);
-    border-radius: 3px; overflow: hidden;
+    border-radius: 3px; overflow: hidden; min-width: 40px;
   }
   /* 条形不再做描边——6px 高度描边会吃掉一半，看着像刻度尺 */
   .bar-fill { display: block; height: 100%; min-width: 2px; border-radius: 3px; }
   .bar-fill.cn   { background: var(--info); }
   .bar-fill.intl { background: var(--ok); }
   .bar-num {
-    width: 62px; flex: none; text-align: right;
+    flex: none; text-align: right; white-space: nowrap;
     font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
   }
 
@@ -602,14 +602,16 @@
   .dash-card-head {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     padding-bottom: 11px;
+    gap: 10px;
   }
   .dash-side-info {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
   .dash-side-title {
     font-size: 14px;
@@ -618,6 +620,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    white-space: nowrap;
   }
   .dash-user-badge {
     font-size: 11.5px;
@@ -626,6 +629,14 @@
     align-items: center;
     gap: 6px;
     font-family: var(--mono);
+    white-space: nowrap;
+    flex-wrap: wrap;
+  }
+  .dash-head-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
   }
   .dash-sec-title {
     font-size: 11px;
@@ -4338,6 +4349,16 @@
         style: "margin:0;font-size:11px", text: "国内账单 ↗" })
     ]));
 
+    function formatCreditNum(n) {
+      if (typeof n !== 'number') {
+        var parsed = parseFloat(n);
+        if (isNaN(parsed)) return n || "0";
+        n = parsed;
+      }
+      if (n % 1 === 0) return n.toLocaleString('en-US');
+      return Number(n.toFixed(2)).toLocaleString('en-US');
+    }
+
     // 国内积分包
     var cnSecPackages = el("div", {});
     cnSecPackages.appendChild(el("div", { class: "dash-sec-title", text: "积分包余量" }));
@@ -4351,7 +4372,7 @@
           el("span", { class: "bar-track" }, [
             el("span", { class: "bar-fill cn", style: "width:" + Math.max(1.5, pct) + "%" })
           ]),
-          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
+          el("span", { class: "bar-num", text: formatCreditNum(p.remain) + " / " + formatCreditNum(p.total) + " " + (p.unit || "") })
         ]));
       });
     }
@@ -4410,24 +4431,21 @@
           (intlLv.ok && intlLv.hasRefreshToken) ? el("span", { class: "pill ok", style: "background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.38);color:#a5b4fc", text: "⚡ 自动无感保鲜" }) : null
         ])
       ]),
-      el("div", { style: "display:flex;gap:6px;align-items:center" }, [
+      el("div", { class: "dash-head-actions" }, [
         el("button", {
           class: "ghost",
-          style: "padding:2px 8px;font-size:11px",
+          style: "padding:3px 10px;font-size:11.5px;white-space:nowrap",
           text: "切换账号 ▾",
           title: "管理并切换已保存的多个国际账号",
           onclick: function () { showAccountsManagerModal("intl"); }
         }),
-        el("button", {
-          class: "ghost",
-          style: "padding:2px 8px;font-size:11px",
-          text: intlLv.ok ? "获取/录入凭据" : "⚡ 拟真登录/录入",
+        intlLv.ok ? el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/usage", target: "_blank", rel: "noreferrer",
+          style: "margin:0;font-size:11px;white-space:nowrap", text: "官网明细 ↗" }) : el("button", {
+          class: "btn-hero",
+          style: "padding:3px 10px;font-size:11.5px;white-space:nowrap;height:auto",
+          text: "⚡ 登录/录入",
           onclick: function () { showTokenImportModal("intl"); }
-        }),
-        el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/plan", target: "_blank", rel: "noreferrer",
-          style: "margin:0;font-size:11px", text: "账单 ↗" }),
-        el("a", { class: "chip", href: "https://www.codebuddy.ai/profile/usage", target: "_blank", rel: "noreferrer",
-          style: "margin:0;font-size:11px", text: "明细 ↗" })
+        })
       ])
     ]));
 
@@ -4464,7 +4482,7 @@
           el("span", { class: "bar-track" }, [
             el("span", { class: "bar-fill intl", style: "width:" + Math.max(1.5, pct) + "%" })
           ]),
-          el("span", { class: "bar-num", text: p.remain + "/" + p.total + " " + (p.unit || "") })
+          el("span", { class: "bar-num", text: formatCreditNum(p.remain) + " / " + formatCreditNum(p.total) + " " + (p.unit || "") })
         ]));
       });
     }
