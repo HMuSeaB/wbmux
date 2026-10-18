@@ -227,6 +227,7 @@ func TargetInfo() (exePath string, tempDir string, err error) {
 		return "", "", err
 	}
 	tmp := filepath.Join(dir, "tmp")
+	_ = os.MkdirAll(tmp, 0o755) // 预先确保临时目录物理存在，避免升级前点击「打开缓存」报 404
 	return exe, tmp, nil
 }
 
