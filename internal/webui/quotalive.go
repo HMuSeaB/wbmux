@@ -142,6 +142,18 @@ type quotaSeed struct {
 	OK []string
 }
 
+// parseLogTime 解析日志行首形如 2006-01-02 15:04:05 的本地时间戳。
+func parseLogTime(line string) (int64, bool) {
+	if len(line) < 19 {
+		return 0, false
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", line[:19], time.Local)
+	if err != nil {
+		return 0, false
+	}
+	return t.UnixMilli(), true
+}
+
 // 日志里两行关键格式（见 proxylog.go / openai.go）：
 //
 //	2026-09-29 19:57:13  被国际后端拒绝 model=deepseek-v4.1-flash 上游 HTTP 429: <上游原话>
@@ -269,13 +281,21 @@ func parseQuotaLog(path string, now int64) quotaSeed {
 				q.State = "rate_limited"
 				q.UntilMs, q.UntilText = parseResetAt(msg)
 			}
-			q.SeenMs = now
+			if lineTime, ok := parseLogTime(line); ok {
+				q.SeenMs = lineTime
+			} else {
+				q.SeenMs = now
+			}
 			state[model] = q
 			continue
 		}
 		if code, err := strconv.Atoi(h[1]); err == nil && code >= 500 {
+			lineTime := now
+			if lt, ok := parseLogTime(line); ok {
+				lineTime = lt
+			}
 			state[model] = ProxyQuota{Model: model, State: "upstream_error",
-				SeenMs: now, Message: cutStr(compactError(msg), 300)}
+				SeenMs: lineTime, Message: cutStr(compactError(msg), 300)}
 		}
 	}
 
@@ -284,6 +304,10 @@ func parseQuotaLog(path string, now int64) quotaSeed {
 		// 恢复时刻已过 → 这次限流结束了，不该再报。日志里没有"恢复"事件
 		// （恢复是时间到了自然发生），所以只能靠时刻判断。
 		if q.State == "rate_limited" && q.UntilMs > 0 && q.UntilMs <= now {
+			continue
+		}
+		// 若上游未给出具体恢复时间戳（如仅提示"模型繁忙"），发生超过 3 分钟即视为已自愈，避免陈旧日志永久锁死
+		if q.State == "rate_limited" && q.UntilMs == 0 && q.SeenMs > 0 && now-q.SeenMs > 3*60*1000 {
 			continue
 		}
 		out.Limited = append(out.Limited, q)
@@ -397,26 +421,16 @@ func quotaWarnText(items []ProxyQuota) string {
 	return strings.Join(parts, " ")
 }
 
-// BlocksInjection 报告这条状态是否该让 wbmux **停止把它注入**国内客户端。
-//
-// 只有"配额类"问题才阻止注入：限流（等到点自愈）与额度用尽（要充值）。
-// 理由是这两者都**会持续一段时间**——客户端手上如果握着这样一个条目，
-// 用到一半被上游拒，它会自己换个模型继续，而国内侧的备选常常是付费模型，
-// 用户会不知不觉挨一刀。
-//
-// 上游故障（5xx）**不阻止注入**：它是瞬时的。实测 step-5-preview 在
-// 2026-10-15 那天 48 次成功 / 4 次 500，也就是九成以上是好的；为了那几次
-// 抖动就把这个免费模型整个从客户端撤掉，代价比"偶尔重试一次"大得多。
-// 面板会如实显示"上游故障，可重试"，把选择权留给用户。
+// BlocksInjection 保持兼容性保留。为遵循用户控制权与透明代理原则，
+// wbmux 现已全量注入所有模型，不再因临时限流而单方面跳过注入，避免剥夺客户端模型入口。
 func (q ProxyQuota) BlocksInjection() bool {
-	return q.State == "rate_limited" || q.State == "exhausted"
+	return false
 }
 
 // quotaFor 返回某个模型当前的状态；没有记录（即可用）时返回 nil。
 //
-// 与 quotaSnapshot 的区别：那个是给界面列全量用的，这个是给"要不要注入"
-// 这种单点判断用的——返回 nil 而不是零值，调用方就不会把"没记录"和
-// "记录了但状态是 ok"搞混。调用方要判断该不该因此跳过，用 BlocksInjection。
+// 与 quotaSnapshot 的区别：那个是给界面列全量用的，这个是给单点判断用的——
+// 返回 nil 而不是零值，调用方就不会把"没记录"和"记录了但状态是 ok"搞混。
 func (s *Server) quotaFor(model string) *ProxyQuota {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -429,9 +443,15 @@ func (s *Server) quotaFor(model string) *ProxyQuota {
 	if !ok {
 		return nil
 	}
-	// 到了恢复时刻就当它已经好了——不然会一直挂着，
-	// 明明能用了却不注入。
-	if q.UntilMs > 0 && q.UntilMs <= time.Now().UnixMilli() {
+	now := time.Now().UnixMilli()
+	// 到了恢复时刻就当它已经好了——不然会一直挂着，明明能用了却报限流
+	if q.UntilMs > 0 && q.UntilMs <= now {
+		delete(s.rate.items, model)
+		return nil
+	}
+	// 没有具体恢复时刻（如“模型繁忙”），3 分钟后自然解除，避免永久卡死
+	if q.UntilMs == 0 && q.SeenMs > 0 && now-q.SeenMs > 3*60*1000 {
+		delete(s.rate.items, model)
 		return nil
 	}
 	cp := q

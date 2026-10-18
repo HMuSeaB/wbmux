@@ -412,25 +412,12 @@ func TestQuotaWarnTextExhaustedHasNoTime(t *testing.T) {
 	}
 }
 
-// TestBlocksInjectionOnlyForQuotaProblems 钉住"谁该阻止注入"这条界线。
-//
-// 配额类（限流 / 额度用尽）会持续一段时间，客户端握着这样一个条目会在
-// 用到一半被拒后自动切到付费模型——所以跳过注入。
-// 上游 5xx 是瞬时的（实测 step-5-preview 那天 48 成功 / 4 失败），
-// 为几次抖动把整个免费模型撤掉不划算，所以照常注入、面板如实标注。
-func TestBlocksInjectionOnlyForQuotaProblems(t *testing.T) {
-	cases := []struct {
-		state string
-		want  bool
-	}{
-		{"rate_limited", true},
-		{"exhausted", true},
-		{"upstream_error", false},
-		{"ok", false},
-	}
-	for _, c := range cases {
-		if got := (ProxyQuota{State: c.state}).BlocksInjection(); got != c.want {
-			t.Errorf("State=%q BlocksInjection() = %v，期望 %v", c.state, got, c.want)
+// TestBlocksInjectionNeverBlocks 钉住"不再阻止注入"这条用户控制权界线。
+// 即使发生限流，客户端也必须保有模型入口，网关层由 Auto-Failover 自动兜底。
+func TestBlocksInjectionNeverBlocks(t *testing.T) {
+	for _, state := range []string{"rate_limited", "exhausted", "upstream_error", "ok"} {
+		if got := (ProxyQuota{State: state}).BlocksInjection(); got {
+			t.Errorf("State=%q BlocksInjection() 期望为 false（不阻止注入），实际为 %v", state, got)
 		}
 	}
 }

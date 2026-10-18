@@ -21,7 +21,6 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -986,17 +985,15 @@ func (s *Server) syncInto() (int, string, error) {
 	base := "http://" + s.Addr() + "/v1/chat/completions"
 	path := filepath.Join(s.probe().DataDir(variant.CN), "models.json")
 
-	// 只注入"此刻还能用"的模型。
-	var skipped []string
-	var usable []usage.LiveModel
+	// 遵循"限流也不能不注入"原则：全量注入所有可用模型。
+	// 即使某个模型刚才偶发频控，也不能剥夺客户端的模型入口；
+	// 网关底层已配备 Auto-Failover 多账号故障转移与重试兜底。
+	var rateLimitedWarn []string
 	for _, m := range intl {
-		if q := s.quotaFor(m.ID); q != nil && q.BlocksInjection() {
-			skipped = append(skipped, m.ID)
-			continue
+		if q := s.quotaFor(m.ID); q != nil && (q.State == "rate_limited" || q.State == "exhausted") {
+			rateLimitedWarn = append(rateLimitedWarn, m.ID)
 		}
-		usable = append(usable, m)
 	}
-	intl = usable
 
 	added, err := custommodels.Sync(path, base, s.token, intl, cfg.Providers, cfg.SelectedIntlModels)
 	if err != nil {
@@ -1043,22 +1040,8 @@ func (s *Server) syncInto() (int, string, error) {
 	if intlErr != "" {
 		parts += "；国际侧这一轮没注入：" + intlErr
 	}
-	if len(skipped) > 0 {
-		// 把跳过的名字与原因说清楚。
-		// "少注入了几个"这种事如果不解释，用户只会以为同步坏了。
-		var why []string
-		for _, m := range skipped {
-			if q := s.quotaFor(m); q != nil && q.UntilText != "" {
-				why = append(why, m+"（"+q.UntilText+" 恢复）")
-			} else {
-				why = append(why, m+"（额度已尽）")
-			}
-		}
-		parts += "；这 " + strconv.Itoa(len(skipped)) + " 个上一轮就被限流了，" +
-			"这轮先不注入，免得用到一半被拒、客户端自动切到付费模型：" +
-			strings.Join(why, "、")
-		s.note(ProxyLogEntry{Level: "warn",
-			Text: "跳过 " + strconv.Itoa(len(skipped)) + " 个限流中的模型：" + strings.Join(skipped, "、")})
+	if len(rateLimitedWarn) > 0 {
+		parts += "；注：" + strings.Join(rateLimitedWarn, "、") + " 刚才曾有上游频控，网关已配备自动故障转移守护"
 	}
 	if added == free {
 		// 一个自有模型都没注入：多半是还没建卡片，顺带提一句入口在哪。
@@ -1137,7 +1120,12 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	var results []*usage.ChatProbeResult
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
-		results = append(results, usage.SendChatProbe(s.probe(), id))
+		res := usage.SendChatProbe(s.probe(), id)
+		results = append(results, res)
+		if res.OK && res.Model != "" {
+			// 一键测试成功证明该模型可用，立即清除陈旧限流标记
+			s.observe(res.Model, http.StatusOK, "")
+		}
 	}
 	writeJSON(w, map[string]any{"results": results})
 }

@@ -89,6 +89,9 @@ func (s *Server) handleModelRadarPing(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		rec := radar.Ping(r.Context(), endpoint, cred.Token, meta, opt)
+		if rec.Status != modelradar.StatusDown && rec.Status != modelradar.StatusUntested && rec.Model != "" {
+			s.observe(rec.Model, http.StatusOK, "")
+		}
 		fastest, found := radar.FastestFreeModel()
 		writeJSON(w, map[string]any{
 			"records":          []modelradar.ProbeRecord{rec},
@@ -121,6 +124,11 @@ func (s *Server) handleModelRadarPing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := radar.PingBatch(r.Context(), endpoint, cred.Token, probeTargets, 2, opt)
+	for _, rec := range results {
+		if rec.Status != modelradar.StatusDown && rec.Status != modelradar.StatusUntested && rec.Model != "" {
+			s.observe(rec.Model, http.StatusOK, "")
+		}
+	}
 	fastest, found := radar.FastestFreeModel()
 
 	writeJSON(w, map[string]any{
