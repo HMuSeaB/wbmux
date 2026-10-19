@@ -58,6 +58,16 @@
     font: 13.5px/1.6 var(--sans);
     -webkit-font-smoothing: antialiased;
   }
+  a {
+    color: var(--brand);
+    text-decoration: none;
+    font: inherit;
+    transition: color .12s, text-decoration .12s;
+  }
+  a:hover {
+    color: #fff;
+    text-decoration: underline;
+  }
 
   /* 图标：统一 16px 线性图标，用 currentColor 跟随文字色。
      描边 1.6 在 14px 字号旁边不显粗也不消失。 */
@@ -1111,6 +1121,26 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
+  }
+  .upd-release-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 550;
+    color: var(--brand);
+    padding: 6px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid rgba(99, 179, 196, 0.28);
+    background: rgba(99, 179, 196, 0.06);
+    text-decoration: none;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .upd-release-link:hover {
+    color: #fff;
+    background: rgba(99, 179, 196, 0.16);
+    border-color: var(--brand);
+    text-decoration: none;
   }
   .upd-progress-wrap {
     display: flex;
@@ -6412,10 +6442,9 @@
     var foot = el("div", { class: "modal-foot", style: "justify-content:space-between" });
     var footLeft = el("div", { style: "display:flex;align-items:center;gap:6px" }, [
       info.url ? el("a", {
-        class: "ghost upd-path-btn",
+        class: "upd-release-link",
         href: info.url,
         target: "_blank",
-        style: "text-decoration:none",
         text: "官方 Release 说明 ↗"
       }) : null
     ]);
