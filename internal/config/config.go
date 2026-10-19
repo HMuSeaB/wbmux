@@ -32,6 +32,10 @@ type Config struct {
 	// 关闭（false）时则执行 Release 恢复客户端官方原生策略。
 	DisableAutoUpdate *bool `json:"disableAutoUpdate,omitempty"`
 
+	// CustomClientAppConfigPath 允许用户自定义指定的客户端 app-config.json 或数据目录路径。
+	// 留空时自动从官方默认数据目录探测。
+	CustomClientAppConfigPath string `json:"customClientAppConfigPath,omitempty"`
+
 	// AutoCheckin 控制"打开界面时自动签到"。
 	//
 	// 用指针的理由与 DisableAutoUpdate 相同：区分"没设过"与"明确设成 false"。

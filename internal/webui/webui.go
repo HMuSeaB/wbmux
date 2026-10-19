@@ -337,13 +337,13 @@ func (s *Server) Start() error {
 //
 // 可选功能（默认关，仅在用户显式开启时压制）；未开启时不主动触碰客户端配置。
 func (s *Server) applyAutoUpdatePolicy() {
-	if cfg, err := config.Load(); err == nil && !config.DisableAutoUpdateOn(cfg) {
+	cfg, err := config.Load()
+	if err != nil || !config.DisableAutoUpdateOn(cfg) {
 		return
 	}
-	if n, err := s.applyClientUpdatePolicy(true); err != nil {
-		s.logf("关闭客户端自动更新失败：%s", compactError(err.Error()))
-	} else if n > 0 {
-		s.logf("已按用户配置关闭客户端的启动静默自动更新（改动了 %d 侧；下次启动客户端生效）", n)
+	res := s.applyClientUpdatePolicy(true, cfg.CustomClientAppConfigPath)
+	if res.ModifiedCount > 0 {
+		s.logf("已按用户配置关闭客户端的启动静默自动更新（改动了 %d 处；下次启动客户端生效）", res.ModifiedCount)
 	}
 }
 

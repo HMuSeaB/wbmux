@@ -1768,6 +1768,31 @@
     <p class="sub">
       原理是向客户端的 <code>app/app-config.json</code> 写入开关；取消勾选会将该键<strong>彻底删除</strong>，完整恢复客户端官方原生决策。
     </p>
+    <!-- 真实物理路径与状态看板 -->
+    <div id="client-update-targets-box" style="margin-top:12px;background:var(--g2);border:1px solid var(--g3);border-radius:6px;padding:10px 12px">
+      <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        <svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>检测到的客户端配置目标
+      </div>
+      <div id="client-update-targets-list" style="display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:11.5px;color:var(--ink-3)">正在探测客户端配置路径…</div>
+      </div>
+    </div>
+
+    <!-- 自定义客户端路径配置 -->
+    <div style="margin-top:12px">
+      <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:4px">
+        ⚙️ 自定义客户端数据目录或配置文件路径
+      </div>
+      <p class="sub" style="margin-bottom:6px">
+        若您的客户端安装在非系统盘、使用了绿色便携版或自定义数据目录，请在此输入目录或 <code>app-config.json</code> 路径：
+      </p>
+      <div class="row" style="margin:0;gap:8px">
+        <input type="text" id="ipt-custom-client-path" placeholder="例如：D:\Tools\WorkBuddy\.workbuddy 或 C:\...\app-config.json" style="flex:1;font-family:var(--mono);font-size:12px">
+        <button id="btn-save-custom-client-path" class="ghost" style="padding:4px 12px;font-size:12px">保存并应用</button>
+        <button id="btn-clear-custom-client-path" class="ghost" style="padding:4px 8px;font-size:12px" title="清空自定义路径并恢复自动探测">清空</button>
+      </div>
+    </div>
+
     <div id="client-update-note" style="margin-top:10px"></div>
   </section>
     </div>
@@ -2818,6 +2843,7 @@
       } else {
         loadCheckin(false);
       }
+      loadClientUpdateState();
     }
     if (page === "workspace") loadWorkspace();
     if (page === "recycle") loadRecycle();
@@ -3164,7 +3190,6 @@
   }
 
   // renderClientUpdateState 把"当前是开还是关"写在开关旁边。
-  // 单独一个函数是因为它有两处调用（首次读、每次切换后）。
   function renderClientUpdateState(on) {
     var s = document.getElementById("client-update-state");
     if (!s) return;
@@ -3172,15 +3197,85 @@
                        : "（未开启；保持官方默认更新策略）";
   }
 
-  // 首次进入时读一次开关状态。读不到就保持不勾、并把原因说出来——
-  // 界面上显示一个假的勾比不显示更糟。
+  // renderClientUpdateTargets 渲染探测到的具体客户端 app-config.json 物理目标列表
+  function renderClientUpdateTargets(targets) {
+    var box = document.getElementById("client-update-targets-list");
+    if (!box) return;
+    clear(box);
+    if (!targets || targets.length === 0) {
+      box.appendChild(el("div", {
+        style: "font-size:11.5px;color:var(--ink-3);padding:4px 0",
+        text: "未在默认位置检测到客户端数据目录。若您安装在非系统盘或使用便携版，可在下方指定自定义路径。"
+      }));
+      return;
+    }
+    targets.forEach(function (t) {
+      var isProtected = t.status === "disabled";
+      var statusPill = isProtected
+        ? el("span", { class: "pill ok", style: "font-size:10px" }, ["已受保护 · 更新已压制"])
+        : (t.exists ? el("span", { class: "pill", style: "font-size:10px;color:var(--ink-2)" }, ["官方原生策略"])
+                    : el("span", { class: "pill warn", style: "font-size:10px" }, ["尚未生成配置"]));
+
+      var btnOpen = el("button", {
+        class: "ghost",
+        style: "padding:2px 8px;font-size:11px;height:24px;border-color:var(--g4)",
+        title: "在 Windows 资源管理器中打开该目录"
+      }, ["📂 打开目录"]);
+      btnOpen.addEventListener("click", function () {
+        api("/api/open-folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: t.path })
+        }).catch(function (err) {
+          toast("打开目录失败: " + err.message, "bad");
+        });
+      });
+
+      var row = el("div", {
+        style: "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:var(--g1);border:1px solid var(--g3);border-radius:4px"
+      }, [
+        el("div", { style: "display:flex;flex-direction:column;gap:2px;min-width:0;flex:1" }, [
+          el("div", { style: "display:flex;align-items:center;gap:6px" }, [
+            el("span", { style: "font-size:11.5px;font-weight:600;color:var(--ink-1)", text: t.label }),
+            statusPill
+          ]),
+          el("code", {
+            style: "font-family:var(--mono);font-size:11px;color:var(--ink-2);word-break:break-all",
+            text: t.path
+          })
+        ]),
+        btnOpen
+      ]);
+      box.appendChild(row);
+    });
+  }
+
+  // renderClientUpdateData 统一刷新客户端自动更新相关界面组件
+  function renderClientUpdateData(d) {
+    if (!d) return;
+    var chk = document.getElementById("chk-client-update");
+    if (chk) chk.checked = !!d.enabled;
+    renderClientUpdateState(!!d.enabled);
+    var ipt = document.getElementById("ipt-custom-client-path");
+    if (ipt && d.customPath !== undefined) {
+      ipt.value = d.customPath || "";
+    }
+    renderClientUpdateTargets(d.targets);
+    var noteBox = document.getElementById("client-update-note");
+    if (noteBox) {
+      clear(noteBox);
+      if (d.note) {
+        var isWarn = d.note.indexOf("未检测到") !== -1 || d.note.indexOf("失败") !== -1;
+        noteBox.appendChild(el("div", { class: isWarn ? "note warn" : "note ok", text: d.note }));
+      }
+    }
+  }
+
+  // 首次进入时读一次开关状态与物理路径
   function loadClientUpdateState() {
     api("/api/client-update").then(function (d) {
-      document.getElementById("chk-client-update").checked = !!(d && d.enabled);
-      renderClientUpdateState(!!(d && d.enabled));
+      renderClientUpdateData(d);
     }).catch(function (e) {
-      // 读失败就让它保持未知状态，并说明白。
-      // 不勾不表示"没禁止"，而是"读不到"——这句必须写清楚。
       renderClientUpdateState(false);
     });
   }
@@ -5970,31 +6065,78 @@
     });
   });
 
-  // 客户端自动更新开关。状态在打开这一页时读一次——它要读 wbmux 的配置，
-  // 没必要在启动时就跑。
+  // 客户端自动更新开关与自定义路径
   document.getElementById("chk-client-update").addEventListener("change", function () {
     var cb = this;
     var on = this.checked;
-    var box = document.getElementById("client-update-note");
+    var ipt = document.getElementById("ipt-custom-client-path");
+    var customPathVal = ipt ? ipt.value.trim() : undefined;
     api("/api/client-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: on })
+      body: JSON.stringify({ enabled: on, customPath: customPathVal })
     }).then(function (res) {
       toast(on ? "已开启禁止客户端自动更新" : "已恢复客户端官方更新策略", "ok");
-      if (box) {
-        clear(box);
-        var t = res && res.note ? res.note
-              : (on ? "已写入客户端设置；下次启动客户端生效。"
-                    : "已从客户端设置中移除该配置，恢复官方原生更新策略。");
-        box.appendChild(el("div", { class: "note", text: t }));
-      }
-      renderClientUpdateState(on);
+      renderClientUpdateData(res);
     }).catch(function (e) {
       toast("保存失败：" + e.message, "bad");
       cb.checked = !on;   // 存失败就还原，别显示一个并不生效的状态
     });
   });
+
+  var btnSaveCustomPath = document.getElementById("btn-save-custom-client-path");
+  if (btnSaveCustomPath) {
+    btnSaveCustomPath.addEventListener("click", function () {
+      var ipt = document.getElementById("ipt-custom-client-path");
+      var pathVal = ipt ? ipt.value.trim() : "";
+      if (!pathVal) {
+        toast("请输入有效的自定义客户端路径", "warn");
+        return;
+      }
+      var chk = document.getElementById("chk-client-update");
+      var on = chk ? chk.checked : true;
+      api("/api/client-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: on, customPath: pathVal })
+      }).then(function (res) {
+        toast("自定义路径已保存并应用", "ok");
+        renderClientUpdateData(res);
+      }).catch(function (e) {
+        toast("保存自定义路径失败：" + e.message, "bad");
+      });
+    });
+  }
+
+  var btnClearCustomPath = document.getElementById("btn-clear-custom-client-path");
+  if (btnClearCustomPath) {
+    btnClearCustomPath.addEventListener("click", function () {
+      var ipt = document.getElementById("ipt-custom-client-path");
+      if (ipt) ipt.value = "";
+      var chk = document.getElementById("chk-client-update");
+      var on = chk ? chk.checked : false;
+      api("/api/client-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: on, customPath: "" })
+      }).then(function (res) {
+        toast("已清空自定义路径，恢复自动探测", "ok");
+        renderClientUpdateData(res);
+      }).catch(function (e) {
+        toast("清空自定义路径失败：" + e.message, "bad");
+      });
+    });
+  }
+
+  var iptCustomPath = document.getElementById("ipt-custom-client-path");
+  if (iptCustomPath) {
+    iptCustomPath.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (btnSaveCustomPath) btnSaveCustomPath.click();
+      }
+    });
+  }
 
   // 回收站清理。切到这一页时才去读——读回收站要遍历所有条目的元数据，
   // 没必要在启动时就跑。
