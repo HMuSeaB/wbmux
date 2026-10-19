@@ -733,3 +733,106 @@ func TestExtractUsageFromBytes(t *testing.T) {
 		})
 	}
 }
+
+// TestModelBusyRetrySuccess 验证遇到上游 14003 Model Busy（算力繁忙）时自动退避重发且成功
+func TestModelBusyRetrySuccess(t *testing.T) {
+	origDelays := modelBusyRetryDelays
+	modelBusyRetryDelays = []time.Duration{2 * time.Millisecond}
+	defer func() { modelBusyRetryDelays = origDelays }()
+
+	reqCount := 0
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCount++
+		if reqCount == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":14003,"msg":"model busy, please try later"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"model\":\"busy-model\",\"choices\":[{\"delta\":{\"content\":\"hello recovered\"}}]}\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer vendor.Close()
+
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+	cfg := config.Config{Providers: []config.Provider{{
+		ID:      "p-busy",
+		Name:    "BusyTest",
+		BaseURL: vendor.URL + "/v1/chat/completions",
+		APIKey:  "sk-test",
+		Models:  []string{"busy-model"},
+	}}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"custom-local:wbmux-byok-p-busy-busy-model","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("算力繁忙重试后应返回 200，实际返回 %d: %s", rec.Code, rec.Body.String())
+	}
+	if reqCount != 2 {
+		t.Errorf("期望重试后共发 2 次请求，实际发了 %d 次", reqCount)
+	}
+	if !strings.Contains(rec.Body.String(), "hello recovered") {
+		t.Errorf("响应体应包含重试成功的流式正文，实际为: %s", rec.Body.String())
+	}
+}
+
+// TestModelBusyRetryExhausted 验证当算力繁忙持续存在超过重试次数时如实透传 429
+func TestModelBusyRetryExhausted(t *testing.T) {
+	origDelays := modelBusyRetryDelays
+	modelBusyRetryDelays = []time.Duration{2 * time.Millisecond}
+	defer func() { modelBusyRetryDelays = origDelays }()
+
+	reqCount := 0
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCount++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":14003,"msg":"model busy, please try later"}`))
+	}))
+	defer vendor.Close()
+
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+	cfg := config.Config{Providers: []config.Provider{{
+		ID:      "p-busy2",
+		Name:    "BusyTest2",
+		BaseURL: vendor.URL + "/v1/chat/completions",
+		APIKey:  "sk-test",
+		Models:  []string{"busy-model2"},
+	}}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"custom-local:wbmux-byok-p-busy2-busy-model2","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("重试耗尽后应返回 429，实际为 %d", rec.Code)
+	}
+	if reqCount != 2 { // 初始 1 次 + 重试 1 次 (len(modelBusyRetryDelays) = 1)
+		t.Errorf("期望共发 2 次请求，实际发了 %d 次", reqCount)
+	}
+	if !strings.Contains(rec.Body.String(), "Model Busy") {
+		t.Errorf("错误信息应标明 Model Busy，实际为: %s", rec.Body.String())
+	}
+}
+

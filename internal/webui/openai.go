@@ -664,6 +664,73 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
 		}
 
+		// 针对 14003 Model Busy（算力繁忙）的自动退避重试：
+		// 官方算力繁忙通常是由于全网瞬时并发高峰引发的秒级瞬态抖动。
+		// 代理层进行最多 2 次短退避重发（默认 1.5s / 2.5s），避免直接报错打断客户端的长对话与 Agent 工具链。
+		if isModelBusy && resp.StatusCode == http.StatusTooManyRequests {
+			for attempt := 0; attempt < len(modelBusyRetryDelays); attempt++ {
+				delay := modelBusyRetryDelays[attempt]
+				s.note(ProxyLogEntry{
+					Level: "warn",
+					Model: route.Model,
+					Text:  fmt.Sprintf("上游模型当前算力繁忙 (14003 Model Busy)，代理层自动等待 %v 后进行第 %d 次重试...", delay, attempt+1),
+				})
+
+				select {
+				case <-req.Context().Done():
+					return
+				case <-time.After(delay):
+				}
+
+				reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
+				if errReq != nil {
+					break
+				}
+				for k, v := range req.Header {
+					reqRetry.Header[k] = v
+				}
+
+				respRetry, errRetry := probeHTTPClient().Do(reqRetry)
+				if errRetry != nil {
+					break
+				}
+				if respRetry.StatusCode == http.StatusOK {
+					defer respRetry.Body.Close()
+					s.observe(route.Model, http.StatusOK, "")
+					var m chatMetrics
+					if up.ClientStream {
+						m = s.streamChatThrough(w, respRetry.Body, started)
+					} else {
+						m = s.aggregateChat(w, respRetry.Body, started)
+					}
+					recordAudit(http.StatusOK, m, false, "")
+					s.note(ProxyLogEntry{
+						Level:  "ok",
+						Model:  route.Model,
+						Tools:  up.Tools,
+						Stream: up.ClientStream,
+						MS:     time.Since(started).Milliseconds(),
+						Text: fmt.Sprintf("算力繁忙重试成功 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
+							route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
+							describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
+					})
+					return
+				}
+
+				bodyRetry, _ := io.ReadAll(io.LimitReader(respRetry.Body, 8<<10))
+				_ = respRetry.Body.Close()
+				body = bodyRetry
+				msg = upstreamMessage(body)
+				isModelBusy = strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
+				if isModelBusy {
+					msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
+				} else {
+					resp = respRetry
+					break
+				}
+			}
+		}
+
 		if !isModelBusy && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
 			// 查询当前活跃账号
 			accs, _ := credential.ListAccounts(s.probe(), variant.Intl)
@@ -1068,7 +1135,12 @@ func cutStr(str string, n int) string {
 	return str[:n] + "…"
 }
 
+// modelBusyRetryDelays 是上游 14003 Model Busy（算力繁忙）时的短退避重发延迟阶梯。
+// 可由单元测试临时改小以加速测试。
+var modelBusyRetryDelays = []time.Duration{1500 * time.Millisecond, 2500 * time.Millisecond}
+
 // probeHTTPClient 是转发用的 HTTP 客户端（超时按长回复放宽）。
 func probeHTTPClient() *http.Client {
 	return &http.Client{Timeout: 120 * time.Second}
 }
+
