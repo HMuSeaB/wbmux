@@ -28,7 +28,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -78,7 +80,7 @@ func Check(current string) (Info, error) {
 		return info, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: httpTimeout}
+	client := newUpdateHTTPClient(httpTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return info, fmt.Errorf("访问 GitHub 失败（该链路时通时断，可打开 %s 手动下载）：%w", releasePage, err)
@@ -389,8 +391,17 @@ func ApplyWithProgress(assetURL, assetName, sumsURL string, onProgress func(Prog
 
 // downloadText 拉一段纯文本（checksums.txt）。
 func downloadText(url string) (string, error) {
-	client := &http.Client{Timeout: httpTimeout}
+	client := newUpdateHTTPClient(httpTimeout)
 	resp, err := client.Get(url)
+	if err != nil && strings.HasPrefix(url, "https://github.com/") {
+		mirrorURL := "https://ghproxy.net/" + url
+		if respMirror, errMirror := client.Get(mirrorURL); errMirror == nil && respMirror.StatusCode == http.StatusOK {
+			resp = respMirror
+			err = nil
+		} else if respMirror != nil {
+			respMirror.Body.Close()
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -463,8 +474,20 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 
 // downloadWithProgress 把 url 拉到 path（覆盖写），并高频触发进度回调。
 func downloadWithProgress(url, path string, onProgress func(downloaded, total int64, speed string, percent float64)) error {
-	client := &http.Client{Timeout: httpTimeout}
+	client := newUpdateHTTPClient(httpTimeout)
 	resp, err := client.Get(url)
+	if err != nil && strings.HasPrefix(url, "https://github.com/") {
+		mirrorURL := "https://ghproxy.net/" + url
+		if onProgress != nil {
+			onProgress(0, -1, "直连受阻，正在尝试备用加速镜像...", 0)
+		}
+		if respMirror, errMirror := client.Get(mirrorURL); errMirror == nil && respMirror.StatusCode == http.StatusOK {
+			resp = respMirror
+			err = nil
+		} else if respMirror != nil {
+			respMirror.Body.Close()
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("下载失败（该链路时通时断，可打开 %s 手动下载）：%w", releasePage, err)
 	}
@@ -640,4 +663,104 @@ func displayVersion(v string) string {
 		return "dev"
 	}
 	return v
+}
+
+// newUpdateHTTPClient 创建用于检查与下载更新的 HTTP Client。
+// 优先使用环境变量 (HTTP_PROXY / HTTPS_PROXY)；
+// 在 Windows 上若未设置环境变量代理，自动读取注册表 Internet Settings 中的 ProxyServer (如 127.0.0.1:7890)，
+// 确保开启了系统代理（如 Clash/v2rayN/Sing-box）的用户能够正常访问 GitHub。
+func newUpdateHTTPClient(timeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	}
+
+	if runtime.GOOS == "windows" && !hasProxyEnv() {
+		if proxyStr := detectWindowsSystemProxy(); proxyStr != "" {
+			if u, err := url.Parse(proxyStr); err == nil {
+				transport.Proxy = http.ProxyURL(u)
+			}
+		}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
+}
+
+func hasProxyEnv() bool {
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		if os.Getenv(k) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// detectWindowsSystemProxy 从 Windows 注册表读取 Internet Settings 的系统代理配置。
+func detectWindowsSystemProxy() string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	// 查询 ProxyEnable 是否开启 (0x1)
+	out, err := exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, "/v", "ProxyEnable").Output()
+	if err != nil || !strings.Contains(string(out), "0x1") {
+		return ""
+	}
+
+	// 查询 ProxyServer
+	out, err = exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, "/v", "ProxyServer").Output()
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "ProxyServer") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				raw := fields[len(fields)-1]
+				return parseProxyServerString(raw)
+			}
+		}
+	}
+	return ""
+}
+
+// parseProxyServerString 将 Windows 注册表里的 ProxyServer 转换为规范的 http(s) URL
+func parseProxyServerString(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// 复合格式：http=127.0.0.1:7890;https=127.0.0.1:7890
+	if strings.Contains(raw, "=") {
+		parts := strings.Split(raw, ";")
+		var fallback string
+		for _, part := range parts {
+			kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+			if len(kv) == 2 {
+				val := strings.TrimSpace(kv[1])
+				if kv[0] == "https" || kv[0] == "http" {
+					if !strings.HasPrefix(val, "http://") && !strings.HasPrefix(val, "https://") {
+						return "http://" + val
+					}
+					return val
+				}
+				fallback = val
+			}
+		}
+		if fallback != "" {
+			if !strings.HasPrefix(fallback, "http://") && !strings.HasPrefix(fallback, "https://") {
+				return "http://" + fallback
+			}
+			return fallback
+		}
+	}
+
+	// 单一格式：127.0.0.1:7890 或 http://127.0.0.1:7890
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return "http://" + raw
+	}
+	return raw
 }

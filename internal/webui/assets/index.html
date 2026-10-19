@@ -6325,7 +6325,11 @@
     var eventStream = null;
 
     function closeModal() {
-      if (inProgress && !confirm("更新正在进行中，关闭弹窗不会中断后台下载。确定关闭吗？")) {
+      if (inProgress) {
+        // 正在下载中：无论是点“后台运行”还是点右上角的 X，都不弹系统原生 confirm，
+        // 而是直接顺滑收起弹窗，让后台流继续监听下载，并弹轻量 Toast 通知用户。
+        overlay.classList.remove("open");
+        toast("更新已转入后台下载，完成后会自动通知您", "ok");
         return;
       }
       if (eventStream) {
@@ -6629,6 +6633,10 @@
 
         btnCancel.textContent = "稍后自行重启";
         btnQuitRestart.style.display = "inline-flex";
+        toast("🎉 新版本 " + info.latest + " 已更新就绪！重启即可生效", "ok");
+        if (!overlay.classList.contains("open")) {
+          overlay.classList.add("open");
+        }
 
         var sideBtn = document.getElementById("btn-update");
         if (sideBtn) {
