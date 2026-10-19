@@ -22,6 +22,8 @@ type Record struct {
 	DurationMs        int64     `json:"durationMs"`                  // 整个请求总耗时毫秒
 	FailoverTriggered bool      `json:"failoverTriggered,omitempty"` // 是否在该请求中触发了账号故障转移
 	ErrorMsg          string    `json:"errorMsg,omitempty"`          // 异常错误描述（如有）
+	ContextScale      string    `json:"contextScale,omitempty"`      // 会话体积分级: "normal" | "heavy" | "overload"
+	BodyBytes         int64     `json:"bodyBytes,omitempty"`         // 请求正文字节数
 }
 
 // Summary 是网关调用的聚合分析指标概览。

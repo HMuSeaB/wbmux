@@ -836,3 +836,55 @@ func TestModelBusyRetryExhausted(t *testing.T) {
 	}
 }
 
+// TestCalcModelBusyBackoff 验证自适应退避与动态微抖动
+func TestCalcModelBusyBackoff(t *testing.T) {
+	// 1. 微小基准时（测试模式）不放大
+	orig := modelBusyRetryDelays
+	modelBusyRetryDelays = []time.Duration{2 * time.Millisecond}
+	defer func() { modelBusyRetryDelays = orig }()
+
+	dTest := calcModelBusyBackoff(0, nil)
+	if dTest != 2*time.Millisecond {
+		t.Errorf("测试模式微秒级基准应原样返回，得到 %v", dTest)
+	}
+
+	// 2. 正常基准时应在合理抖动区间内 [1200ms, 1800ms]
+	modelBusyRetryDelays = []time.Duration{1500 * time.Millisecond}
+	for i := 0; i < 5; i++ {
+		d := calcModelBusyBackoff(0, nil)
+		if d < 1200*time.Millisecond || d > 1800*time.Millisecond {
+			t.Errorf("抖动后的等待时间超出预期范围: %v", d)
+		}
+	}
+
+	// 3. Retry-After 嗅探自适应微调
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("Retry-After", "2")
+	dRA := calcModelBusyBackoff(0, resp)
+	if dRA < 1600*time.Millisecond || dRA > 2400*time.Millisecond {
+		t.Errorf("根据 Retry-After 调整后的等待时间超出预期范围: %v", dRA)
+	}
+}
+
+// TestEvaluateContextScale 验证三级上下文规模分级与预警建议
+func TestEvaluateContextScale(t *testing.T) {
+	// 1. normal: < 500 KB
+	s1 := evaluateContextScale(300 * 1024)
+	if s1.Level != "normal" || s1.Tip != "" {
+		t.Errorf("300KB 应为 normal，得到 %+v", s1)
+	}
+
+	// 2. heavy: 500 KB ~ 1.2 MB
+	s2 := evaluateContextScale(800 * 1024)
+	if s2.Level != "heavy" || !strings.Contains(s2.Desc, "长会话") {
+		t.Errorf("800KB 应为 heavy，得到 %+v", s2)
+	}
+
+	// 3. overload: >= 1.2 MB
+	s3 := evaluateContextScale(1900 * 1024)
+	if s3.Level != "overload" || !strings.Contains(s3.Desc, "超载会话") || s3.Tip == "" {
+		t.Errorf("1.9MB 应为 overload 且包含优化建议，得到 %+v", s3)
+	}
+}
+
+

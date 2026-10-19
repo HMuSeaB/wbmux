@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"regexp"
@@ -486,13 +487,10 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 
 	// 先记"收到"，再转发：这样卡在上游的请求在界面上也看得见
 	// （只有一条"收到"没有对应的"完成"，一眼就知道卡在哪一步）。
-	bodyDesc := describeBytes(int64(len(raw)))
-	if len(raw) >= 1<<20 { // 大于 1MB
-		bodyDesc = fmt.Sprintf("%s (~%dk tokens 超长会话)", bodyDesc, (len(raw)/3)/1000)
-	}
+	scale := evaluateContextScale(int64(len(raw)))
 	s.note(ProxyLogEntry{Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
 		Text: fmt.Sprintf("收到请求 model=%s 经%s %s stream=%v 正文 %s",
-			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, bodyDesc)})
+			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, scale.Desc)})
 
 	// 端点与凭据头：内置后端要读客户端认证文件（并带上 X-User-Id 等产品头），
 	// 自备提供方只用卡片里的 key。
@@ -581,6 +579,7 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		if ttft <= 0 && statusCode == http.StatusOK {
 			ttft = time.Since(started).Milliseconds()
 		}
+		scale := evaluateContextScale(int64(len(rawBody)))
 		gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
 			ID:                fmt.Sprintf("req-%d", time.Now().UnixNano()),
 			Timestamp:         started,
@@ -597,6 +596,8 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			DurationMs:        time.Since(started).Milliseconds(),
 			FailoverTriggered: failover,
 			ErrorMsg:          errMsg,
+			ContextScale:      scale.Level,
+			BodyBytes:         int64(len(rawBody)),
 		})
 	}
 
@@ -683,14 +684,19 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
 	}
 
-	// 2. 14003 算力繁忙：秒级短退避重试（避免客户端长会话直接报错中断）
+	// 2. 14003 算力繁忙：秒级短退避重试（带真随机微抖动与自适应 Retry-After，避免客户端长会话直接报错中断）
 	if isModelBusy && resp.StatusCode == http.StatusTooManyRequests {
+		scale := evaluateContextScale(int64(len(rawBody)))
 		for attempt := 0; attempt < len(modelBusyRetryDelays); attempt++ {
-			delay := modelBusyRetryDelays[attempt]
+			delay := calcModelBusyBackoff(attempt, resp)
+			tipSuffix := ""
+			if scale.Tip != "" {
+				tipSuffix = " (建议: " + scale.Tip + ")"
+			}
 			s.note(ProxyLogEntry{
 				Level: "warn",
 				Model: route.Model,
-				Text:  fmt.Sprintf("上游模型当前算力繁忙 (14003 Model Busy)，代理层自动等待 %v 后进行第 %d 次重试...", delay, attempt+1),
+				Text:  fmt.Sprintf("上游模型当前算力繁忙 (14003 Model Busy)，代理层自动防抖等待 %v 进行第 %d 次重试%s", delay.Round(time.Millisecond), attempt+1, tipSuffix),
 			})
 
 			select {
@@ -1084,8 +1090,98 @@ func cutStr(str string, n int) string {
 // 可由单元测试临时改小以加速测试。
 var modelBusyRetryDelays = []time.Duration{1500 * time.Millisecond, 2500 * time.Millisecond}
 
+// calcModelBusyBackoff 计算包含真随机微抖动（Jitter）与上游提示的自适应退避等待时间。
+//
+// 策略：
+//  1. 若上游响应包含 Retry-After 头且解析出的秒数在 [1, 5] 秒内，以此为基础基准；
+//  2. 否则使用配置的阶梯延迟（默认 1.5s / 2.5s）；
+//  3. 增加 ±20% 且不超过 300ms 的密码学真随机抖动（Jitter），彻底打破多客户端瞬态重试的时间同步共振，防止群体踩踏；
+//  4. 当传入的 baseDelay 很小时（如单元测试里的 1ms~5ms），微抖动自动按比例缩小至微秒/毫秒级，保证测试快速完成。
+func calcModelBusyBackoff(attempt int, resp *http.Response) time.Duration {
+	base := 1500 * time.Millisecond
+	if attempt < len(modelBusyRetryDelays) {
+		base = modelBusyRetryDelays[attempt]
+	}
+
+	// 嗅探上游 Retry-After 标头
+	if resp != nil {
+		if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+			if sec, err := strconv.Atoi(ra); err == nil && sec >= 1 && sec <= 5 {
+				base = time.Duration(sec) * time.Second
+			}
+		}
+	}
+
+	if base <= 10*time.Millisecond {
+		// 测试环境微秒级快速通过，不加宏观抖动
+		return base
+	}
+
+	// 计算最大抖动窗口：取 base 的 20%，上限 300ms
+	jitterMax := base / 5
+	if jitterMax > 300*time.Millisecond {
+		jitterMax = 300 * time.Millisecond
+	}
+	if jitterMax <= 0 {
+		return base
+	}
+
+	// crypto/rand 生成 [-jitterMax, +jitterMax]
+	rangeMs := (jitterMax * 2).Milliseconds()
+	if rangeMs > 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(rangeMs+1))
+		if err == nil {
+			jitter := time.Duration(n.Int64()-rangeMs/2) * time.Millisecond
+			base += jitter
+		}
+	}
+
+	if base < 500*time.Millisecond {
+		base = 500 * time.Millisecond
+	}
+	return base
+}
+
+// contextScale 描述客户端会话上下文体积的三级健康评估。
+type contextScale struct {
+	Level  string // "normal" | "heavy" | "overload"
+	Tokens int    // 估算的 Token 数
+	Desc   string // 友好描述，如 "1.9 MB (~633k tokens [超载会话])"
+	Tip    string // 优化指导建议（超载时触发）
+}
+
+func evaluateContextScale(bytesLen int64) contextScale {
+	tokens := int(bytesLen / 3) // 经验值：混合代码/中文/工具定义约 1 Token ≈ 3 字节
+	bytesStr := describeBytes(bytesLen)
+
+	switch {
+	case bytesLen >= 1200*1024: // >= 1.2 MB (~400k tokens)
+		return contextScale{
+			Level:  "overload",
+			Tokens: tokens,
+			Desc:   fmt.Sprintf("%s (~%dk tokens [超载会话])", bytesStr, tokens/1000),
+			Tip:    "当前会话上下文已超 400k tokens，极易引发官方推理集群排队拥堵，建议在当前步骤完成后开启新对话以提升响应速度",
+		}
+	case bytesLen >= 500*1024: // 500 KB ~ 1.2 MB (~160k-400k tokens)
+		return contextScale{
+			Level:  "heavy",
+			Tokens: tokens,
+			Desc:   fmt.Sprintf("%s (~%dk tokens [长会话])", bytesStr, tokens/1000),
+			Tip:    "",
+		}
+	default:
+		return contextScale{
+			Level:  "normal",
+			Tokens: tokens,
+			Desc:   bytesStr,
+			Tip:    "",
+		}
+	}
+}
+
 // probeHTTPClient 是转发用的 HTTP 客户端（超时按长回复放宽）。
 func probeHTTPClient() *http.Client {
 	return &http.Client{Timeout: 120 * time.Second}
 }
+
 
