@@ -486,9 +486,13 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 
 	// 先记"收到"，再转发：这样卡在上游的请求在界面上也看得见
 	// （只有一条"收到"没有对应的"完成"，一眼就知道卡在哪一步）。
+	bodyDesc := describeBytes(int64(len(raw)))
+	if len(raw) >= 1<<20 { // 大于 1MB
+		bodyDesc = fmt.Sprintf("%s (~%dk tokens 超长会话)", bodyDesc, (len(raw)/3)/1000)
+	}
 	s.note(ProxyLogEntry{Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
 		Text: fmt.Sprintf("收到请求 model=%s 经%s %s stream=%v 正文 %s",
-			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, describeBytes(int64(len(raw))))})
+			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, bodyDesc)})
 
 	// 端点与凭据头：内置后端要读客户端认证文件（并带上 X-User-Id 等产品头），
 	// 自备提供方只用卡片里的 key。
@@ -596,6 +600,45 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		})
 	}
 
+	deliverSuccess := func(respBody io.ReadCloser, isFailover bool, customPrefix string) {
+		defer respBody.Close()
+		s.observe(route.Model, http.StatusOK, "")
+		var m chatMetrics
+		if up.ClientStream {
+			m = s.streamChatThrough(w, respBody, started)
+		} else {
+			m = s.aggregateChat(w, respBody, started)
+		}
+		recordAudit(http.StatusOK, m, isFailover, "")
+		s.note(ProxyLogEntry{
+			Level:  "ok",
+			Model:  route.Model,
+			Tools:  up.Tools,
+			Stream: up.ClientStream,
+			MS:     time.Since(started).Milliseconds(),
+			Text: fmt.Sprintf("%s model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
+				customPrefix, route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
+				describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
+		})
+	}
+
+	retryOnce := func(token, uid string) (*http.Response, error) {
+		reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
+		if errReq != nil {
+			return nil, errReq
+		}
+		for k, v := range req.Header {
+			reqRetry.Header[k] = v
+		}
+		if token != "" {
+			reqRetry.Header.Set("Authorization", "Bearer "+token)
+		}
+		if uid != "" {
+			reqRetry.Header.Set("X-User-Id", uid)
+		}
+		return probeHTTPClient().Do(reqRetry)
+	}
+
 	resp, err := probeHTTPClient().Do(req)
 	if err != nil {
 		s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
@@ -606,232 +649,134 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && route.Provider == nil {
-			// 尝试使用 RefreshToken 无感刷新并透明重试一次
-			newAcc, errRefresh := credential.RefreshAccount(req.Context(), probeHTTPClient(), s.probe(), variant.Intl, "active")
-			if errRefresh == nil && newAcc != nil && newAcc.Token != "" {
-				s.note(ProxyLogEntry{
-					Level: "warn",
-					Model: route.Model,
-					Text:  fmt.Sprintf("上游 401 令牌过期，已自动通过 RefreshToken 无感保鲜并重试请求 (UID: %s)", newAcc.UID),
-				})
-				usage.InvalidateLiveCache(variant.Intl)
-				reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
-				if errReq == nil {
-					for k, v := range req.Header {
-						reqRetry.Header[k] = v
-					}
-					reqRetry.Header.Set("Authorization", "Bearer "+newAcc.Token)
-					if newAcc.UID != "" {
-						reqRetry.Header.Set("X-User-Id", newAcc.UID)
-					}
-					respRetry, errRetry := probeHTTPClient().Do(reqRetry)
-					if errRetry == nil && respRetry.StatusCode == http.StatusOK {
-						defer respRetry.Body.Close()
-						s.observe(route.Model, http.StatusOK, "")
-						var m chatMetrics
-						if up.ClientStream {
-							m = s.streamChatThrough(w, respRetry.Body, started)
-						} else {
-							m = s.aggregateChat(w, respRetry.Body, started)
-						}
-						recordAudit(http.StatusOK, m, false, "")
-						s.note(ProxyLogEntry{
-							Level:  "ok",
-							Model:  route.Model,
-							Tools:  up.Tools,
-							Stream: up.ClientStream,
-							MS:     time.Since(started).Milliseconds(),
-							Text: fmt.Sprintf("重试转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
-								route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
-								describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
-						})
-						return
-					}
-					if errRetry == nil {
-						_ = respRetry.Body.Close()
-					}
-				}
+	if resp.StatusCode == http.StatusOK {
+		deliverSuccess(resp.Body, false, "转发完成")
+		return
+	}
+
+	// 1. 401 令牌过期：尝试使用 RefreshToken 无感刷新并重发
+	if resp.StatusCode == http.StatusUnauthorized && route.Provider == nil {
+		newAcc, errRefresh := credential.RefreshAccount(req.Context(), probeHTTPClient(), s.probe(), variant.Intl, "active")
+		if errRefresh == nil && newAcc != nil && newAcc.Token != "" {
+			s.note(ProxyLogEntry{
+				Level: "warn",
+				Model: route.Model,
+				Text:  fmt.Sprintf("上游 401 令牌过期，已自动通过 RefreshToken 无感保鲜并重试请求 (UID: %s)", newAcc.UID),
+			})
+			usage.InvalidateLiveCache(variant.Intl)
+			respRetry, errRetry := retryOnce(newAcc.Token, newAcc.UID)
+			if errRetry == nil && respRetry.StatusCode == http.StatusOK {
+				deliverSuccess(respRetry.Body, false, "重试转发完成")
+				return
+			}
+			if errRetry == nil {
+				_ = respRetry.Body.Close()
 			}
 		}
+	}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-		msg := upstreamMessage(body)
-		isModelBusy := strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	msg := upstreamMessage(body)
+	isModelBusy := strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
 
-		if isModelBusy {
-			msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
+	if isModelBusy {
+		msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
+	}
+
+	// 2. 14003 算力繁忙：秒级短退避重试（避免客户端长会话直接报错中断）
+	if isModelBusy && resp.StatusCode == http.StatusTooManyRequests {
+		for attempt := 0; attempt < len(modelBusyRetryDelays); attempt++ {
+			delay := modelBusyRetryDelays[attempt]
+			s.note(ProxyLogEntry{
+				Level: "warn",
+				Model: route.Model,
+				Text:  fmt.Sprintf("上游模型当前算力繁忙 (14003 Model Busy)，代理层自动等待 %v 后进行第 %d 次重试...", delay, attempt+1),
+			})
+
+			select {
+			case <-req.Context().Done():
+				return
+			case <-time.After(delay):
+			}
+
+			respRetry, errRetry := retryOnce("", "")
+			if errRetry != nil {
+				break
+			}
+			if respRetry.StatusCode == http.StatusOK {
+				deliverSuccess(respRetry.Body, false, "算力繁忙重试成功")
+				return
+			}
+
+			bodyRetry, _ := io.ReadAll(io.LimitReader(respRetry.Body, 8<<10))
+			_ = respRetry.Body.Close()
+			body = bodyRetry
+			msg = upstreamMessage(body)
+			isModelBusy = strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
+			if isModelBusy {
+				msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
+			} else {
+				resp = respRetry
+				break
+			}
 		}
+	}
 
-		// 针对 14003 Model Busy（算力繁忙）的自动退避重试：
-		// 官方算力繁忙通常是由于全网瞬时并发高峰引发的秒级瞬态抖动。
-		// 代理层进行最多 2 次短退避重发（默认 1.5s / 2.5s），避免直接报错打断客户端的长对话与 Agent 工具链。
-		if isModelBusy && resp.StatusCode == http.StatusTooManyRequests {
-			for attempt := 0; attempt < len(modelBusyRetryDelays); attempt++ {
-				delay := modelBusyRetryDelays[attempt]
+	// 3. 429/402 账号限额：多账号故障转移（Failover）轮换
+	if !isModelBusy && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
+		accs, _ := credential.ListAccounts(s.probe(), variant.Intl)
+		var currentActiveID string
+		for _, a := range accs {
+			if a.Active {
+				currentActiveID = a.ID
+				break
+			}
+		}
+		if currentActiveID != "" && len(accs) > 1 {
+			currentFailedID := currentActiveID
+			for attempt := 0; attempt < len(accs)-1 && attempt < 3; attempt++ {
+				nextAcc, errFailover := credential.GetDefaultFailoverTracker().FailoverToNext(s.probe(), variant.Intl, currentFailedID, credential.DefaultCooldownDuration)
+				if errFailover != nil || nextAcc == nil || nextAcc.Token == "" {
+					break
+				}
 				s.note(ProxyLogEntry{
 					Level: "warn",
 					Model: route.Model,
-					Text:  fmt.Sprintf("上游模型当前算力繁忙 (14003 Model Busy)，代理层自动等待 %v 后进行第 %d 次重试...", delay, attempt+1),
+					Text:  fmt.Sprintf("上游触发 429 账号限流/配额用尽，自动故障转移至备用账号：%s (%s) 并重发 (第 %d 次重试)", nextAcc.Nickname, nextAcc.UID, attempt+1),
 				})
-
-				select {
-				case <-req.Context().Done():
-					return
-				case <-time.After(delay):
-				}
-
-				reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
-				if errReq != nil {
-					break
-				}
-				for k, v := range req.Header {
-					reqRetry.Header[k] = v
-				}
-
-				respRetry, errRetry := probeHTTPClient().Do(reqRetry)
+				usage.InvalidateLiveCache(variant.Intl)
+				respRetry, errRetry := retryOnce(nextAcc.Token, nextAcc.UID)
 				if errRetry != nil {
 					break
 				}
 				if respRetry.StatusCode == http.StatusOK {
-					defer respRetry.Body.Close()
-					s.observe(route.Model, http.StatusOK, "")
-					var m chatMetrics
-					if up.ClientStream {
-						m = s.streamChatThrough(w, respRetry.Body, started)
-					} else {
-						m = s.aggregateChat(w, respRetry.Body, started)
-					}
-					recordAudit(http.StatusOK, m, false, "")
-					s.note(ProxyLogEntry{
-						Level:  "ok",
-						Model:  route.Model,
-						Tools:  up.Tools,
-						Stream: up.ClientStream,
-						MS:     time.Since(started).Milliseconds(),
-						Text: fmt.Sprintf("算力繁忙重试成功 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
-							route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
-							describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
-					})
+					accName = nextAcc.Nickname
+					accID = nextAcc.UID
+					deliverSuccess(respRetry.Body, true, fmt.Sprintf("故障转移重发成功 (账号: %s)", nextAcc.Nickname))
 					return
 				}
-
-				bodyRetry, _ := io.ReadAll(io.LimitReader(respRetry.Body, 8<<10))
-				_ = respRetry.Body.Close()
-				body = bodyRetry
-				msg = upstreamMessage(body)
-				isModelBusy = strings.Contains(string(body), "14003") || strings.Contains(strings.ToLower(string(body)), "model busy")
-				if isModelBusy {
-					msg = "[官方该模型当前算力繁忙 Model Busy，非账号额度问题，建议切换其它模型重试] " + msg
-				} else {
-					resp = respRetry
-					break
-				}
-			}
-		}
-
-		if !isModelBusy && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusPaymentRequired) && route.Provider == nil {
-			// 查询当前活跃账号
-			accs, _ := credential.ListAccounts(s.probe(), variant.Intl)
-			var currentActiveID string
-			for _, a := range accs {
-				if a.Active {
-					currentActiveID = a.ID
-					break
-				}
-			}
-			if currentActiveID != "" && len(accs) > 1 {
-				currentFailedID := currentActiveID
-				for attempt := 0; attempt < len(accs)-1 && attempt < 3; attempt++ {
-					nextAcc, errFailover := credential.GetDefaultFailoverTracker().FailoverToNext(s.probe(), variant.Intl, currentFailedID, credential.DefaultCooldownDuration)
-					if errFailover != nil || nextAcc == nil || nextAcc.Token == "" {
-						break
-					}
-					s.note(ProxyLogEntry{
-						Level: "warn",
-						Model: route.Model,
-						Text:  fmt.Sprintf("上游触发 429 账号限流/配额用尽，自动故障转移至备用账号：%s (%s) 并重发 (第 %d 次重试)", nextAcc.Nickname, nextAcc.UID, attempt+1),
-					})
-					usage.InvalidateLiveCache(variant.Intl)
-					reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
-					if errReq != nil {
-						break
-					}
-					for k, v := range req.Header {
-						reqRetry.Header[k] = v
-					}
-					reqRetry.Header.Set("Authorization", "Bearer "+nextAcc.Token)
-					if nextAcc.UID != "" {
-						reqRetry.Header.Set("X-User-Id", nextAcc.UID)
-					}
-					respRetry, errRetry := probeHTTPClient().Do(reqRetry)
-					if errRetry != nil {
-						break
-					}
-					if respRetry.StatusCode == http.StatusOK {
-						defer respRetry.Body.Close()
-						s.observe(route.Model, http.StatusOK, "")
-						accName = nextAcc.Nickname
-						accID = nextAcc.UID
-						var m chatMetrics
-						if up.ClientStream {
-							m = s.streamChatThrough(w, respRetry.Body, started)
-						} else {
-							m = s.aggregateChat(w, respRetry.Body, started)
-						}
-						recordAudit(http.StatusOK, m, true, "")
-						s.note(ProxyLogEntry{
-							Level:  "ok",
-							Model:  route.Model,
-							Tools:  up.Tools,
-							Stream: up.ClientStream,
-							MS:     time.Since(started).Milliseconds(),
-							Text: fmt.Sprintf("故障转移重发成功 model=%s 经%s (账号: %s) stream=%v 回给客户端 %s 用时 %s",
-								route.Model, route.Label, nextAcc.Nickname, up.ClientStream,
-								describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
-						})
-						return
-					}
-					if respRetry.StatusCode == http.StatusTooManyRequests || respRetry.StatusCode == http.StatusPaymentRequired {
-						_ = respRetry.Body.Close()
-						currentFailedID = nextAcc.ID
-						continue
-					}
+				if respRetry.StatusCode == http.StatusTooManyRequests || respRetry.StatusCode == http.StatusPaymentRequired {
 					_ = respRetry.Body.Close()
-					break
+					currentFailedID = nextAcc.ID
+					continue
 				}
+				_ = respRetry.Body.Close()
+				break
 			}
 		}
-
-		s.observe(route.Model, resp.StatusCode, msg)
-		level, verdict := "bad", "拒绝"
-		if resp.StatusCode >= 500 {
-			level, verdict = "warn", "上游故障"
-		}
-		s.note(ProxyLogEntry{Level: level, Model: route.Model, Tools: up.Tools,
-			MS: time.Since(started).Milliseconds(),
-			Text: fmt.Sprintf("被%s%s model=%s 上游 HTTP %d: %s",
-				route.Label, verdict, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
-		recordAudit(resp.StatusCode, chatMetrics{}, false, msg)
-		writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
-		return
 	}
-	// 上游 200：这个模型现在是好的，把之前记下的限流状态清掉。
-	s.observe(route.Model, http.StatusOK, "")
 
-	var m chatMetrics
-	if up.ClientStream {
-		m = s.streamChatThrough(w, resp.Body, started)
-	} else {
-		m = s.aggregateChat(w, resp.Body, started)
+	s.observe(route.Model, resp.StatusCode, msg)
+	level, verdict := "bad", "拒绝"
+	if resp.StatusCode >= 500 {
+		level, verdict = "warn", "上游故障"
 	}
-	recordAudit(http.StatusOK, m, false, "")
-	s.note(ProxyLogEntry{Level: "ok", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
+	s.note(ProxyLogEntry{Level: level, Model: route.Model, Tools: up.Tools,
 		MS: time.Since(started).Milliseconds(),
-		Text: fmt.Sprintf("转发完成 model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
-			route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
-			describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond))})
+		Text: fmt.Sprintf("被%s%s model=%s 上游 HTTP %d: %s",
+			route.Label, verdict, route.Model, resp.StatusCode, cutStr(compactError(msg), 300))})
+	recordAudit(resp.StatusCode, chatMetrics{}, false, msg)
+	writeOpenAIError(w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
 }
 
 // providers 读一次自备提供方配置。

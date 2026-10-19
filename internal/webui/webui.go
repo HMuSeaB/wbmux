@@ -747,6 +747,27 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
+// effectiveParentEnv 返回附带最新注册表环境变量（如 CODEBUDDY_AUTO_COMPACT_WINDOW）的环境列表。
+// 避免 wbmux 启动后用户修改了压缩阈值，而子进程依然继承旧环境变量快照的问题。
+func (s *Server) effectiveParentEnv() []string {
+	env := append([]string{}, s.opts.ParentEnv...)
+	if val := strings.TrimSpace(readUserEnv(compactEnvName)); val != "" {
+		prefix := compactEnvName + "="
+		found := false
+		for i, e := range env {
+			if strings.HasPrefix(strings.ToUpper(e), strings.ToUpper(prefix)) {
+				env[i] = prefix + val
+				found = true
+				break
+			}
+		}
+		if !found {
+			env = append(env, prefix+val)
+		}
+	}
+	return env
+}
+
 func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.decodeRequest(w, r)
 	if !ok {
@@ -755,7 +776,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	res, err := runner.Prepare(runner.Options{
 		Target:    req.Target,
 		Native:    req.Native,
-		ParentEnv: s.opts.ParentEnv,
+		ParentEnv: s.effectiveParentEnv(),
 		Probe:     s.probe(),
 	})
 	if err != nil {
@@ -826,7 +847,7 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	res, err := runner.Prepare(runner.Options{
 		Target:    req.Target,
 		Native:    req.Native,
-		ParentEnv: s.opts.ParentEnv,
+		ParentEnv: s.effectiveParentEnv(),
 		Probe:     s.probe(),
 	})
 	if err != nil {
@@ -1094,7 +1115,7 @@ func (s *Server) handleLaunchBoth(w http.ResponseWriter, r *http.Request) {
 		prep, err := runner.Prepare(runner.Options{
 			Target:    id,
 			Native:    true,
-			ParentEnv: s.opts.ParentEnv,
+			ParentEnv: s.effectiveParentEnv(),
 			Probe:     s.probe(),
 		})
 		if err == nil {
@@ -1172,7 +1193,7 @@ func (s *Server) buildPreview(req previewRequest) (PreviewView, error) {
 	res, err := runner.Prepare(runner.Options{
 		Target:    req.Target,
 		Native:    req.Native,
-		ParentEnv: s.opts.ParentEnv,
+		ParentEnv: s.effectiveParentEnv(),
 		Probe:     s.probe(),
 	})
 	if err != nil {
