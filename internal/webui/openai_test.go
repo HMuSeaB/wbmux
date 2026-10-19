@@ -13,6 +13,7 @@ import (
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
+	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -786,6 +787,17 @@ func TestModelBusyRetrySuccess(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "hello recovered") {
 		t.Errorf("响应体应包含重试成功的流式正文，实际为: %s", rec.Body.String())
 	}
+
+	auditSum := gatewayaudit.Default().GetSummary(1)
+	if len(auditSum.RecentRecords) > 0 {
+		latest := auditSum.RecentRecords[0]
+		if latest.ModelBusyRetries != 1 {
+			t.Errorf("审计记录中 ModelBusyRetries = %d, want 1", latest.ModelBusyRetries)
+		}
+		if len(latest.RetryDelays) != 1 {
+			t.Errorf("审计记录中 RetryDelays = %v, want 1 条记录", latest.RetryDelays)
+		}
+	}
 }
 
 // TestModelBusyRetryExhausted 验证当算力繁忙持续存在超过重试次数时如实透传 429
@@ -827,6 +839,14 @@ func TestModelBusyRetryExhausted(t *testing.T) {
 
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("重试耗尽后应返回 429，实际为 %d", rec.Code)
+	}
+
+	auditSum := gatewayaudit.Default().GetSummary(1)
+	if len(auditSum.RecentRecords) > 0 {
+		latest := auditSum.RecentRecords[0]
+		if latest.ModelBusyRetries != 1 {
+			t.Errorf("审计记录中 ModelBusyRetries = %d, want 1", latest.ModelBusyRetries)
+		}
 	}
 	if reqCount != 2 { // 初始 1 次 + 重试 1 次 (len(modelBusyRetryDelays) = 1)
 		t.Errorf("期望共发 2 次请求，实际发了 %d 次", reqCount)

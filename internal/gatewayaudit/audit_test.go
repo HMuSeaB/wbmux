@@ -73,6 +73,8 @@ func TestAuditorSummaryCalculation(t *testing.T) {
 		TTFTMs:            400,
 		DurationMs:        1200,
 		FailoverTriggered: false,
+		ModelBusyRetries:  2,
+		RetryDelays:       []string{"1.52s", "2.48s"},
 	})
 
 	sum := auditor.GetSummary(2)
@@ -99,11 +101,17 @@ func TestAuditorSummaryCalculation(t *testing.T) {
 	if sum.FailoverCount != 1 {
 		t.Errorf("FailoverCount = %d, want 1", sum.FailoverCount)
 	}
+	if sum.ModelBusyAbsorbedCount != 2 {
+		t.Errorf("ModelBusyAbsorbedCount = %d, want 2", sum.ModelBusyAbsorbedCount)
+	}
 	if sum.ModelCounts["deepseek-v4.1"] != 2 || sum.ModelCounts["gpt-5.6-sol"] != 1 {
 		t.Errorf("ModelCounts 不匹配: %v", sum.ModelCounts)
 	}
 	if len(sum.RecentRecords) != 2 {
 		t.Errorf("限制 2 条但返回了 %d 条", len(sum.RecentRecords))
+	}
+	if sum.RecentRecords[0].ModelBusyRetries != 2 || len(sum.RecentRecords[0].RetryDelays) != 2 {
+		t.Errorf("最新记录重试信息未正确保留: %+v", sum.RecentRecords[0])
 	}
 }
 

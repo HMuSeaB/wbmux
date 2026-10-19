@@ -1392,8 +1392,8 @@
           </div>
         </div>
 
-        <!-- 4 联核心 KPI 仪表卡片 -->
-        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px" id="gw-kpi-container">
+        <!-- 5 联核心 KPI 仪表卡片 -->
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));margin-bottom:16px" id="gw-kpi-container">
           <div class="kpi-card">
             <div class="kpi-head">
               <span class="kpi-title">累计调用 / 成功率</span>
@@ -1435,6 +1435,17 @@
             <div class="kpi-num" id="gw-kpi-failover">0 <span class="kpi-unit">次换号</span></div>
             <div class="kpi-foot">
               <span class="pulse-dot"></span> <span>429/402 自动无感续杯</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-head">
+              <span class="kpi-title">算力防抖吸收 (Jitter)</span>
+              <span class="pill ok" id="gw-kpi-absorbed-pill">微抖动自适应</span>
+            </div>
+            <div class="kpi-num" id="gw-kpi-absorbed">0 <span class="kpi-unit">次化解</span></div>
+            <div class="kpi-foot">
+              <span class="pulse-dot" style="background:#38bdf8"></span> <span>14003 GPU 瞬态拥堵平滑化解</span>
             </div>
           </div>
         </div>
@@ -6629,6 +6640,26 @@
       }
     }
 
+    var absorbed = s.modelBusyAbsorbedCount || 0;
+    var absorbedEl = document.getElementById("gw-kpi-absorbed");
+    if (absorbedEl) absorbedEl.innerHTML = absorbed.toLocaleString() + ' <span class="kpi-unit">次化解</span>';
+    var absorbedPill = document.getElementById("gw-kpi-absorbed-pill");
+    if (absorbedPill) {
+      if (absorbed > 0) {
+        absorbedPill.textContent = "已平滑吸收";
+        absorbedPill.className = "pill ok";
+        absorbedPill.style.background = "rgba(56,189,248,0.15)";
+        absorbedPill.style.color = "#38bdf8";
+        absorbedPill.style.borderColor = "rgba(56,189,248,0.4)";
+      } else {
+        absorbedPill.textContent = "微抖动自适应";
+        absorbedPill.className = "pill ok";
+        absorbedPill.style.background = "";
+        absorbedPill.style.color = "";
+        absorbedPill.style.borderColor = "";
+      }
+    }
+
     // 2. 模型调用分布条形排布
     var modelDistBody = document.getElementById("gw-model-dist-body");
     if (modelDistBody) {
@@ -6695,6 +6726,8 @@
         var tStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
         var codePillClass = (r.statusCode >= 200 && r.statusCode < 300) ? "ok" : (r.statusCode >= 500 ? "danger" : "warn");
         var isFailover = r.failoverTriggered;
+        var isBusyRetry = (r.modelBusyRetries || 0) > 0;
+        var retryTip = isBusyRetry ? ("算力繁忙微抖动重试 " + r.modelBusyRetries + " 次" + (r.retryDelays && r.retryDelays.length ? " (" + r.retryDelays.join(" → ") + ")" : "")) : "";
 
         var ttftClass = "gw-latency-mid";
         if (r.ttftMs > 0) {
@@ -6707,6 +6740,23 @@
           else if (r.durationMs > 6000) durClass = "gw-latency-slow";
         }
 
+        var statusDescEl;
+        if (r.errorMsg) {
+          statusDescEl = el("span", { style: "color:var(--bad);font-weight:550" }, [
+            r.errorMsg,
+            isBusyRetry ? el("span", { style: "color:var(--ink-3);font-size:10px;display:block", text: "已防抖重试 " + r.modelBusyRetries + " 次" }) : null
+          ]);
+        } else if (isBusyRetry) {
+          statusDescEl = el("span", { style: "color:#38bdf8;font-weight:550;cursor:help", title: retryTip }, [
+            "⚡ 算力繁忙已化解",
+            el("span", { style: "color:var(--ink-3);font-size:10px;display:block", text: r.retryDelays && r.retryDelays.length ? ("退避: " + r.retryDelays.join(" → ")) : (r.modelBusyRetries + "次重试") })
+          ]);
+        } else if (isFailover) {
+          statusDescEl = el("span", { style: "color:var(--warn)", text: "触发限流自动故障转移" });
+        } else {
+          statusDescEl = el("span", { text: "正常转发" });
+        }
+
         var tr = el("tr", { class: "gw-audit-row" }, [
           el("td", { style: "padding:9px 6px;font-family:var(--mono);color:var(--ink-3);font-size:11px", text: tStr }),
           el("td", { style: "padding:9px 6px;font-family:var(--mono);font-weight:600;color:var(--ink-1)" }, [
@@ -6715,7 +6765,13 @@
           ]),
           el("td", { style: "padding:9px 6px;color:var(--ink-2);font-size:11.5px" }, [
             r.accountMask || r.accountId || "默认",
-            isFailover ? el("span", { class: "pill warn", style: "margin-left:4px;font-size:10px", text: "429换号" }) : null
+            isFailover ? el("span", { class: "pill warn", style: "margin-left:4px;font-size:10px", text: "429换号" }) : null,
+            isBusyRetry ? el("span", {
+              class: "pill ok",
+              style: "margin-left:4px;font-size:10px;background:rgba(56,189,248,0.12);color:#38bdf8;border-color:rgba(56,189,248,0.35);cursor:help",
+              title: retryTip,
+              text: "⚡防抖重试(" + r.modelBusyRetries + ")"
+            }) : null
           ]),
           el("td", { style: "padding:9px 6px" }, [
             el("span", { class: "pill", style: "font-size:10.5px;color:var(--ink-2);border-color:var(--g4)", text: r.isStream ? "流式" : "非流式" })
@@ -6734,7 +6790,7 @@
             el("span", { style: "color:var(--ink-3);font-size:10.5px", text: " (" + r.promptTokens + " / " + r.completionTokens + ")" })
           ]),
           el("td", { style: "padding:9px 6px;color:var(--ink-3);font-size:11px;max-width:180px;word-break:break-all" }, [
-            r.errorMsg ? el("span", { style: "color:var(--bad);font-weight:550", text: r.errorMsg }) : (isFailover ? el("span", { style: "color:var(--warn)", text: "触发限流自动故障转移" }) : "正常转发")
+            statusDescEl
           ])
         ]);
         tbody.appendChild(tr);

@@ -24,22 +24,25 @@ type Record struct {
 	ErrorMsg          string    `json:"errorMsg,omitempty"`          // 异常错误描述（如有）
 	ContextScale      string    `json:"contextScale,omitempty"`      // 会话体积分级: "normal" | "heavy" | "overload"
 	BodyBytes         int64     `json:"bodyBytes,omitempty"`         // 请求正文字节数
+	ModelBusyRetries  int       `json:"modelBusyRetries,omitempty"`  // 算力繁忙自动防抖重试次数 (0 表示无重试)
+	RetryDelays       []string  `json:"retryDelays,omitempty"`       // 每次退避的具体耗时轨迹 (如 ["1.52s", "2.48s"])
 }
 
 // Summary 是网关调用的聚合分析指标概览。
 type Summary struct {
-	TotalRequests     int            `json:"totalRequests"`     // 累计总请求数
-	SuccessCount      int            `json:"successCount"`      // 成功请求数 (200~299)
-	FailCount         int            `json:"failCount"`         // 失败请求数
-	SuccessRate       float64        `json:"successRate"`       // 成功率 (0.0 ~ 100.0)
-	TotalPromptTokens int            `json:"totalPromptTokens"` // 累计输入 Tokens
-	TotalCompTokens   int            `json:"totalCompTokens"`   // 累计输出 Tokens
-	TotalTokens       int            `json:"totalTokens"`       // 累计总 Tokens
-	AvgTTFTMs         int64          `json:"avgTtftMs"`         // 平均首字延迟 ms
-	AvgDurationMs     int64          `json:"avgDurationMs"`     // 平均响应总耗时 ms
-	FailoverCount     int            `json:"failoverCount"`     // 累计触发 Failover 换号次数
-	ModelCounts       map[string]int `json:"modelCounts"`       // 各模型调用分布
-	RecentRecords     []Record       `json:"recentRecords"`     // 最近的调用明细（按时间倒序）
+	TotalRequests          int            `json:"totalRequests"`          // 累计总请求数
+	SuccessCount           int            `json:"successCount"`           // 成功请求数 (200~299)
+	FailCount              int            `json:"failCount"`              // 失败请求数
+	SuccessRate            float64        `json:"successRate"`            // 成功率 (0.0 ~ 100.0)
+	TotalPromptTokens      int            `json:"totalPromptTokens"`      // 累计输入 Tokens
+	TotalCompTokens        int            `json:"totalCompTokens"`        // 累计输出 Tokens
+	TotalTokens            int            `json:"totalTokens"`            // 累计总 Tokens
+	AvgTTFTMs              int64          `json:"avgTtftMs"`              // 平均首字延迟 ms
+	AvgDurationMs          int64          `json:"avgDurationMs"`          // 平均响应总耗时 ms
+	FailoverCount          int            `json:"failoverCount"`          // 累计触发 Failover 换号次数
+	ModelBusyAbsorbedCount int            `json:"modelBusyAbsorbedCount"` // 累计通过算力防抖成功化解的上游 GPU 拥堵次数
+	ModelCounts            map[string]int `json:"modelCounts"`            // 各模型调用分布
+	RecentRecords          []Record       `json:"recentRecords"`          // 最近的调用明细（按时间倒序）
 }
 
 // DefaultMaxRecords 默认内存中保留的最大审计流水条数。
@@ -137,6 +140,9 @@ func (a *Auditor) GetSummary(limit int) Summary {
 
 		if r.FailoverTriggered {
 			s.FailoverCount++
+		}
+		if r.ModelBusyRetries > 0 {
+			s.ModelBusyAbsorbedCount += r.ModelBusyRetries
 		}
 
 		m := r.ModelRequested

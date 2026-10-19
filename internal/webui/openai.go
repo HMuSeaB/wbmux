@@ -560,6 +560,9 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		}
 	}
 
+	var modelBusyRetries int
+	var modelBusyDelays []string
+
 	recordAudit := func(statusCode int, m chatMetrics, failover bool, errMsg string) {
 		pTok := m.promptTokens
 		cTok := m.completionTokens
@@ -598,6 +601,8 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			ErrorMsg:          errMsg,
 			ContextScale:      scale.Level,
 			BodyBytes:         int64(len(rawBody)),
+			ModelBusyRetries:  modelBusyRetries,
+			RetryDelays:       modelBusyDelays,
 		})
 	}
 
@@ -689,6 +694,8 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		scale := evaluateContextScale(int64(len(rawBody)))
 		for attempt := 0; attempt < len(modelBusyRetryDelays); attempt++ {
 			delay := calcModelBusyBackoff(attempt, resp)
+			modelBusyRetries++
+			modelBusyDelays = append(modelBusyDelays, fmt.Sprintf("%v", delay.Round(10*time.Millisecond)))
 			tipSuffix := ""
 			if scale.Tip != "" {
 				tipSuffix = " (建议: " + scale.Tip + ")"
