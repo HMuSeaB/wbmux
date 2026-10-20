@@ -1158,18 +1158,21 @@ type contextScale struct {
 }
 
 func evaluateContextScale(bytesLen int64) contextScale {
-	tokens := int(bytesLen / 3) // 经验值：混合代码/中文/工具定义约 1 Token ≈ 3 字节
+	// 实测校准：客户端发来的整包 HTTP POST 正文为 JSON 格式，包含了 23 个工具 Schema、
+	// JSON 属性键、历史角色包装及大量转义字符（\n, \"）。在真实 Tokenizer（如 DeepSeek/GPT）下，
+	// 实测 2.0 MB 请求体对应 ~362.4k tokens，平均密度约为 1 Token ≈ 5.5 字节。
+	tokens := int(float64(bytesLen) / 5.5)
 	bytesStr := describeBytes(bytesLen)
 
 	switch {
-	case bytesLen >= 1200*1024: // >= 1.2 MB (~400k tokens)
+	case bytesLen >= 1500*1024: // >= 1.5 MB (~280k-400k+ tokens)
 		return contextScale{
 			Level:  "overload",
 			Tokens: tokens,
 			Desc:   fmt.Sprintf("%s (~%dk tokens [超载会话])", bytesStr, tokens/1000),
-			Tip:    "当前会话上下文已超 400k tokens，极易引发官方推理集群排队拥堵，建议在当前步骤完成后开启新对话以提升响应速度",
+			Tip:    "当前会话上下文已超 300k tokens，极易引发官方推理集群排队拥堵，建议在当前步骤完成后开启新对话以提升响应速度",
 		}
-	case bytesLen >= 500*1024: // 500 KB ~ 1.2 MB (~160k-400k tokens)
+	case bytesLen >= 600*1024: // 600 KB ~ 1.5 MB (~110k-280k tokens)
 		return contextScale{
 			Level:  "heavy",
 			Tokens: tokens,

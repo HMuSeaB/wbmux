@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,15 +65,19 @@ type ModelMeta struct {
 
 // ProbeRecord 记录单一模型的雷达测速与健康状态快照。
 type ProbeRecord struct {
-	Model       string    `json:"model"`
-	DisplayName string    `json:"displayName,omitempty"`
-	IsFree      bool      `json:"isFree"`
-	Rate        float64   `json:"rate"`
-	Status      Status    `json:"status"`
-	TTFTMs      int64     `json:"ttftMs"`
-	StatusCode  int       `json:"statusCode,omitempty"`
-	ErrorMsg    string    `json:"errorMsg,omitempty"`
-	CheckedAt   time.Time `json:"checkedAt"`
+	Model              string    `json:"model"`
+	DisplayName        string    `json:"displayName,omitempty"`
+	IsFree             bool      `json:"isFree"`
+	Rate               float64   `json:"rate"`
+	Status             Status    `json:"status"`
+	TTFTMs             int64     `json:"ttftMs"`
+	StatusCode         int       `json:"statusCode,omitempty"`
+	ErrorMsg           string    `json:"errorMsg,omitempty"`
+	IsRateLimited      bool      `json:"isRateLimited,omitempty"`
+	RateLimitResetAt   int64     `json:"rateLimitResetAt,omitempty"`
+	ResetAtHuman       string    `json:"resetAtHuman,omitempty"`
+	ResetRemainingDesc string    `json:"resetRemainingDesc,omitempty"`
+	CheckedAt          time.Time `json:"checkedAt"`
 }
 
 // Radar 负责管理所有受监控模型的测速快照、并发探针调度与最优选路。
@@ -193,15 +199,35 @@ func (r *Radar) Ping(ctx context.Context, endpoint, token string, meta ModelMeta
 	rec.StatusCode = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := strings.TrimSpace(string(snippet))
-		if strings.Contains(msg, "14003") || strings.Contains(strings.ToLower(msg), "model busy") {
-			msg = "429 (官方模型算力繁忙 Model Busy)"
-		} else if strings.Contains(msg, "11128") || strings.Contains(msg, "渠道校验") {
-			msg = "400 (官方渠道拦截: 未通过校验)"
-		} else if msg == "" {
-			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		rawMsg := strings.TrimSpace(string(snippet))
+		if resp.StatusCode == 429 {
+			resetAtMs, humanStr, remaining, isRate := ParseRateLimitReset(rawMsg)
+			if isRate {
+				rec.IsRateLimited = true
+				rec.RateLimitResetAt = resetAtMs
+				rec.ResetAtHuman = humanStr
+				rec.ResetRemainingDesc = remaining
+				if humanStr != "" {
+					rec.ErrorMsg = fmt.Sprintf("官方限免频控：将于 %s 重置（%s）", humanStr, remaining)
+				} else {
+					rec.ErrorMsg = "官方限免使用频率已达上限 (429)"
+				}
+				r.SetRecord(rec)
+				return rec
+			}
+			if strings.Contains(rawMsg, "14003") || strings.Contains(strings.ToLower(rawMsg), "model busy") {
+				rec.ErrorMsg = "429 (官方模型算力繁忙 Model Busy)"
+				r.SetRecord(rec)
+				return rec
+			}
 		}
-		rec.ErrorMsg = msg
+		if strings.Contains(rawMsg, "11128") || strings.Contains(rawMsg, "渠道校验") {
+			rec.ErrorMsg = "400 (官方渠道拦截: 未通过校验)"
+		} else if rawMsg == "" {
+			rec.ErrorMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		} else {
+			rec.ErrorMsg = cleanErrorSnippet(rawMsg)
+		}
 		r.SetRecord(rec)
 		return rec
 	}
@@ -393,4 +419,76 @@ func (r *Radar) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.records = make(map[string]ProbeRecord)
+}
+
+var (
+	rateLimitResetAtRe = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})`)
+	rateLimitResetTZRe = regexp.MustCompile(`UTC([+-]\d{1,2})`)
+)
+
+// ParseRateLimitReset 从上游 429 报错中解析频控重置时间（支持 JSON 与纯文本）。
+func ParseRateLimitReset(raw string) (resetAtMs int64, humanStr, remainingDesc string, isRateLimit bool) {
+	lower := strings.ToLower(raw)
+	// 判断是否为频控类（code 6004 或包含 frequency limit / 频率限制）
+	if !strings.Contains(lower, "6004") &&
+		!strings.Contains(lower, "frequency limit") &&
+		!strings.Contains(raw, "频率限制") &&
+		!strings.Contains(lower, "reset at") &&
+		!strings.Contains(raw, "重置") {
+		return 0, "", "", false
+	}
+
+	m := rateLimitResetAtRe.FindStringSubmatch(raw)
+	if m == nil {
+		return 0, "", "", true
+	}
+	dateStr := strings.Replace(m[1], "T", " ", 1)
+
+	off := 8 // 官方默认 UTC+8
+	if tz := rateLimitResetTZRe.FindStringSubmatch(raw); tz != nil {
+		if n, err := strconv.Atoi(tz[1]); err == nil && n >= -12 && n <= 14 {
+			off = n
+		}
+	}
+	loc := time.FixedZone("", off*3600)
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", dateStr, loc)
+	if err != nil {
+		return 0, dateStr, "", true
+	}
+
+	resetAtMs = t.UnixMilli()
+	humanStr = dateStr
+	now := time.Now()
+	if t.After(now) {
+		diff := t.Sub(now)
+		hours := int(diff.Hours())
+		mins := int(diff.Minutes()) % 60
+		if hours > 0 {
+			remainingDesc = fmt.Sprintf("约 %d 小时 %d 分钟后恢复", hours, mins)
+		} else if mins > 0 {
+			remainingDesc = fmt.Sprintf("约 %d 分钟后恢复", mins)
+		} else {
+			remainingDesc = "即将恢复"
+		}
+	} else {
+		remainingDesc = "重置时间已到，点击可重新测速"
+	}
+	return resetAtMs, humanStr, remainingDesc, true
+}
+
+// cleanErrorSnippet 从可能为 JSON 的错误串中提取核心消息，避免在 UI 倾倒整段 JSON。
+func cleanErrorSnippet(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{") && strings.HasSuffix(raw, "}") {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+			if msg, ok := obj["msg"].(string); ok && strings.TrimSpace(msg) != "" {
+				return strings.TrimSpace(msg)
+			}
+			if msg, ok := obj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+				return strings.TrimSpace(msg)
+			}
+		}
+	}
+	return raw
 }

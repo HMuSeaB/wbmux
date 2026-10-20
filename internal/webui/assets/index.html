@@ -547,6 +547,11 @@
     border-color: rgba(194, 85, 80, 0.35);
     color: var(--bad);
   }
+  .radar-pill.rate-limited {
+    background: rgba(234, 88, 12, 0.16);
+    border-color: rgba(234, 88, 12, 0.42);
+    color: #fb923c;
+  }
   .radar-pill.untested {
     background: var(--g3);
     border-color: var(--g4);
@@ -1956,9 +1961,20 @@
         pillHtml = '<span class="radar-dot"></span> ' + (rec.ttftMs || 0) + 'ms 延迟';
         tip = "首字延迟 " + rec.ttftMs + "ms · 响应偏慢（点击重测）";
       } else if (rec.status === "down") {
-        pillClass = "down";
-        pillHtml = '<span class="radar-dot"></span> ' + (rec.statusCode ? rec.statusCode + " 异常" : "不可达");
-        tip = (rec.errorMsg || "上游超时或不可达") + "（点击重试）";
+        if (rec.isRateLimited || (rec.statusCode === 429 && rec.resetAtHuman)) {
+          pillClass = "rate-limited";
+          var shortTime = "";
+          if (rec.resetAtHuman) {
+            var parts = rec.resetAtHuman.split(" ");
+            shortTime = parts.length > 1 ? parts[1].substring(0, 5) : rec.resetAtHuman;
+          }
+          pillHtml = '<span class="radar-dot"></span> 429 频控' + (shortTime ? ' (' + shortTime + '重置)' : '');
+          tip = "官方限免频控限制\n· 预计重置时刻：" + (rec.resetAtHuman || "未知") + (rec.resetRemainingDesc ? " (" + rec.resetRemainingDesc + ")" : "") + "\n· 建议：可切换至其他可用限免模型继续对话\n· 点击可发起即时测速重试";
+        } else {
+          pillClass = "down";
+          pillHtml = '<span class="radar-dot"></span> ' + (rec.statusCode ? rec.statusCode + " 异常" : "不可达");
+          tip = (rec.errorMsg || "上游超时或不可达") + "（点击重试）";
+        }
       }
     }
 
@@ -2570,9 +2586,27 @@
     ]));
     box.appendChild(el("div", { class: "note", style: "margin-top:8px" }, [
       el("b", { text: "必须重启客户端才生效。" }),
-      el("div", { text: "环境变量是客户端启动时读的。改完请在「切换与双开」里" +
-        "重新启动客户端一次——改之前就开着的那个不会变。" })
+      el("div", { text: "环境变量是客户端启动时读的。改完必须重新启动客户端一次——改之前就开着的那个内存中依然维持旧基准。" })
     ]));
+
+    var restartBanner = el("div", {
+      class: "card",
+      style: "margin-top:14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.22);display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:14px;border-radius:8px;"
+    }, [
+      el("div", {}, [
+        el("b", { style: "color:var(--ink-1);display:block;margin-bottom:3px;", text: "⚡ 让当前或新对话立刻触发压缩" }),
+        el("div", { style: "font-size:12px;color:var(--c-sub)", text: "环境变量需重启客户端生效。点击右侧按钮瞬间为您安全平滑拉起客户端，当前对话发下一条消息即可立即触发压缩！" })
+      ]),
+      el("button", {
+        class: "primary",
+        style: "flex:none;white-space:nowrap;padding:7px 15px;",
+        text: "⚡ 立即重启客户端生效",
+        click: function () {
+          restartClient();
+        }
+      })
+    ]);
+    box.appendChild(restartBanner);
 
     if (note) {
       note.appendChild(el("div", { class: "hint",
@@ -2589,7 +2623,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: lv.value })
     }).then(function (st) {
-      toast("已切到 " + label + "，重启客户端后生效", "ok");
+      toast("已切到 " + label + "，点击下方「立即重启客户端生效」即可即刻触发压缩", "ok");
       renderCompact(st);
     }).catch(function (e) {
       toast("设置失败：" + e.message, "bad");
