@@ -654,14 +654,16 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		})
 	}
 
-	retryOnce := func(token, uid string) (*http.Response, error) {
-		reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(rawBody))
+	retryWithBody := func(customBody []byte, token, uid string) (*http.Response, error) {
+		reqRetry, errReq := http.NewRequestWithContext(req.Context(), "POST", route.Endpoint, bytes.NewReader(customBody))
 		if errReq != nil {
 			return nil, errReq
 		}
 		for k, v := range req.Header {
 			reqRetry.Header[k] = v
 		}
+		reqRetry.Header.Del("Content-Length")
+		reqRetry.ContentLength = int64(len(customBody))
 		if token != "" {
 			reqRetry.Header.Set("Authorization", "Bearer "+token)
 		}
@@ -669,6 +671,10 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			reqRetry.Header.Set("X-User-Id", uid)
 		}
 		return probeHTTPClient().Do(reqRetry)
+	}
+
+	retryOnce := func(token, uid string) (*http.Response, error) {
+		return retryWithBody(rawBody, token, uid)
 	}
 
 	resp, err := probeHTTPClient().Do(req)
@@ -801,6 +807,29 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 				}
 				_ = respRetry.Body.Close()
 				break
+			}
+		}
+	}
+
+	// 4. 网关大上下文自适应智能兜底瘦身 (Adaptive Context Slimming)
+	// 当上游因算力繁忙 (14003) 或大报文频控/超载拒载时，对历史过期巨大工具响应执行自适应折叠并重发
+	if (isModelBusy || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && int64(len(rawBody)) >= DefaultSlimmingThreshold {
+		slimBody, slimmed, bLen, aLen := slimLargeChatBody(rawBody, DefaultSlimmingThreshold)
+		if slimmed {
+			ratio := (1.0 - float64(aLen)/float64(bLen)) * 100
+			s.note(ProxyLogEntry{
+				Level: "warn",
+				Model: route.Model,
+				Text: fmt.Sprintf("⚡ 上游算力拒载，网关自适应智能瘦身就地救援：%s → %s (瘦身率 %.1f%%)，正在快速重发...",
+					describeBytes(bLen), describeBytes(aLen), ratio),
+			})
+			respSlim, errSlim := retryWithBody(slimBody, "", "")
+			if errSlim == nil {
+				if respSlim.StatusCode == http.StatusOK {
+					deliverSuccess(respSlim.Body, true, "⚡ 自适应瘦身保底成功")
+					return
+				}
+				_ = respSlim.Body.Close()
 			}
 		}
 	}

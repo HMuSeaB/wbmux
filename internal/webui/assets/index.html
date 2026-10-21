@@ -3103,7 +3103,7 @@
         }).then(function (res) {
           if (syncEl) {
             syncEl.style.color = "#10b981";
-            syncEl.textContent = "● 环境变量已就绪（重启生效）";
+            syncEl.textContent = "● 环境变量已就绪（网关自适应兜底中）";
           }
           if (opts.onApplied) opts.onApplied(res);
         }).catch(function (err) {
@@ -3184,11 +3184,11 @@
     var restartBar = el("div", {
       style: "margin-top:14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);padding:10px 14px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;"
     }, [
-      el("div", { style: "font-size:11.5px;color:var(--ink-2);", text: "⚡ 改完环境变量需重启生效" }),
+      el("div", { style: "font-size:11.5px;color:var(--ink-2);", text: "⚡ 网关已开启自适应无感兜底；按需重启可让客户端原生应用" }),
       el("button", {
-        class: "primary",
+        class: "ghost",
         style: "padding:5px 12px;font-size:11.5px;white-space:nowrap;",
-        text: "立即重启客户端",
+        text: "按需重启客户端",
         click: function () {
           restartClient();
         }
@@ -3297,9 +3297,9 @@
       el("div", { text: "基准调大 = 模型记得更久，但每轮请求更大、更慢。" +
         "它和「发消息更顺畅」是此消彼长的，按自己需要选。" })
     ]));
-    box.appendChild(el("div", { class: "note", style: "margin-top:8px" }, [
-      el("b", { text: "必须重启客户端才生效。" }),
-      el("div", { text: "环境变量是客户端启动时读的。改完必须重新启动客户端一次——改之前就开着的那个内存中依然维持旧基准。" })
+    box.appendChild(el("div", { class: "note ok", style: "margin-top:8px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);" }, [
+      el("b", { style: "color:#10b981;", text: "⚡ 网关自适应无感兜底保障（已开启）：" }),
+      el("div", { text: "您可以放心在客户端使用 1M 原生超长记忆。当长会话报文在 DeepSeek 上游遭遇算力繁忙 (14003) 或拒绝时，wbmux 网关将自动在后台对历史过期工具响应执行自适应安全折叠并就地重试，零卡顿、零报错恢复会话，无需频繁重启客户端！" })
     ]));
 
     var restartBanner = el("div", {
@@ -3307,13 +3307,13 @@
       style: "margin-top:14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.22);display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:14px;border-radius:8px;"
     }, [
       el("div", {}, [
-        el("b", { style: "color:var(--ink-1);display:block;margin-bottom:3px;", text: "⚡ 让当前或新对话立刻触发压缩" }),
-        el("div", { style: "font-size:12px;color:var(--c-sub)", text: "环境变量需重启客户端生效。点击右侧按钮瞬间为您安全平滑拉起客户端，当前对话发下一条消息即可立即触发压缩！" })
+        el("b", { style: "color:var(--ink-1);display:block;margin-bottom:3px;", text: "平滑重启客户端（按需可选）" }),
+        el("div", { style: "font-size:12px;color:var(--c-sub)", text: "若您调整了上述客户端原生压缩基准并希望客户端从源头立刻按新阈值执行，可点击右侧按钮瞬间安全平滑拉起客户端。" })
       ]),
       el("button", {
-        class: "primary",
+        class: "ghost",
         style: "flex:none;white-space:nowrap;padding:7px 15px;",
-        text: "⚡ 立即重启客户端生效",
+        text: "重启客户端生效",
         click: function () {
           restartClient();
         }
@@ -3336,7 +3336,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: lv.value })
     }).then(function (st) {
-      toast("已切到 " + label + "，点击下方「立即重启客户端生效」即可即刻触发压缩", "ok");
+      toast("已切到 " + label + "。网关已提供自适应无感兜底，按需重启可让客户端原生应用", "ok");
       renderCompact(st);
     }).catch(function (e) {
       toast("设置失败：" + e.message, "bad");
