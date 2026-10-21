@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -1248,9 +1249,38 @@ func evaluateContextScale(bytesLen int64) contextScale {
 	}
 }
 
-// probeHTTPClient 是转发用的 HTTP 客户端（超时按长回复放宽）。
+// chatHTTPClient 是转发长会话与大模型补全专用的 HTTP 客户端。
+//
+// ⚠️ 极其关键的技术决策（解决长思考中断问题）：
+// 原先此处写死 Client{Timeout: 120 * time.Second}，在 Go net/http 中，Client.Timeout
+// 会对从拨号到整个 Response Body 完全读取并关闭施加整体硬性超时。
+// 当长会话遇到 Step-5 或 DeepSeek 进行长深度思考或超长生成时，刚好在 120.001 秒被底层强制关闭连接，
+// 导致客户端界面显示中断报错！
+//
+// 正确设计：
+// 1. Client.Timeout 设为 0（无整体硬截断），生命周期由客户端请求的 req.Context() 控制；
+// 2. 拨号与 TLS 握手设置合理超时（30s / 15s）；
+// 3. ResponseHeaderTimeout 设为 300s（允许模型首字思考排队最长 5 分钟），流开始后持续流式吞吐；
+// 4. 共享长连接池，复用 TLS 会话，避免每轮请求重复 TCP 三次握手。
+var chatHTTPClient = &http.Client{
+	Timeout: 0,
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
+	},
+}
+
 func probeHTTPClient() *http.Client {
-	return &http.Client{Timeout: 120 * time.Second}
+	return chatHTTPClient
 }
 
 
