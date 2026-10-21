@@ -1525,6 +1525,84 @@
     font-family: var(--mono);
     margin-left: 6px;
   }
+  /* 网关调用近 7 日用量趋势看板 (Phase 26) */
+  .trend-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    height: 100%;
+    padding: 8px 4px 6px;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    transition: all .2s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    user-select: none;
+    border: 1px solid transparent;
+  }
+  .trend-col:hover {
+    background: rgba(255, 255, 255, 0.04);
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .trend-col.active {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.4);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.15);
+  }
+  .trend-col.active .trend-date {
+    color: #38bdf8;
+    font-weight: 600;
+  }
+  .trend-bar-track {
+    width: 100%;
+    max-width: 44px;
+    height: 110px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    margin-bottom: 8px;
+    position: relative;
+  }
+  .trend-bar-fill {
+    width: 100%;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow: hidden;
+    transition: height .3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+  .trend-bar-in {
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    width: 100%;
+    transition: height .3s ease;
+  }
+  .trend-bar-out {
+    background: linear-gradient(180deg, #38bdf8, #0284c7);
+    width: 100%;
+    transition: height .3s ease;
+  }
+  .trend-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-2);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    transition: color .15s ease;
+  }
+  .trend-col:hover .trend-val, .trend-col.active .trend-val {
+    color: #38bdf8;
+    font-weight: 600;
+  }
+  .trend-date {
+    font-size: 11px;
+    color: var(--ink-3);
+    white-space: nowrap;
+    transition: color .15s ease;
+  }
 </style>
 </head>
 <body>
@@ -1754,6 +1832,44 @@
             <div class="kpi-foot">
               <span class="pulse-dot" style="background:#38bdf8"></span> <span>14003 GPU 瞬态拥堵平滑化解</span>
             </div>
+          </div>
+        </div>
+
+        <!-- 近 7 日用量走势与模型请求看板 (Phase 26) -->
+        <div class="card" style="margin-bottom:16px;padding:16px 18px" id="gw-trend-card">
+          <div class="card-head" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <span class="card-title" style="font-size:13px;display:flex;align-items:center;gap:6px">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-calendar"/></svg>近 7 日用量走势与模型请求
+            </span>
+            <div style="display:flex;align-items:center;gap:6px" id="gw-trend-scope-group">
+              <span style="font-size:11px;color:var(--ink-3);margin-right:4px">● 持久化归档在 ~/.wbmux</span>
+              <button class="ghost compact active" id="btn-trend-all" style="font-size:11px;padding:3px 9px">7 日全貌</button>
+              <button class="ghost compact" id="btn-trend-today" style="font-size:11px;padding:3px 9px">仅看今日</button>
+            </div>
+          </div>
+
+          <!-- 堆叠图图例说明 -->
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:14px;margin-bottom:6px;font-size:11.5px;color:var(--ink-3)">
+            <span style="display:flex;align-items:center;gap:5px">
+              <span style="width:9px;height:9px;border-radius:2px;background:linear-gradient(135deg, #3b82f6, #1d4ed8);display:inline-block"></span> 输入 Token
+            </span>
+            <span style="display:flex;align-items:center;gap:5px">
+              <span style="width:9px;height:9px;border-radius:2px;background:linear-gradient(135deg, #38bdf8, #0284c7);display:inline-block"></span> 输出 Token
+            </span>
+            <span style="display:flex;align-items:center;gap:5px">
+              <span style="width:6px;height:6px;border-radius:50%;background:#a855f7;display:inline-block"></span> 请求次数
+            </span>
+          </div>
+
+          <!-- 7 根柱状图网格容器 -->
+          <div id="gw-trend-bars-container" style="display:grid;grid-template-columns:repeat(7, 1fr);gap:8px;min-height:165px;align-items:end;padding-top:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+            <!-- 动态渲染 7 根柱子 -->
+          </div>
+
+          <!-- 选中日期的动态明细条（点击某天柱子可下钻筛选模型分布，再次点击恢复全览） -->
+          <div id="gw-trend-detail-box" style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:12px">
+            <span id="gw-trend-detail-left" style="color:var(--ink-2)">点击任意日期柱子可下钻查看单日模型明细与指标</span>
+            <span id="gw-trend-detail-right" style="color:var(--ink-3);font-family:var(--mono)">7 日总览</span>
           </div>
         </div>
 
@@ -7517,20 +7633,89 @@
       });
   }
 
+  var gwAuditData = null;
+  var gwSelectedDay = null; // null 表示 7 日全貌，或 "YYYY-MM-DD"
+
   function renderGatewayAudit(s) {
     if (!s) return;
-    // 1. KPI 统计渲染
-    var total = s.totalRequests || 0;
-    var succ = s.successCount || 0;
-    var fail = s.failCount || 0;
-    var rate = total > 0 ? (s.successRate || 0).toFixed(1) + "%" : "100%";
-    var totalTokens = s.totalTokens || 0;
-    var promptTokens = s.totalPromptTokens || 0;
-    var compTokens = s.totalCompTokens || 0;
-    var avgTtft = s.avgTtftMs || 0;
-    var avgDur = s.avgDurationMs || 0;
-    var failover = s.failoverCount || 0;
+    gwAuditData = s;
+    var daily = s.dailyStats || [];
 
+    var todayStr = (function () {
+      var d = new Date();
+      return d.getFullYear() + "-" +
+        String(d.getMonth() + 1).padStart(2, '0') + "-" +
+        String(d.getDate()).padStart(2, '0');
+    })();
+
+    // 1. 根据当前筛选范围 (gwSelectedDay) 计算指标
+    var total = 0, succ = 0, fail = 0;
+    var totalTokens = 0, promptTokens = 0, compTokens = 0;
+    var avgTtft = 0, avgDur = 0;
+    var failover = s.failoverCount || 0;
+    var absorbed = s.modelBusyAbsorbedCount || 0;
+    var modelCounts = {};
+
+    if (gwSelectedDay) {
+      // 选中特定单日
+      var curDay = null;
+      for (var di = 0; di < daily.length; di++) {
+        if (daily[di].date === gwSelectedDay) { curDay = daily[di]; break; }
+      }
+      if (curDay) {
+        total = curDay.totalRequests || 0;
+        succ = curDay.successCount || 0;
+        fail = curDay.failCount || 0;
+        totalTokens = curDay.totalTokens || 0;
+        promptTokens = curDay.promptTokens || 0;
+        compTokens = curDay.compTokens || 0;
+        avgTtft = curDay.avgTtftMs || 0;
+        avgDur = curDay.avgDurationMs || 0;
+        modelCounts = curDay.modelCounts || {};
+      }
+    } else {
+      // 7 日全貌汇总
+      if (daily.length > 0) {
+        var ttftSum = 0, ttftCount = 0;
+        var durSum = 0;
+        daily.forEach(function (d) {
+          total += (d.totalRequests || 0);
+          succ += (d.successCount || 0);
+          fail += (d.failCount || 0);
+          totalTokens += (d.totalTokens || 0);
+          promptTokens += (d.promptTokens || 0);
+          compTokens += (d.compTokens || 0);
+          if (d.avgTtftMs > 0 && d.totalRequests > 0) {
+            ttftSum += d.avgTtftMs * d.totalRequests;
+            ttftCount += d.totalRequests;
+          }
+          if (d.avgDurationMs > 0 && d.totalRequests > 0) {
+            durSum += d.avgDurationMs * d.totalRequests;
+          }
+          if (d.modelCounts) {
+            for (var m in d.modelCounts) {
+              modelCounts[m] = (modelCounts[m] || 0) + d.modelCounts[m];
+            }
+          }
+        });
+        if (ttftCount > 0) avgTtft = Math.round(ttftSum / ttftCount);
+        if (total > 0) avgDur = Math.round(durSum / total);
+      } else {
+        total = s.totalRequests || 0;
+        succ = s.successCount || 0;
+        fail = s.failCount || 0;
+        totalTokens = s.totalTokens || 0;
+        promptTokens = s.totalPromptTokens || 0;
+        compTokens = s.totalCompTokens || 0;
+        avgTtft = s.avgTtftMs || 0;
+        avgDur = s.avgDurationMs || 0;
+        modelCounts = s.modelCounts || {};
+      }
+    }
+
+    var rate = total > 0 ? ((succ / total) * 100).toFixed(1) + "%" : "100%";
+
+    // 渲染 5 联 KPI
     var totalEl = document.getElementById("gw-kpi-total");
     if (totalEl) totalEl.innerHTML = total.toLocaleString() + ' <span class="kpi-unit">次</span>';
     var rateEl = document.getElementById("gw-kpi-rate");
@@ -7570,7 +7755,6 @@
       }
     }
 
-    var absorbed = s.modelBusyAbsorbedCount || 0;
     var absorbedEl = document.getElementById("gw-kpi-absorbed");
     if (absorbedEl) absorbedEl.innerHTML = absorbed.toLocaleString() + ' <span class="kpi-unit">次化解</span>';
     var absorbedPill = document.getElementById("gw-kpi-absorbed-pill");
@@ -7590,42 +7774,11 @@
       }
     }
 
-    // 2. 模型调用分布条形排布
-    var modelDistBody = document.getElementById("gw-model-dist-body");
-    if (modelDistBody) {
-      clear(modelDistBody);
-      var modelCounts = s.modelCounts || {};
-      var models = Object.keys(modelCounts);
-      var countLabel = document.getElementById("gw-model-count-label");
-      if (countLabel) countLabel.textContent = "共 " + models.length + " 个模型";
-      if (models.length === 0) {
-        modelDistBody.appendChild(el("div", {
-          style: "color:var(--ink-3);font-size:12px;text-align:center;padding:12px 0",
-          text: "暂无模型调用数据"
-        }));
-      } else {
-        models.sort(function (a, b) { return modelCounts[b] - modelCounts[a]; });
-        models.forEach(function (m) {
-          var count = modelCounts[m];
-          var pct = total > 0 ? ((count / total) * 100).toFixed(1) : "0.0";
-          var row = el("div", { style: "display:flex;flex-direction:column;gap:3px;margin-bottom:4px" }, [
-            el("div", { style: "display:flex;justify-content:space-between;align-items:center;font-size:12px" }, [
-              el("span", { style: "font-family:var(--mono);color:var(--ink-1);font-weight:600", text: m }),
-              el("span", { style: "font-size:11.5px;color:var(--ink-3)" }, [
-                el("b", { style: "color:var(--ink-2)", text: count.toLocaleString() }),
-                " 次 (" + pct + "%)"
-              ])
-            ]),
-            el("div", { style: "height:6px;background:var(--g3);border-radius:3px;overflow:hidden" }, [
-              el("div", {
-                style: "height:100%;width:" + pct + "%;background:linear-gradient(90deg, #38bdf8, #818cf8);border-radius:3px;transition:width .2s ease"
-              })
-            ])
-          ]);
-          modelDistBody.appendChild(row);
-        });
-      }
-    }
+    // 2. 渲染近 7 日用量趋势柱状图
+    renderTrendBars(daily, todayStr);
+
+    // 3. 模型调用分布条形排布
+    renderModelDistribution(modelCounts, total);
 
     // 3. 实时流水明细渲染
     var tbody = document.getElementById("gw-audit-tbody");
@@ -7729,6 +7882,154 @@
     }
   }
 
+  function renderTrendBars(daily, todayStr) {
+    var container = document.getElementById("gw-trend-bars-container");
+    if (!container) return;
+    clear(container);
+
+    if (!daily || daily.length === 0) {
+      container.innerHTML = '<div style="grid-column:span 7;text-align:center;padding:24px 0;color:var(--ink-3);font-size:12px">暂无近 7 日用量历史归档</div>';
+      return;
+    }
+
+    var maxTokens = 0;
+    daily.forEach(function (d) {
+      if (d.totalTokens > maxTokens) maxTokens = d.totalTokens;
+    });
+    if (maxTokens <= 0) maxTokens = 1000;
+
+    // 作用域按钮状态更新
+    var btnAll = document.getElementById("btn-trend-all");
+    var btnToday = document.getElementById("btn-trend-today");
+    if (btnAll && btnToday) {
+      btnAll.classList.toggle("active", gwSelectedDay === null);
+      btnToday.classList.toggle("active", gwSelectedDay === todayStr);
+    }
+
+    // 明细条提示
+    var detailLeft = document.getElementById("gw-trend-detail-left");
+    var detailRight = document.getElementById("gw-trend-detail-right");
+    if (detailLeft && detailRight) {
+      if (gwSelectedDay) {
+        var cur = null;
+        for (var di = 0; di < daily.length; di++) {
+          if (daily[di].date === gwSelectedDay) { cur = daily[di]; break; }
+        }
+        var curToks = cur ? (cur.totalTokens || 0).toLocaleString() : "0";
+        var curReqs = cur ? (cur.totalRequests || 0) : 0;
+        var curTtft = cur ? (cur.avgTtftMs || 0) : 0;
+        detailLeft.innerHTML = '已选中 <b>' + gwSelectedDay + (gwSelectedDay === todayStr ? ' (今日)' : '') + '</b>：总吞吐 <b>' + curToks + ' tok</b> · 请求 <b>' + curReqs + ' 次</b> · 平均 TTFT <b>' + curTtft + 'ms</b>';
+        detailRight.innerHTML = '<a href="javascript:void(0)" id="link-reset-trend" style="color:var(--brand);text-decoration:none">恢复 7 日全貌 ↺</a>';
+        var resetLink = document.getElementById("link-reset-trend");
+        if (resetLink) resetLink.onclick = function (e) {
+          e.preventDefault();
+          gwSelectedDay = null;
+          renderGatewayAudit(gwAuditData);
+        };
+      } else {
+        detailLeft.textContent = "点击任意柱子可下钻筛选该日模型分布与消耗；支持跨天持久化累计，隔天打开零丢失";
+        detailRight.textContent = "近 7 日总览";
+      }
+    }
+
+    daily.forEach(function (d) {
+      var isToday = (d.date === todayStr);
+      var isSelected = (gwSelectedDay === d.date);
+      var tokStr = fmtTokens(d.totalTokens);
+      var col = el("div", {
+        class: "trend-col" + (isSelected ? " active" : ""),
+        title: d.date + "：总消耗 " + d.totalTokens.toLocaleString() + " tok (" + d.totalRequests + " 次请求)"
+      });
+
+      // 顶部数值与请求胶囊
+      var topVal = el("div", { class: "trend-val", text: tokStr });
+      col.appendChild(topVal);
+
+      if (d.totalRequests > 0) {
+        var reqPill = el("span", {
+          style: "font-size:10px;padding:1px 5px;border-radius:999px;background:rgba(168,85,247,0.15);color:#c084fc;font-family:var(--mono);margin-bottom:4px;",
+          text: d.totalRequests + "次"
+        });
+        col.appendChild(reqPill);
+      } else {
+        var placeholder = el("div", { style: "height:16px;margin-bottom:4px;" });
+        col.appendChild(placeholder);
+      }
+
+      // 中间柱形轨道
+      var track = el("div", { class: "trend-bar-track" });
+      if (d.totalTokens > 0) {
+        var heightPct = Math.max(8, Math.round((d.totalTokens / maxTokens) * 100));
+        var inPct = ((d.promptTokens / d.totalTokens) * 100).toFixed(1) + "%";
+        var outPct = ((d.compTokens / d.totalTokens) * 100).toFixed(1) + "%";
+
+        var barFill = el("div", { class: "trend-bar-fill", style: "height:" + heightPct + "%;" }, [
+          el("div", { class: "trend-bar-in", style: "height:" + inPct + ";", title: "输入: " + d.promptTokens.toLocaleString() + " tok" }),
+          el("div", { class: "trend-bar-out", style: "height:" + outPct + ";", title: "输出: " + d.compTokens.toLocaleString() + " tok" })
+        ]);
+        track.appendChild(barFill);
+      } else {
+        var emptyLine = el("div", { style: "width:100%;height:3px;background:var(--g3);border-radius:2px;" });
+        track.appendChild(emptyLine);
+      }
+      col.appendChild(track);
+
+      // 底部日期
+      var shortDate = d.date.slice(5);
+      var dateLabel = el("div", {
+        class: "trend-date",
+        style: isToday ? "color:#38bdf8;font-weight:600;" : "",
+        text: shortDate + (isToday ? " (今)" : "")
+      });
+      col.appendChild(dateLabel);
+
+      col.onclick = function () {
+        gwSelectedDay = (gwSelectedDay === d.date) ? null : d.date;
+        renderGatewayAudit(gwAuditData);
+      };
+
+      container.appendChild(col);
+    });
+  }
+
+  function renderModelDistribution(modelCounts, total) {
+    var modelDistBody = document.getElementById("gw-model-dist-body");
+    if (!modelDistBody) return;
+    clear(modelDistBody);
+    var models = Object.keys(modelCounts || {});
+    var countLabel = document.getElementById("gw-model-count-label");
+    if (countLabel) {
+      countLabel.textContent = "共 " + models.length + " 个模型" + (gwSelectedDay ? " (" + gwSelectedDay + ")" : " (7 日合计)");
+    }
+    if (models.length === 0) {
+      modelDistBody.appendChild(el("div", {
+        style: "color:var(--ink-3);font-size:12px;text-align:center;padding:12px 0",
+        text: gwSelectedDay ? "该日期无模型调用记录" : "暂无模型调用数据"
+      }));
+      return;
+    }
+    models.sort(function (a, b) { return modelCounts[b] - modelCounts[a]; });
+    models.forEach(function (m) {
+      var count = modelCounts[m];
+      var pct = total > 0 ? ((count / total) * 100).toFixed(1) : "0.0";
+      var row = el("div", { style: "display:flex;flex-direction:column;gap:3px;margin-bottom:4px" }, [
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;font-size:12px" }, [
+          el("span", { style: "font-family:var(--mono);color:var(--ink-1);font-weight:600", text: m }),
+          el("span", { style: "font-size:11.5px;color:var(--ink-3)" }, [
+            el("b", { style: "color:var(--ink-2)", text: count.toLocaleString() }),
+            " 次 (" + pct + "%)"
+          ])
+        ]),
+        el("div", { style: "height:6px;background:var(--g3);border-radius:3px;overflow:hidden" }, [
+          el("div", {
+            style: "height:100%;width:" + pct + "%;background:linear-gradient(90deg, #38bdf8, #818cf8);border-radius:3px;transition:width .2s ease"
+          })
+        ])
+      ]);
+      modelDistBody.appendChild(row);
+    });
+  }
+
   function clearGatewayAudit() {
     if (!confirm("确定要清空全部网关调用统计与请求流水明细吗？")) return;
     api("/api/gateway/clear", { method: "POST" })
@@ -7745,6 +8046,24 @@
   if (btnGwRefresh) btnGwRefresh.addEventListener("click", function () { loadGatewayAudit(true); });
   var btnGwClear = document.getElementById("btn-gw-clear");
   if (btnGwClear) btnGwClear.addEventListener("click", clearGatewayAudit);
+
+  var btnTrendAll = document.getElementById("btn-trend-all");
+  if (btnTrendAll) {
+    btnTrendAll.addEventListener("click", function () {
+      gwSelectedDay = null;
+      if (gwAuditData) renderGatewayAudit(gwAuditData);
+    });
+  }
+  var btnTrendToday = document.getElementById("btn-trend-today");
+  if (btnTrendToday) {
+    btnTrendToday.addEventListener("click", function () {
+      var d = new Date();
+      gwSelectedDay = d.getFullYear() + "-" +
+        String(d.getMonth() + 1).padStart(2, '0') + "-" +
+        String(d.getDate()).padStart(2, '0');
+      if (gwAuditData) renderGatewayAudit(gwAuditData);
+    });
+  }
 
   // 定期检查遥测守护状态并刷新徽章提示
   function updateTelemetryBadge() {

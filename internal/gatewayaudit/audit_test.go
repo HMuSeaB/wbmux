@@ -139,3 +139,100 @@ func TestAuditorConcurrent(t *testing.T) {
 		t.Errorf("并发写入后总记录数期望 50，得到 %d", sum.TotalRequests)
 	}
 }
+
+func TestAuditorPersistenceAndDailyStats(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. 模拟第一次运行 Session 1
+	auditor1 := NewAuditorWithStorage(10, tempDir)
+
+	auditor1.RecordRequest(Record{
+		ID:               "req-1",
+		ModelRequested:   "step-5-preview",
+		StatusCode:       200,
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		TTFTMs:           350,
+		DurationMs:       1200,
+	})
+	auditor1.RecordRequest(Record{
+		ID:               "req-2",
+		ModelRequested:   "deepseek-v4.1-flash",
+		StatusCode:       200,
+		PromptTokens:     2000,
+		CompletionTokens: 500,
+		TTFTMs:           180,
+		DurationMs:       800,
+	})
+
+	sum1 := auditor1.GetSummary(10)
+	if sum1.TotalRequests != 2 {
+		t.Fatalf("Session 1 期望 2 次请求，得到 %d", sum1.TotalRequests)
+	}
+	if sum1.TotalTokens != 3700 {
+		t.Fatalf("Session 1 期望 3700 tokens，得到 %d", sum1.TotalTokens)
+	}
+	if len(sum1.DailyStats) != 7 {
+		t.Fatalf("期望返回近 7 天日度序列，得到 %d", len(sum1.DailyStats))
+	}
+	todayStat := sum1.DailyStats[len(sum1.DailyStats)-1]
+	if todayStat.TotalRequests != 2 || todayStat.TotalTokens != 3700 {
+		t.Fatalf("今日日度统计不匹配: %+v", todayStat)
+	}
+	if todayStat.ModelCounts["step-5-preview"] != 1 || todayStat.ModelCounts["deepseek-v4.1-flash"] != 1 {
+		t.Fatalf("今日各模型调用计数不匹配: %+v", todayStat.ModelCounts)
+	}
+
+	// 2. 模拟用户退出 wbmux，第二天重新打开（Session 2），指向相同 storageDir
+	auditor2 := NewAuditorWithStorage(10, tempDir)
+	sum2 := auditor2.GetSummary(10)
+
+	if sum2.TotalRequests != 2 {
+		t.Fatalf("Session 2 启动恢复后期望 2 次请求，得到 %d", sum2.TotalRequests)
+	}
+	if sum2.TotalTokens != 3700 {
+		t.Fatalf("Session 2 恢复后 Token 期望 3700，得到 %d", sum2.TotalTokens)
+	}
+	if len(sum2.RecentRecords) != 2 {
+		t.Fatalf("Session 2 恢复后明细流水条数期望 2，得到 %d", len(sum2.RecentRecords))
+	}
+
+	// 3. 在 Session 2 中继续产生新请求
+	auditor2.RecordRequest(Record{
+		ID:               "req-3",
+		ModelRequested:   "step-5-preview",
+		StatusCode:       200,
+		PromptTokens:     500,
+		CompletionTokens: 100,
+		TTFTMs:           250,
+		DurationMs:       600,
+	})
+
+	sum3 := auditor2.GetSummary(10)
+	if sum3.TotalRequests != 3 || sum3.TotalTokens != 4300 {
+		t.Fatalf("Session 2 追加新请求后期望 3 请求/4300 tokens，得到 %d 请求/%d tokens", sum3.TotalRequests, sum3.TotalTokens)
+	}
+
+	// 4. 测试 Clear 保留历史日度汇总
+	auditor2.Clear()
+	sumCleared := auditor2.GetSummary(10)
+	if len(sumCleared.RecentRecords) != 0 {
+		t.Fatalf("Clear 后活跃流水应为 0，得到 %d", len(sumCleared.RecentRecords))
+	}
+	if len(sumCleared.DailyStats) != 7 {
+		t.Fatalf("Clear 后近 7 天统计仍应保留，得到 %d", len(sumCleared.DailyStats))
+	}
+	if sumCleared.DailyStats[len(sumCleared.DailyStats)-1].TotalTokens != 4300 {
+		t.Fatalf("Clear 仅清空流水，今日日度汇总仍应为 4300，得到 %d", sumCleared.DailyStats[len(sumCleared.DailyStats)-1].TotalTokens)
+	}
+
+	// 5. 测试 ClearAll 彻底清空
+	auditor2.ClearAll()
+	sumAllCleared := auditor2.GetSummary(10)
+	if sumAllCleared.TotalRequests != 0 {
+		t.Fatalf("ClearAll 后总请求数应为 0，得到 %d", sumAllCleared.TotalRequests)
+	}
+	if sumAllCleared.DailyStats[len(sumAllCleared.DailyStats)-1].TotalRequests != 0 {
+		t.Fatalf("ClearAll 后今日日度统计应为 0，得到 %d", sumAllCleared.DailyStats[len(sumAllCleared.DailyStats)-1].TotalRequests)
+	}
+}
