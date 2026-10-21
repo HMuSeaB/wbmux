@@ -491,8 +491,8 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	s.note(ProxyLogEntry{
 		Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
 		BodyBytes: int64(len(raw)), Tokens: scale.Tokens, ContextScale: scale.Level,
-		Text: fmt.Sprintf("收到请求 model=%s 经%s %s stream=%v 正文 %s",
-			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, scale.Desc),
+		Text: fmt.Sprintf("收到请求 model=%s 经%s · 正文 %s",
+			route.Model, route.Label, scale.Desc),
 	})
 
 	// 端点与凭据头：内置后端要读客户端认证文件（并带上 X-User-Id 等产品头），
@@ -618,6 +618,29 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 		} else {
 			m = s.aggregateChat(w, respBody, started)
 		}
+
+		// 流量被动测速：以本次真实流量的实际首字延迟 TTFT 更新雷达快照
+		ttft := m.ttftMs
+		if ttft <= 0 {
+			ttft = time.Since(started).Milliseconds()
+		}
+		radar := modelradar.Default()
+		rec, _ := radar.GetRecord(route.Model)
+		rec.Model = route.Model
+		rec.StatusCode = http.StatusOK
+		rec.TTFTMs = ttft
+		rec.ErrorMsg = ""
+		rec.IsRateLimited = false
+		if ttft < 800 {
+			rec.Status = modelradar.StatusFast
+		} else if ttft <= 2500 {
+			rec.Status = modelradar.StatusNormal
+		} else {
+			rec.Status = modelradar.StatusSlow
+		}
+		rec.CheckedAt = time.Now()
+		radar.SetRecord(rec)
+
 		recordAudit(http.StatusOK, m, isFailover, "")
 		s.note(ProxyLogEntry{
 			Level:  "ok",

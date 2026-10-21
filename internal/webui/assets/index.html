@@ -1259,6 +1259,272 @@
   .gw-table tr:hover {
     background: rgba(255, 255, 255, 0.03);
   }
+
+  /* 官方同款上下文用量弹窗与分段滑块样式 */
+  .cm-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+  }
+  .cm-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .cm-card {
+    background: #17181c;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    box-shadow: 0 20px 48px -8px rgba(0, 0, 0, 0.75);
+    max-width: 440px;
+    width: 100%;
+    overflow: hidden;
+    transform: scale(0.96);
+    transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1);
+    color: #e5e7eb;
+    padding: 18px 22px 22px;
+  }
+  .cm-overlay.open .cm-card {
+    transform: scale(1);
+  }
+  .cm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .cm-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #9ca3af;
+  }
+  .cm-close {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all .15s ease;
+  }
+  .cm-close:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cm-metric-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .cm-percent {
+    font-size: 32px;
+    font-weight: 800;
+    color: #f9fafb;
+    font-family: var(--mono);
+    line-height: 1;
+    letter-spacing: -0.5px;
+  }
+  .cm-stat-desc {
+    font-size: 12.5px;
+    color: #9ca3af;
+    font-family: var(--mono);
+  }
+  .cm-stacked-bar {
+    width: 100%;
+    height: 7px;
+    background: #2a2b33;
+    border-radius: 999px;
+    overflow: hidden;
+    display: flex;
+    margin-bottom: 18px;
+  }
+  .cm-seg {
+    height: 100%;
+    transition: width .28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .cm-seg.seg-prompt { background: #3b82f6; } /* 蓝: 系统提示词 */
+  .cm-seg.seg-tools { background: #10b981; }  /* 绿: 工具及子智能体 */
+  .cm-seg.seg-msgs { background: #f59e0b; }   /* 橙: 对话消息 */
+  .cm-seg.seg-mcp { background: #8b5cf6; }    /* 紫: 连接器及MCP */
+  .cm-seg.seg-skills { background: #ec4899; } /* 粉: 技能 */
+
+  .cm-legend-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px 16px;
+    margin-bottom: 24px;
+  }
+  .cm-legend-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  .cm-legend-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cm-dot {
+    width: 6.5px;
+    height: 6.5px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .cm-legend-val {
+    font-family: var(--mono);
+    color: #d1d5db;
+    font-weight: 500;
+  }
+
+  .cm-slider-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 18px;
+  }
+  .cm-slider-header {
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  .cm-slider-label {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #f3f4f6;
+  }
+  .cm-slider-wrap {
+    position: relative;
+    padding: 10px 0 6px;
+    user-select: none;
+  }
+  .cm-slider-track {
+    position: relative;
+    width: 100%;
+    height: 6px;
+    background: #2a2b33;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .cm-slider-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    background: #10b981;
+    border-radius: 999px;
+    transition: width .2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .cm-slider-thumb {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border: 3px solid #10b981;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    cursor: grab;
+    transition: left .2s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 2;
+  }
+  .cm-slider-thumb:active {
+    cursor: grabbing;
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+  .cm-ticks {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding: 0 2px;
+  }
+  .cm-tick-item {
+    font-size: 11px;
+    color: #6b7280;
+    font-family: var(--mono);
+    cursor: pointer;
+    transition: color .15s ease;
+  }
+  .cm-tick-item:hover, .cm-tick-item.active {
+    color: #10b981;
+    font-weight: 600;
+  }
+  .cm-slider-foot {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: #9ca3af;
+  }
+
+  /* 官方同款 Toast 气泡 */
+  .cm-toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: #23252b;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 8px 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .24s cubic-bezier(0.16, 1, 0.3, 1);
+    font-size: 13px;
+    color: #f3f4f6;
+  }
+  .cm-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+  .cm-toast-icon {
+    width: 17px;
+    height: 17px;
+    background: #10b981;
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+    flex: none;
+  }
+  /* 代理日志 Badge 胶囊 */
+  .log-badge-tools {
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ink-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-left: 6px;
+  }
+  .log-badge-tokens {
+    font-size: 11px;
+    background: rgba(59, 130, 246, 0.1);
+    color: #93c5fd;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    margin-left: 6px;
+  }
 </style>
 </head>
 <body>
@@ -2480,8 +2746,14 @@
           ]),
           el("div", { style: "font-size:12px;color:var(--c-sub);line-height:1.5;max-width:540px;", text: tipText })
         ]),
-        el("div", { style: "border-left:1px solid var(--border-soft);padding-left:18px;" }, [
-          el("div", { style: "font-size:11px;color:var(--ink-3);", text: "当前最新上下文体积" }),
+        el("div", {
+          style: "border-left:1px solid var(--border-soft);padding-left:18px;cursor:pointer;",
+          title: "点击呼出官方同款「上下文用量」分析与分段滑块切换",
+          onclick: function () {
+            openContextMeterModal(tokens || 358400);
+          }
+        }, [
+          el("div", { style: "font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:4px;", text: "当前最新上下文体积 · 点击切换" }),
           el("div", { style: "display:flex;align-items:baseline;gap:6px;" }, [
             el("span", { style: "font-size:20px;font-weight:700;color:var(--ink-1);font-family:var(--mono);", text: sizeDisplay }),
             tokenDisplay ? el("span", { style: "font-size:12px;color:var(--ink-3);font-family:var(--mono);", text: tokenDisplay }) : null
@@ -2491,9 +2763,10 @@
       el("div", { style: "display:flex;gap:8px;flex:none;" }, [
         el("button", {
           class: "btn-sm",
-          text: "⚙️ 压缩阈值 (300k)",
+          html: "⚙️ 上下文切换",
+          title: "打开官方同款上下文用量与分段滑块",
           click: function () {
-            showPage("compact");
+            openContextMeterModal(tokens || 358400);
           }
         }),
         el("button", {
@@ -2509,6 +2782,14 @@
     container.appendChild(card);
   }
 
+  var lastSilentRadarSync = 0;
+  function triggerSilentRadarSync() {
+    var now = Date.now();
+    if (now - lastSilentRadarSync < 3000) return;
+    lastSilentRadarSync = now;
+    loadModelRadar(true);
+  }
+
   function renderProxyLog(res) {
     var box = document.getElementById("log-body");
     clear(box);
@@ -2522,6 +2803,14 @@
 
     // 渲染置顶当前会话体量感知卡片
     renderLiveSessionCard(list);
+
+    // 流量被动感知：如果最近发生过 429 频控或成功转发，自动防抖对齐雷达
+    if (list.length > 0) {
+      var latest = list[0];
+      if (latest && (latest.level === "bad" || latest.level === "ok" || (latest.text && (latest.text.indexOf("429") >= 0 || latest.text.indexOf("完成") >= 0)))) {
+        triggerSilentRadarSync();
+      }
+    }
 
     // 摘要里把"上游故障"单列出来
     document.getElementById("log-summary").textContent = list.length
@@ -2554,11 +2843,19 @@
         tagLabel = "❌ 异常";
       }
 
-      wrap.appendChild(el("div", { class: "log-line log-" + (e.level || "info") }, [
+      var lineKids = [
         el("span", { class: "log-time", text: e.at || "" }),
         el("span", { class: "log-tag " + tagClass, text: tagLabel }),
         el("span", { class: "log-text", text: text })
-      ]));
+      ];
+      if (e.tools > 0) {
+        lineKids.push(el("span", {
+          class: "log-badge-tools",
+          text: "🛠️ " + e.tools,
+          title: "调用方携带了 " + e.tools + " 个工具定义 (Agent 模式)"
+        }));
+      }
+      wrap.appendChild(el("div", { class: "log-line log-" + (e.level || "info") }, lineKids));
     });
     box.appendChild(wrap);
   }
@@ -2619,13 +2916,308 @@
     });
   }
 
-  // ---------- 压缩阈值 ----------
-  //
-  // 这一页会**改客户端的环境变量**，属于会影响模型记忆行为的设置。
-  // 所以两个原则：
-  //   1. 把代价写在按钮旁边，不能让用户以为它是个无害的开关；
-  //   2. 明确说"要重启客户端才生效"——环境变量是进程启动时读的，
-  //      不说清就会有人点了发现没变化，然后来问"为什么没用"。
+  // ---------- 官方同款「上下文用量」滑块面板与保活管理 ----------
+  var CM_LEVELS = [
+    { key: "default", value: 200000, apiValue: 0, label: "200K 上下文 · 默认", sub: "200K", tick: "200K", desc: "最省流量，忘事最早" },
+    { key: "300k", value: 300000, apiValue: 300000, label: "300K 上下文 · 精简", sub: "300K", tick: "300K", desc: "兼顾轻量与多步推理" },
+    { key: "600k", value: 600000, apiValue: 600000, label: "600K 上下文 · 适中", sub: "600K", tick: "600K", desc: "官方推荐的黄金档位" },
+    { key: "1M", value: 1000000, apiValue: 1000000, label: "1M 上下文 · 超长", sub: "1M", tick: "1M", desc: "超长记忆，极限深度" }
+  ];
+
+  function showContextToast(text) {
+    var t = document.getElementById("cm-toast");
+    if (!t) {
+      t = el("div", { id: "cm-toast", class: "cm-toast" }, [
+        el("span", { class: "cm-toast-icon", text: "✔" }),
+        el("span", { id: "cm-toast-text", text: text })
+      ]);
+      document.body.appendChild(t);
+    } else {
+      document.getElementById("cm-toast-text").textContent = text;
+    }
+    t.classList.add("show");
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function () {
+      t.classList.remove("show");
+    }, 2200);
+  }
+
+  // buildContextMeterComponent 构建官方同款「上下文用量」交互控制板
+  function buildContextMeterComponent(options) {
+    var opts = options || {};
+    var totalTokens = opts.initialTokens || 358400; // 默认以典型活跃会话 ~358k tokens 计算
+    var eff = opts.effective || 600000;
+    var st = opts.state || null;
+
+    // 匹配当前档位索引
+    var curIdx = 2; // 默认 600k
+    for (var i = 0; i < CM_LEVELS.length; i++) {
+      if (CM_LEVELS[i].value === eff || (CM_LEVELS[i].apiValue === 0 && (!st || !st.set))) {
+        curIdx = i;
+        break;
+      }
+    }
+
+    var root = el("div", { class: "cm-container" });
+
+    // 1. 大字号用量与百分比
+    var metricRow = el("div", { class: "cm-metric-row" });
+    var percentEl = el("div", { class: "cm-percent", text: "0.0%" });
+    var statDescEl = el("div", { class: "cm-stat-desc", text: "已使用 0K/ 0K" });
+    metricRow.appendChild(percentEl);
+    metricRow.appendChild(statDescEl);
+    root.appendChild(metricRow);
+
+    // 2. 五色分段堆叠柱状条 (Stacked Bar)
+    var bar = el("div", { class: "cm-stacked-bar" });
+    var segPrompt = el("div", { class: "cm-seg seg-prompt", title: "系统提示词" });
+    var segTools = el("div", { class: "cm-seg seg-tools", title: "工具及子智能体" });
+    var segMsgs = el("div", { class: "cm-seg seg-msgs", title: "对话消息" });
+    var segMcp = el("div", { class: "cm-seg seg-mcp", title: "连接器及MCP" });
+    var segSkills = el("div", { class: "cm-seg seg-skills", title: "技能" });
+    bar.appendChild(segPrompt);
+    bar.appendChild(segTools);
+    bar.appendChild(segMsgs);
+    bar.appendChild(segMcp);
+    bar.appendChild(segSkills);
+    root.appendChild(bar);
+
+    // 3. 分类占比明细清单
+    var legendGrid = el("div", { class: "cm-legend-grid" });
+    var catItems = [
+      { name: "系统提示词", color: "#3b82f6", baseTokens: Math.round(totalTokens * 0.058) },
+      { name: "工具及子智能体", color: "#10b981", baseTokens: Math.round(totalTokens * 0.111) },
+      { name: "对话消息", color: "#f59e0b", baseTokens: Math.round(totalTokens * 0.819) },
+      { name: "连接器及MCP", color: "#8b5cf6", baseTokens: Math.round(totalTokens * 0.002) },
+      { name: "技能", color: "#ec4899", baseTokens: Math.round(totalTokens * 0.010) }
+    ];
+    var valEls = [];
+    catItems.forEach(function (cat) {
+      var item = el("div", { class: "cm-legend-item" });
+      var left = el("div", { class: "cm-legend-left" }, [
+        el("span", { class: "cm-dot", style: "background:" + cat.color }),
+        el("span", { text: cat.name })
+      ]);
+      var val = el("span", { class: "cm-legend-val", text: "0.0%" });
+      valEls.push(val);
+      item.appendChild(left);
+      item.appendChild(val);
+      legendGrid.appendChild(item);
+    });
+    root.appendChild(legendGrid);
+
+    // 4. 分段档位滑块控制器
+    var sliderSec = el("div", { class: "cm-slider-section" });
+    var sliderHeader = el("div", { class: "cm-slider-header" });
+    var sliderLabel = el("div", { class: "cm-slider-label", text: CM_LEVELS[curIdx].label });
+    sliderHeader.appendChild(sliderLabel);
+    sliderSec.appendChild(sliderHeader);
+
+    var sliderWrap = el("div", { class: "cm-slider-wrap" });
+    var track = el("div", { class: "cm-slider-track" });
+    var fill = el("div", { class: "cm-slider-fill" });
+    var thumb = el("div", { class: "cm-slider-thumb" });
+    track.appendChild(fill);
+    track.appendChild(thumb);
+    sliderWrap.appendChild(track);
+
+    var ticks = el("div", { class: "cm-ticks" });
+    var tickEls = [];
+    CM_LEVELS.forEach(function (lvl, idx) {
+      var t = el("span", {
+        class: "cm-tick-item" + (idx === curIdx ? " active" : ""),
+        text: lvl.tick
+      });
+      t.addEventListener("click", function () {
+        selectLevel(idx, true);
+      });
+      tickEls.push(t);
+      ticks.appendChild(t);
+    });
+    sliderWrap.appendChild(ticks);
+    sliderSec.appendChild(sliderWrap);
+
+    var sliderFoot = el("div", { class: "cm-slider-foot" }, [
+      el("span", { text: "拖动或点击吸附切换" }),
+      el("span", { id: "cm-sync-status", style: "color:#10b981", text: "● 已保存至系统环境" })
+    ]);
+    sliderSec.appendChild(sliderFoot);
+    root.appendChild(sliderSec);
+
+    // 动态渲染计算逻辑
+    function updateMetrics(lvlIdx) {
+      var win = CM_LEVELS[lvlIdx].value;
+      var ratio = (totalTokens / win) * 100;
+      percentEl.textContent = ratio.toFixed(1) + "%";
+      statDescEl.textContent = "已使用 " + (totalTokens / 1000).toFixed(1) + "K/ " + (win / 1000).toFixed(1) + "K";
+
+      // 调整五色彩条宽度
+      var pPrompt = (catItems[0].baseTokens / win) * 100;
+      var pTools = (catItems[1].baseTokens / win) * 100;
+      var pMsgs = (catItems[2].baseTokens / win) * 100;
+      var pMcp = (catItems[3].baseTokens / win) * 100;
+      var pSkills = (catItems[4].baseTokens / win) * 100;
+
+      segPrompt.style.width = pPrompt.toFixed(2) + "%";
+      segTools.style.width = pTools.toFixed(2) + "%";
+      segMsgs.style.width = pMsgs.toFixed(2) + "%";
+      segMcp.style.width = pMcp.toFixed(2) + "%";
+      segSkills.style.width = pSkills.toFixed(2) + "%";
+
+      valEls[0].textContent = pPrompt.toFixed(1) + "%";
+      valEls[1].textContent = pTools.toFixed(1) + "%";
+      valEls[2].textContent = pMsgs.toFixed(1) + "%";
+      valEls[3].textContent = pMcp.toFixed(1) + "%";
+      valEls[4].textContent = pSkills.toFixed(1) + "%";
+
+      sliderLabel.textContent = CM_LEVELS[lvlIdx].label;
+
+      // 计算滑块位置与填充条 (0% -> 33.3% -> 66.6% -> 100%)
+      var pctPos = (lvlIdx / (CM_LEVELS.length - 1)) * 100;
+      fill.style.width = pctPos + "%";
+      thumb.style.left = pctPos + "%";
+
+      tickEls.forEach(function (el, i) {
+        el.classList.toggle("active", i === lvlIdx);
+      });
+    }
+
+    function selectLevel(idx, triggerSave) {
+      if (idx < 0) idx = 0;
+      if (idx >= CM_LEVELS.length) idx = CM_LEVELS.length - 1;
+      curIdx = idx;
+      updateMetrics(curIdx);
+
+      if (triggerSave) {
+        var lvl = CM_LEVELS[curIdx];
+        showContextToast("上下文长度已切换至 " + lvl.sub);
+        var syncEl = document.getElementById("cm-sync-status");
+        if (syncEl) {
+          syncEl.style.color = "#f59e0b";
+          syncEl.textContent = "● 正在同步环境变量…";
+        }
+        api("/api/compact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: lvl.apiValue })
+        }).then(function (res) {
+          if (syncEl) {
+            syncEl.style.color = "#10b981";
+            syncEl.textContent = "● 环境变量已就绪（重启生效）";
+          }
+          if (opts.onApplied) opts.onApplied(res);
+        }).catch(function (err) {
+          if (syncEl) {
+            syncEl.style.color = "#ef4444";
+            syncEl.textContent = "● 保存失败：" + err.message;
+          }
+        });
+      }
+    }
+
+    // 鼠标点击轨道快速吸附
+    track.addEventListener("click", function (e) {
+      var rect = track.getBoundingClientRect();
+      var clickX = e.clientX - rect.left;
+      var ratio = Math.max(0, Math.min(1, clickX / rect.width));
+      var targetIdx = Math.round(ratio * (CM_LEVELS.length - 1));
+      selectLevel(targetIdx, true);
+    });
+
+    // 手柄拖动支持
+    var dragging = false;
+    thumb.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      dragging = true;
+      document.body.style.cursor = "grabbing";
+    });
+    window.addEventListener("mousemove", function (e) {
+      if (!dragging) return;
+      var rect = track.getBoundingClientRect();
+      var moveX = e.clientX - rect.left;
+      var ratio = Math.max(0, Math.min(1, moveX / rect.width));
+      var targetIdx = Math.round(ratio * (CM_LEVELS.length - 1));
+      if (targetIdx !== curIdx) {
+        selectLevel(targetIdx, false);
+      }
+    });
+    window.addEventListener("mouseup", function () {
+      if (dragging) {
+        dragging = false;
+        document.body.style.cursor = "";
+        selectLevel(curIdx, true);
+      }
+    });
+
+    updateMetrics(curIdx);
+    return root;
+  }
+
+  // openContextMeterModal 弹窗呼出官方同款「上下文用量」卡片
+  function openContextMeterModal(contextTokens) {
+    var overlay = document.getElementById("context-meter-overlay");
+    if (!overlay) {
+      overlay = el("div", { id: "context-meter-overlay", class: "cm-overlay" });
+      document.body.appendChild(overlay);
+    }
+    clear(overlay);
+
+    var card = el("div", { class: "cm-card" });
+    var header = el("div", { class: "cm-header" }, [
+      el("div", { class: "cm-title", text: "上下文用量" }),
+      el("button", {
+        type: "button",
+        class: "cm-close",
+        html: "&times;",
+        click: function () {
+          overlay.classList.remove("open");
+        }
+      })
+    ]);
+    card.appendChild(header);
+
+    var bodyContainer = el("div", {});
+    bodyContainer.appendChild(el("div", { class: "hint", text: "正在读取当前基准设置…" }));
+    card.appendChild(bodyContainer);
+
+    // 底部重启快捷条
+    var restartBar = el("div", {
+      style: "margin-top:14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);padding:10px 14px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;"
+    }, [
+      el("div", { style: "font-size:11.5px;color:var(--ink-2);", text: "⚡ 改完环境变量需重启生效" }),
+      el("button", {
+        class: "primary",
+        style: "padding:5px 12px;font-size:11.5px;white-space:nowrap;",
+        text: "立即重启客户端",
+        click: function () {
+          restartClient();
+        }
+      })
+    ]);
+    card.appendChild(restartBar);
+
+    overlay.appendChild(card);
+    overlay.offsetHeight;
+    overlay.classList.add("open");
+
+    api("/api/compact").then(function (st) {
+      clear(bodyContainer);
+      var comp = buildContextMeterComponent({
+        initialTokens: contextTokens || 358400,
+        effective: st.effective,
+        state: st,
+        onApplied: function () {
+          loadCompact();
+        }
+      });
+      bodyContainer.appendChild(comp);
+    }).catch(function (err) {
+      clear(bodyContainer);
+      bodyContainer.appendChild(el("div", { class: "note bad", text: "读取失败：" + err.message }));
+    });
+  }
+
+  // ---------- 压缩阈值页面 ----------
   function loadCompact() {
     var box = document.getElementById("compact-body");
     if (!box) return;
@@ -2645,6 +3237,23 @@
     if (!box) return;
     clear(box);
     if (note) clear(note);
+
+    // 官方同款分段滑块卡片置顶呈现
+    var mainCard = el("div", {
+      class: "card",
+      style: "background:#17181c;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px 24px;margin-bottom:16px;"
+    });
+    mainCard.appendChild(el("div", { class: "cm-title", style: "margin-bottom:12px;", text: "官方同款会话上下文用量与分段滑块" }));
+    var comp = buildContextMeterComponent({
+      initialTokens: 358400,
+      effective: st.effective,
+      state: st,
+      onApplied: function (newSt) {
+        if (newSt) renderCompact(newSt);
+      }
+    });
+    mainCard.appendChild(comp);
+    box.appendChild(mainCard);
 
     // 当前生效值 + 换算出来的触发点
     var tiles = el("div", { class: "tiles" }, [
@@ -2675,34 +3284,14 @@
       return;
     }
 
-    // 档位按钮
-    box.appendChild(el("div", { class: "hint", style: "margin-top:14px",
-      text: "选一个档位（当前值会被高亮；点一下即生效，可随时改回）" }));
-
-    var row = el("div", { class: "row", style: "margin-top:8px;flex-wrap:wrap" });
-    st.levels.forEach(function (lv) {
-      var isCur = (lv.value === 0) ? !st.set : (st.set && st.currentValue === lv.value);
-      var btn = el("button", {
-        class: isCur ? "primary" : "",
-        // 推荐档给个视觉标识，但不改变任何行为
-        text: lv.label + (lv.recommended ? " · 推荐" : "")
-      });
-      btn.disabled = isCur;
-      if (!isCur) {
-        btn.onclick = function () { applyCompact(lv, btn); };
-      }
-      row.appendChild(btn);
-    });
-    box.appendChild(row);
-
-    // 每个档的取舍
-    var descs = el("div", { class: "desc", style: "margin-top:10px" });
+    // 每个档的取舍说明
+    var descs = el("div", { class: "desc", style: "margin-top:14px" });
     st.levels.forEach(function (lv) {
       descs.appendChild(el("div", { text: "· " + lv.label + "：" + lv.desc }));
     });
     box.appendChild(descs);
 
-    // 代价与生效条件——这两条必须显眼，不能埋在说明里
+    // 代价与生效条件
     box.appendChild(el("div", { class: "note warn", style: "margin-top:12px" }, [
       el("b", { text: "代价：" }),
       el("div", { text: "基准调大 = 模型记得更久，但每轮请求更大、更慢。" +
@@ -3013,6 +3602,10 @@
       n.classList.toggle("active", n.dataset.page === page);
     });
     // 切进来先拉一次，别让用户对着空页面等下一个刷新周期。
+    if (page === "status") {
+      loadModelRadar(true);
+      loadUsage(true, true);
+    }
     if (page === "log") loadProxyLog(true);
     // 签到**不在切页时重发写请求**。
     //

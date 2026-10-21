@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/modelradar"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
@@ -346,6 +348,18 @@ func (s *Server) observe(model string, status int, msg string) {
 			s.rate.seen = map[string]bool{}
 		}
 		s.rate.seen[model] = true
+		// 流量被动测速同步：成功时解除雷达中的限流和故障标识
+		radar := modelradar.Default()
+		if rec, ok := radar.GetRecord(model); ok {
+			if rec.IsRateLimited || rec.Status == modelradar.StatusDown {
+				rec.IsRateLimited = false
+				rec.ErrorMsg = ""
+				rec.StatusCode = http.StatusOK
+				rec.Status = modelradar.StatusNormal
+				rec.CheckedAt = time.Now()
+				radar.SetRecord(rec)
+			}
+		}
 		return
 	}
 	// 只有 429 是"限流"；400（模型名不对）报成限流会把排查带偏。
@@ -364,6 +378,33 @@ func (s *Server) observe(model string, status int, msg string) {
 			q.UntilMs, q.UntilText = parseResetAt(msg)
 		}
 		s.rate.items[model] = q
+
+		// 流量被动测速同步：真实请求遇到 429 频控时，直接无缝更新雷达快照
+		radar := modelradar.Default()
+		rec, ok := radar.GetRecord(model)
+		if !ok {
+			rec = modelradar.ProbeRecord{Model: model}
+		}
+		rec.Status = modelradar.StatusDown
+		rec.StatusCode = http.StatusTooManyRequests
+		rec.CheckedAt = time.Now()
+		resetAtMs, humanStr, remaining, isRate := modelradar.ParseRateLimitReset(msg)
+		if isRate {
+			rec.IsRateLimited = true
+			rec.RateLimitResetAt = resetAtMs
+			rec.ResetAtHuman = humanStr
+			rec.ResetRemainingDesc = remaining
+			if humanStr != "" {
+				rec.ErrorMsg = fmt.Sprintf("官方限免频控：将于 %s 重置（%s）", humanStr, remaining)
+			} else {
+				rec.ErrorMsg = "官方限免使用频率已达上限 (429)"
+			}
+		} else if strings.Contains(msg, "14003") || strings.Contains(strings.ToLower(msg), "model busy") {
+			rec.ErrorMsg = "429 (官方模型算力繁忙 Model Busy)"
+		} else {
+			rec.ErrorMsg = cutStr(compactError(msg), 300)
+		}
+		radar.SetRecord(rec)
 		return
 	}
 	if status >= 500 {
@@ -374,6 +415,16 @@ func (s *Server) observe(model string, status int, msg string) {
 			SeenMs:  time.Now().UnixMilli(),
 			Message: cutStr(compactError(msg), 300),
 		}
+		radar := modelradar.Default()
+		rec, ok := radar.GetRecord(model)
+		if !ok {
+			rec = modelradar.ProbeRecord{Model: model}
+		}
+		rec.Status = modelradar.StatusDown
+		rec.StatusCode = status
+		rec.ErrorMsg = fmt.Sprintf("HTTP %d (上游服务异常)", status)
+		rec.CheckedAt = time.Now()
+		radar.SetRecord(rec)
 	}
 }
 

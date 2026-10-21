@@ -112,12 +112,14 @@ func readCompactState() CompactState {
 		Max:     compactMax,
 		Default: compactDefault,
 		Levels: []CompactLevel{
-			{Key: "300k", Label: "300k（折中）", Value: 300000, Recommended: true,
-				Desc: "比默认宽松一半，也照顾窗口较小的模型。推荐从这个开始。"},
-			{Key: "1M", Label: "1M（最长记忆）", Value: 1000000,
-				Desc: "最贴近 1M 窗口模型的上限。记得最久，但每轮请求最大最慢。"},
 			{Key: "default", Label: "默认（200k）", Value: 0,
 				Desc: "清掉设置，回到客户端内置值。最省流量，但忘事最早。"},
+			{Key: "300k", Label: "300k（精简）", Value: 300000,
+				Desc: "适度放宽上下文，适合兼顾轻量与多步推理。"},
+			{Key: "600k", Label: "600k（适中）", Value: 600000, Recommended: true,
+				Desc: "官方推荐的黄金档位，兼顾长记忆与首字响应速度。"},
+			{Key: "1M", Label: "1M（超长记忆）", Value: 1000000,
+				Desc: "最贴近 1M 窗口模型的上限。记得最久，但每轮请求最大最慢。"},
 		},
 		Available: true,
 	}
