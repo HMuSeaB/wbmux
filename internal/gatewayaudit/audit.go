@@ -93,11 +93,16 @@ var (
 // Default 获取全局默认网关审计器单例，并初始化本地持久化引擎。
 func Default() *Auditor {
 	once.Do(func() {
-		dir, _ := config.Dir()
+		dir := ""
+		// 若当前运行在测试二进制中，绝不写入用户主目录，杜绝测试跑出的假请求污染生产看板
+		if !config.InTestBinary() {
+			dir, _ = config.Dir()
+		}
 		defaultAuditor = NewAuditorWithStorage(DefaultMaxRecords, dir)
 	})
 	return defaultAuditor
 }
+
 
 // NewAuditor 创建一个指定容量的纯内存审计追踪器（主要供单元测试使用）。
 func NewAuditor(maxRecords int) *Auditor {

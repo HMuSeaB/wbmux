@@ -36,6 +36,7 @@ func (s *Server) handleGatewayClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gatewayaudit.Default().Clear()
+	gatewayaudit.Default().ClearAll()
 	writeJSON(w, map[string]any{"ok": true})
 }
+

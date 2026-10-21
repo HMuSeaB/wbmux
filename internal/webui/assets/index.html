@@ -1892,8 +1892,13 @@
             <span class="card-title" style="font-size:13px;display:flex;align-items:center;gap:6px">
               <svg class="ico ico-sm" aria-hidden="true"><use href="#i-term"/></svg>实时请求审计流水 (最近 100 条)
             </span>
-            <span class="card-sub" id="gw-table-status-label">就绪</span>
+            <div style="display:flex;align-items:center;gap:8px">
+
+              <span class="card-sub" id="gw-table-status-label">就绪</span>
+              <button id="btn-gw-clear-table" class="ghost danger compact" style="font-size:11px;padding:2px 8px;border-radius:4px" title="清空全部网关调用流水"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-trash"/></svg>清空</button>
+            </div>
           </div>
+
           <div style="overflow-x:auto">
             <table class="gw-table" style="width:100%;border-collapse:collapse;font-size:12px;text-align:left">
               <thead>
@@ -8046,6 +8051,9 @@
   if (btnGwRefresh) btnGwRefresh.addEventListener("click", function () { loadGatewayAudit(true); });
   var btnGwClear = document.getElementById("btn-gw-clear");
   if (btnGwClear) btnGwClear.addEventListener("click", clearGatewayAudit);
+  var btnGwClearTable = document.getElementById("btn-gw-clear-table");
+  if (btnGwClearTable) btnGwClearTable.addEventListener("click", clearGatewayAudit);
+
 
   var btnTrendAll = document.getElementById("btn-trend-all");
   if (btnTrendAll) {
