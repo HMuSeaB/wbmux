@@ -663,6 +663,11 @@
   .log-bad .log-text  { color: var(--bad); }
   .log-warn .log-text { color: var(--warn); }
   .log-info .log-text { color: var(--ink-2); }
+  .log-tag { display: inline-flex; align-items: center; padding: 0 5px; border-radius: 4px; font-size: 10px; line-height: 1.4; font-weight: 600; margin-right: 6px; flex: none; user-select: none; }
+  .log-tag.req { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+  .log-tag.done { background: rgba(74, 157, 106, 0.15); color: #4ade80; border: 1px solid rgba(74, 157, 106, 0.3); }
+  .log-tag.warn { background: rgba(234, 88, 12, 0.15); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.35); }
+  .log-tag.bad { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
   /* ---- 提供方（BYOK）表单 ---- */
   /* 表单控件独立写一套：这里此前只有 checkbox，没有文本输入。 */
   .form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -1400,6 +1405,7 @@
       只有一条「收到请求」而没有对应的「转发完成」＝ 卡在上游，还没回来。
       转发完成里会写明这次的上下文有多大（长会话能到十几 MB）。
     </p>
+    <div id="live-session-card" style="margin:14px 0"></div>
     <div class="row" style="margin-top:12px">
       <button id="btn-log-refresh">刷新</button>
       <label class="check" style="margin:0">
@@ -2404,6 +2410,105 @@
     return sec && !sec.hidden;
   }
 
+  function renderLiveSessionCard(list) {
+    var container = document.getElementById("live-session-card");
+    if (!container) return;
+    clear(container);
+
+    if (!list || !list.length) return;
+
+    var latestReq = null;
+    var latestDone = null;
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (!latestDone && item.text && item.text.indexOf("转发完成") >= 0) {
+        latestDone = item;
+      }
+      if (!latestReq && (item.bodyBytes || (item.text && item.text.indexOf("收到请求") >= 0))) {
+        latestReq = item;
+      }
+      if (latestReq && latestDone) break;
+    }
+
+    if (!latestReq && !latestDone) return;
+
+    var model = (latestReq && latestReq.model) || (latestDone && latestDone.model) || "未知模型";
+    var bytes = (latestReq && latestReq.bodyBytes) || 0;
+    var tokens = (latestReq && latestReq.tokens) || (bytes ? Math.round(bytes / 5.5) : 0);
+    var scale = (latestReq && latestReq.contextScale) || (bytes >= 1500 * 1024 ? "overload" : (bytes >= 600 * 1024 ? "heavy" : "normal"));
+
+    // 容错：如果还没有拿到结构化 bodyBytes，从文本中正则提取
+    if (!bytes && latestReq && latestReq.text) {
+      var mBytes = latestReq.text.match(/正文\s+([0-9.]+\s*[KMGT]?B)/i);
+      var sizeStr = mBytes ? mBytes[1] : "";
+      var mTok = latestReq.text.match(/~([0-9]+k?\s*tokens?)/i);
+      var tokStr = mTok ? "~" + mTok[1] : "";
+    }
+
+    var sizeDisplay = bytes ? (bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + " MB" : (bytes / 1024).toFixed(1) + " KB") : (sizeStr || "近期未测");
+    var tokenDisplay = tokens ? "~" + Math.round(tokens / 1000) + "k tokens" : (tokStr || "");
+
+    var badgeText = "🟢 会话体量健康";
+    var badgeClass = "pill ok";
+    var tipText = "会话体量轻盈敏捷，首字延迟与响应速度处于极佳状态。";
+    var cardBorder = "rgba(74, 157, 106, 0.28)";
+    var cardBg = "rgba(74, 157, 106, 0.05)";
+
+    if (scale === "overload" || bytes >= 1500 * 1024 || (sizeStr && parseFloat(sizeStr) >= 1.5 && sizeStr.indexOf("MB") >= 0)) {
+      badgeText = "⚡ 密集超载预警";
+      badgeClass = "pill warn";
+      tipText = "当前上下文体积过大（已超 300k tokens 门槛），极易引发上游算力繁忙 (14003) 或网络超时，强烈建议在当前步骤完成后开启新对话。";
+      cardBorder = "rgba(234, 88, 12, 0.4)";
+      cardBg = "rgba(234, 88, 12, 0.08)";
+    } else if (scale === "heavy" || bytes >= 600 * 1024 || (sizeStr && parseFloat(sizeStr) >= 600 && sizeStr.indexOf("KB") >= 0)) {
+      badgeText = "🟡 深度长会话";
+      badgeClass = "pill";
+      tipText = "会话上下文逐步累积深入，建议关注长任务进度并适时开启新对话。";
+      cardBorder = "rgba(184, 134, 59, 0.35)";
+      cardBg = "rgba(184, 134, 59, 0.06)";
+    }
+
+    var card = el("div", {
+      class: "card live-session-box",
+      style: "border:1px solid " + cardBorder + ";background:" + cardBg + ";padding:14px 18px;border-radius:10px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;"
+    }, [
+      el("div", { style: "display:flex;align-items:center;gap:18px;flex-wrap:wrap;" }, [
+        el("div", {}, [
+          el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:4px;" }, [
+            el("span", { class: badgeClass, style: "font-size:11px;padding:1px 8px;font-weight:600;", text: badgeText }),
+            el("code", { style: "font-size:13px;color:var(--ink-1);font-weight:600;font-family:var(--mono);", text: model })
+          ]),
+          el("div", { style: "font-size:12px;color:var(--c-sub);line-height:1.5;max-width:540px;", text: tipText })
+        ]),
+        el("div", { style: "border-left:1px solid var(--border-soft);padding-left:18px;" }, [
+          el("div", { style: "font-size:11px;color:var(--ink-3);", text: "当前最新上下文体积" }),
+          el("div", { style: "display:flex;align-items:baseline;gap:6px;" }, [
+            el("span", { style: "font-size:20px;font-weight:700;color:var(--ink-1);font-family:var(--mono);", text: sizeDisplay }),
+            tokenDisplay ? el("span", { style: "font-size:12px;color:var(--ink-3);font-family:var(--mono);", text: tokenDisplay }) : null
+          ])
+        ])
+      ]),
+      el("div", { style: "display:flex;gap:8px;flex:none;" }, [
+        el("button", {
+          class: "btn-sm",
+          text: "⚙️ 压缩阈值 (300k)",
+          click: function () {
+            showPage("compact");
+          }
+        }),
+        el("button", {
+          class: "btn-sm",
+          text: "📊 网关大屏",
+          click: function () {
+            showPage("gateway");
+          }
+        })
+      ])
+    ]);
+
+    container.appendChild(card);
+  }
+
   function renderProxyLog(res) {
     var box = document.getElementById("log-body");
     clear(box);
@@ -2414,9 +2519,11 @@
       else if (e.level === "warn") up++;
       else if (e.level === "bad") bad++;
     });
-    // 摘要里把"上游故障"单列出来：它是唯一一类"用户什么都不用改、
-    // 等对方恢复就行"的失败。混在"失败 N"里，用户会以为是自己配错了
-    // 而反复重试（2026-10-15 用户看到 step-5-preview 报 500 就是这么问的）。
+
+    // 渲染置顶当前会话体量感知卡片
+    renderLiveSessionCard(list);
+
+    // 摘要里把"上游故障"单列出来
     document.getElementById("log-summary").textContent = list.length
       ? "最近 " + list.length + " 条 · 成功 " + ok + " · 失败 " + bad
         + (up ? " · 上游故障 " + up : "")
@@ -2429,11 +2536,28 @@
     }
     var wrap = el("div", { class: "log-list" });
     list.forEach(function (e) {
-      // 一律走 textContent（见 el 的说明）：错误信息里可能带尖括号，
-      // 拼 innerHTML 就等于把上游返回的内容当代码执行。
+      var text = e.text || "";
+      var tagClass = "info";
+      var tagLabel = "日志";
+
+      if (text.indexOf("收到请求") >= 0) {
+        tagClass = "req";
+        tagLabel = "📥 收到";
+      } else if (text.indexOf("转发完成") >= 0) {
+        tagClass = "done";
+        tagLabel = "📤 完成";
+      } else if (text.indexOf("重试") >= 0 || text.indexOf("防抖") >= 0) {
+        tagClass = "warn";
+        tagLabel = "⚡ 防抖";
+      } else if (e.level === "bad" || text.indexOf("拒绝") >= 0 || text.indexOf("失败") >= 0) {
+        tagClass = "bad";
+        tagLabel = "❌ 异常";
+      }
+
       wrap.appendChild(el("div", { class: "log-line log-" + (e.level || "info") }, [
         el("span", { class: "log-time", text: e.at || "" }),
-        el("span", { class: "log-text", text: e.text || "" })
+        el("span", { class: "log-tag " + tagClass, text: tagLabel }),
+        el("span", { class: "log-text", text: text })
       ]));
     });
     box.appendChild(wrap);

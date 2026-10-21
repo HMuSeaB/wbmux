@@ -39,6 +39,12 @@ type ProxyLogEntry struct {
 	MS int64 `json:"ms,omitempty"`
 	// Text 是给人读的一行说明，同时就是 gui.log 里的内容。
 	Text string `json:"text"`
+	// BodyBytes 记录本次请求体的原始字节大小。
+	BodyBytes int64 `json:"bodyBytes,omitempty"`
+	// Tokens 是根据密度估算的 Token 总数。
+	Tokens int `json:"tokens,omitempty"`
+	// ContextScale 是会话健康分级 (normal / heavy / overload)。
+	ContextScale string `json:"contextScale,omitempty"`
 }
 
 // note 记一条代理事件：进内存缓冲，并落日志文件。

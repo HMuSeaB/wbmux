@@ -888,21 +888,21 @@ func TestCalcModelBusyBackoff(t *testing.T) {
 
 // TestEvaluateContextScale 验证三级上下文规模分级与预警建议
 func TestEvaluateContextScale(t *testing.T) {
-	// 1. normal: < 500 KB
+	// 1. normal: < 600 KB
 	s1 := evaluateContextScale(300 * 1024)
-	if s1.Level != "normal" || s1.Tip != "" {
+	if s1.Level != "normal" || s1.LevelLabel != "正常" || s1.Tip != "" {
 		t.Errorf("300KB 应为 normal，得到 %+v", s1)
 	}
 
-	// 2. heavy: 500 KB ~ 1.2 MB
+	// 2. heavy: 600 KB ~ 1.5 MB
 	s2 := evaluateContextScale(800 * 1024)
-	if s2.Level != "heavy" || !strings.Contains(s2.Desc, "长会话") {
+	if s2.Level != "heavy" || s2.LevelLabel != "长会话" || !strings.Contains(s2.Desc, "tokens") {
 		t.Errorf("800KB 应为 heavy，得到 %+v", s2)
 	}
 
-	// 3. overload: >= 1.2 MB
+	// 3. overload: >= 1.5 MB
 	s3 := evaluateContextScale(1900 * 1024)
-	if s3.Level != "overload" || !strings.Contains(s3.Desc, "超载会话") || s3.Tip == "" {
+	if s3.Level != "overload" || s3.LevelLabel != "超载会话" || s3.Tip == "" || !strings.Contains(s3.Desc, "tokens") {
 		t.Errorf("1.9MB 应为 overload 且包含优化建议，得到 %+v", s3)
 	}
 }

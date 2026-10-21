@@ -488,9 +488,12 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	// 先记"收到"，再转发：这样卡在上游的请求在界面上也看得见
 	// （只有一条"收到"没有对应的"完成"，一眼就知道卡在哪一步）。
 	scale := evaluateContextScale(int64(len(raw)))
-	s.note(ProxyLogEntry{Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
+	s.note(ProxyLogEntry{
+		Level: "info", Model: route.Model, Tools: up.Tools, Stream: up.ClientStream,
+		BodyBytes: int64(len(raw)), Tokens: scale.Tokens, ContextScale: scale.Level,
 		Text: fmt.Sprintf("收到请求 model=%s 经%s %s stream=%v 正文 %s",
-			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, scale.Desc)})
+			route.Model, route.Label, describeTools(up.Tools), up.ClientStream, scale.Desc),
+	})
 
 	// 端点与凭据头：内置后端要读客户端认证文件（并带上 X-User-Id 等产品头），
 	// 自备提供方只用卡片里的 key。
@@ -622,8 +625,8 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 			Tools:  up.Tools,
 			Stream: up.ClientStream,
 			MS:     time.Since(started).Milliseconds(),
-			Text: fmt.Sprintf("%s model=%s 经%s %s stream=%v 回给客户端 %s 用时 %s",
-				customPrefix, route.Model, route.Label, describeTools(up.Tools), up.ClientStream,
+			Text: fmt.Sprintf("%s model=%s 经%s 回给客户端 %s 用时 %s",
+				customPrefix, route.Model, route.Label,
 				describeBytes(m.bytesSent), time.Since(started).Round(time.Millisecond)),
 		})
 	}
@@ -1151,10 +1154,11 @@ func calcModelBusyBackoff(attempt int, resp *http.Response) time.Duration {
 
 // contextScale 描述客户端会话上下文体积的三级健康评估。
 type contextScale struct {
-	Level  string // "normal" | "heavy" | "overload"
-	Tokens int    // 估算的 Token 数
-	Desc   string // 友好描述，如 "1.9 MB (~633k tokens [超载会话])"
-	Tip    string // 优化指导建议（超载时触发）
+	Level      string // "normal" | "heavy" | "overload"
+	LevelLabel string // "正常" | "长会话" | "超载会话"
+	Tokens     int    // 估算的 Token 数
+	Desc       string // 友好紧凑描述，如 "1.5 MB (~270k tokens)"
+	Tip        string // 优化指导建议（超载时触发）
 }
 
 func evaluateContextScale(bytesLen int64) contextScale {
@@ -1167,24 +1171,27 @@ func evaluateContextScale(bytesLen int64) contextScale {
 	switch {
 	case bytesLen >= 1500*1024: // >= 1.5 MB (~280k-400k+ tokens)
 		return contextScale{
-			Level:  "overload",
-			Tokens: tokens,
-			Desc:   fmt.Sprintf("%s (~%dk tokens [超载会话])", bytesStr, tokens/1000),
-			Tip:    "当前会话上下文已超 300k tokens，极易引发官方推理集群排队拥堵，建议在当前步骤完成后开启新对话以提升响应速度",
+			Level:      "overload",
+			LevelLabel: "超载会话",
+			Tokens:     tokens,
+			Desc:       fmt.Sprintf("%s (~%dk tokens)", bytesStr, tokens/1000),
+			Tip:        "当前会话上下文已超 300k tokens，极易引发官方推理集群排队拥堵，建议在当前步骤完成后开启新对话以提升响应速度",
 		}
 	case bytesLen >= 600*1024: // 600 KB ~ 1.5 MB (~110k-280k tokens)
 		return contextScale{
-			Level:  "heavy",
-			Tokens: tokens,
-			Desc:   fmt.Sprintf("%s (~%dk tokens [长会话])", bytesStr, tokens/1000),
-			Tip:    "",
+			Level:      "heavy",
+			LevelLabel: "长会话",
+			Tokens:     tokens,
+			Desc:       fmt.Sprintf("%s (~%dk tokens)", bytesStr, tokens/1000),
+			Tip:        "",
 		}
 	default:
 		return contextScale{
-			Level:  "normal",
-			Tokens: tokens,
-			Desc:   bytesStr,
-			Tip:    "",
+			Level:      "normal",
+			LevelLabel: "正常",
+			Tokens:     tokens,
+			Desc:       bytesStr,
+			Tip:        "",
 		}
 	}
 }
