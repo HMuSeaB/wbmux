@@ -134,6 +134,8 @@ type Server struct {
 	logFn          func(format string, args ...any)
 	upstreamBaseFn func() string
 	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
+	domesticCredFn     func(*variant.Probe) (credential.Credential, error)
+	domesticEndpointFn func() string
 	// logPathFn 覆盖"日志文件在哪"。quotalive.go 启动时会从日志尾部恢复
 	// 限流状态（进程重启后内存里那份就没了，而模型可能还被限着）。
 	logPathFn func() string
@@ -305,6 +307,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/auth/poll", s.guard(s.handleAuthPoll))
 	mux.HandleFunc("/api/growth/streak", s.guard(s.handleGrowthStreak))
 	mux.HandleFunc("/api/growth/redeem", s.guard(s.handleGrowthRedeem))
+	mux.HandleFunc("/api/growth/domestic/tasks", s.guard(s.handleGrowthDomesticTasks))
+	mux.HandleFunc("/api/growth/domestic/run", s.guard(s.handleGrowthDomesticRun))
+	mux.HandleFunc("/api/growth/domestic/sweep", s.guard(s.handleGrowthDomesticSweep))
+	mux.HandleFunc("/api/growth/domestic/compensation/claim", s.guard(s.handleGrowthDomesticCompensationClaim))
 
 	s.http = &http.Server{
 		Handler:           mux,

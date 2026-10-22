@@ -1601,7 +1601,152 @@
     font-size: 11px;
     color: var(--ink-3);
     white-space: nowrap;
-    transition: color .15s ease;
+  /* ---------- 成长与福利中心 (Growth Hub · Awwwards 标准) ---------- */
+  .growth-hero {
+    background: radial-gradient(circle at top right, rgba(99, 179, 196, 0.18), transparent 50%),
+                linear-gradient(135deg, #181726 0%, #101115 100%);
+    border: 1px solid rgba(235, 178, 58, 0.3);
+    border-radius: var(--r-lg);
+    padding: 24px;
+    margin-bottom: 20px;
+    position: relative;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    overflow: hidden;
+  }
+  .growth-hero::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, #ebb23a, #63b3c4, #a78bfa);
+  }
+  .growth-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .growth-stat-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-md);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: transform .18s ease, border-color .18s ease;
+  }
+  .growth-stat-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,0.18);
+  }
+  .growth-stat-label {
+    font-size: 11.5px;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .growth-stat-val {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: var(--mono);
+    letter-spacing: -0.3px;
+  }
+  .growth-stat-val.gold {
+    color: #ffd700;
+    text-shadow: 0 0 12px rgba(255, 215, 0, 0.25);
+  }
+  .growth-stat-val.cyan {
+    color: #63b3c4;
+    text-shadow: 0 0 12px rgba(99, 179, 196, 0.25);
+  }
+  .growth-stat-val.purple {
+    color: #c084fc;
+    font-size: 15px;
+    font-family: var(--sans);
+    letter-spacing: normal;
+  }
+  .growth-comp-banner {
+    background: linear-gradient(90deg, rgba(235, 178, 58, 0.16), rgba(194, 85, 80, 0.16));
+    border: 1px solid rgba(235, 178, 58, 0.5);
+    border-radius: var(--r-md);
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    animation: growth-pulse-border 2.5s infinite;
+  }
+  @keyframes growth-pulse-border {
+    0%, 100% { border-color: rgba(235, 178, 58, 0.4); box-shadow: 0 0 0 0 rgba(235, 178, 58, 0.2); }
+    50% { border-color: rgba(235, 178, 58, 0.8); box-shadow: 0 0 14px 2px rgba(235, 178, 58, 0.25); }
+  }
+  .growth-task-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .growth-task-card {
+    background: var(--g1);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-md);
+    padding: 15px 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 12px;
+    transition: all .16s ease;
+  }
+  .growth-task-card:hover {
+    background: var(--g2);
+    border-color: var(--g5);
+    transform: translateY(-1px);
+  }
+  .growth-task-card.claimed {
+    opacity: 0.72;
+    border-color: rgba(74, 157, 106, 0.25);
+  }
+  .growth-task-card.claimable {
+    border-color: rgba(255, 215, 0, 0.45);
+    background: linear-gradient(145deg, rgba(255, 215, 0, 0.06), var(--g1));
+    box-shadow: 0 0 16px rgba(255, 215, 0, 0.08);
+  }
+  .growth-pill {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .growth-pill.done {
+    background: rgba(74, 157, 106, 0.15);
+    color: var(--ok);
+    border: 1px solid rgba(74, 157, 106, 0.3);
+  }
+  .growth-pill.ready {
+    background: rgba(255, 215, 0, 0.18);
+    color: #ffd700;
+    border: 1px solid rgba(255, 215, 0, 0.4);
+    animation: growth-pulse-border 2s infinite;
+  }
+  .growth-pill.pending {
+    background: rgba(99, 179, 196, 0.12);
+    color: var(--brand);
+    border: 1px solid rgba(99, 179, 196, 0.25);
+  }
+  .growth-console {
+    background: var(--g0);
+    border: 1px solid var(--g4);
+    border-radius: var(--r-md);
+    padding: 12px 14px;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    max-height: 160px;
+    overflow-y: auto;
   }
 </style>
 </head>
@@ -1643,6 +1788,7 @@
 
       <div class="nav-group">
         <div class="nav-group-title">辅助工具箱</div>
+        <div class="nav-item" data-page="growth"><svg class="ico" aria-hidden="true"><use href="#i-gift"/></svg>成长与福利中心<span class="nav-badge" id="nav-growth-badge" style="background:rgba(235,178,58,0.2);color:#ebb23a">+1950c</span></div>
         <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到<span class="nav-badge" id="nav-checkin-badge">自动</span></div>
         <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
         <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
@@ -2132,6 +2278,112 @@
     </div>
   </section>
 
+    </div>
+    <div data-page="growth" hidden>
+      <section>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h2><svg class="ico-sm" aria-hidden="true" style="color:#ffd700"><use href="#i-gift"/></svg>成长任务与福利加速中心</h2>
+          <span class="hero-badge" style="background:rgba(235,178,58,0.18);color:#ffd700;border:1px solid rgba(235,178,58,0.3)">
+            纯 API 驱动 · 17项自动化
+          </span>
+        </div>
+        <p class="sub">
+          官方国内侧（WorkBuddy / CodeBuddy）成长计划与异常补偿加速管家。
+          基于逆向提取的 Desktop 5.5.6 事件族、Web 遥测与小程序事件链，<strong>无需打开桌面客户端、无需人工点按界面</strong>，一键点亮领奖。
+        </p>
+
+        <!-- 官方异常故障补偿预警横幅 (默认隐藏，查到 pending 时激活) -->
+        <div id="growth-comp-banner" class="growth-comp-banner" hidden>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:22px">🎁</span>
+            <div>
+              <div style="font-size:13.5px;font-weight:650;color:#ffd700" id="growth-comp-title">官方服务异常补偿待领取</div>
+              <div style="font-size:11.5px;color:var(--ink-2);margin-top:2px" id="growth-comp-desc">发现官方服务波动故障限时补偿包，请在截止日前领取入账。</div>
+            </div>
+          </div>
+          <button class="primary" id="btn-growth-comp-claim" style="background:#ebb23a;color:#111;font-weight:600;border:none">
+            一键直领到账
+          </button>
+        </div>
+
+        <!-- 主战果看板卡片 -->
+        <div class="growth-hero">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-size:15px;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ebb23a"></span>
+              成长计划权益总览与预期收益
+            </div>
+            <div style="font-size:12px;color:var(--ink-3);font-family:var(--mono)" id="growth-last-sync">未同步</div>
+          </div>
+
+          <div class="growth-stats-grid">
+            <div class="growth-stat-card">
+              <span class="growth-stat-label">待领积分预期收益</span>
+              <span class="growth-stat-val gold" id="growth-stat-credit">+0</span>
+            </div>
+            <div class="growth-stat-card">
+              <span class="growth-stat-label">待领能量点数</span>
+              <span class="growth-stat-val cyan" id="growth-stat-energy">+0</span>
+            </div>
+            <div class="growth-stat-card">
+              <span class="growth-stat-label">云服务器特权</span>
+              <span class="growth-stat-val purple">免费 1 个月轻量服务器</span>
+            </div>
+            <div class="growth-stat-card">
+              <span class="growth-stat-label">特殊猫咪领养</span>
+              <span class="growth-stat-val" style="color:var(--brand);font-size:15px;font-family:var(--sans)">UR Buddy 领养资格</span>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:16px;gap:10px">
+            <button class="primary" id="btn-growth-sweep" style="background:linear-gradient(135deg, #ebb23a 0%, #d49520 100%);color:#0b0c0e;font-weight:650;border:none;box-shadow:0 2px 10px rgba(235,178,58,0.3)">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
+              ⚡ 一键自动扫荡全部待办并领奖
+            </button>
+            <button class="ghost" id="btn-growth-refresh">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>
+              刷新任务状态
+            </button>
+            <span style="font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;margin-left:auto">
+              <svg class="ico-sm" style="color:var(--ok)"><use href="#i-check"/></svg>
+              真人节律保护已启用（1.05s 防抖）
+            </span>
+          </div>
+
+          <!-- 扫荡实时动态控制台 -->
+          <div id="growth-sweep-console" class="growth-console" hidden>
+            <div style="font-weight:600;color:var(--ink);margin-bottom:4px;display:flex;justify-content:space-between">
+              <span id="growth-sweep-status">准备执行一键扫荡…</span>
+              <span id="growth-sweep-progress">0%</span>
+            </div>
+            <div id="growth-sweep-log"></div>
+          </div>
+        </div>
+
+        <!-- 17项任务矩阵列表 -->
+        <div style="margin-top:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <h3 style="font-size:13.5px;font-weight:650;color:var(--ink);margin:0">全量成长任务矩阵 (17项自动化 + 1项微信捐赠)</h3>
+            <span style="font-size:11.5px;color:var(--ink-3)" id="growth-task-count">加载中…</span>
+          </div>
+          <div id="growth-tasks-list" class="growth-task-grid">
+            <div class="hint" style="grid-column:1/-1"><span class="spinner"></span> 正在拉取国内侧最新任务列表与进度…</div>
+          </div>
+        </div>
+      </section>
+
+      <section style="margin-top:20px">
+        <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>全自动化逆向原理与合规边界</h2>
+        <p class="sub">
+          <strong>为什么纯 API 就能点亮？</strong><br>
+          官方判定任务完成的通道是 <code>POST /v2/report</code>。经过逆向 <code>app.asar</code> 与抓包解密，官方不同任务严格识别特定的客户端指纹（桌面端 5.5.6 事件族、Web 域元素点击、小程序专属请求头）。
+          wbmux 将这些事件链原汁原味地封装为纯 API 流水，同时针对专家与技能类任务通过微秒级短会话从 SSE 流截取服务端真实会话 ID 注入回填，因此无需打开官方客户端即可完成。
+        </p>
+        <p class="sub">
+          <strong>计分异步落账保护：</strong><br>
+          官方服务端计分存在 3~8 秒异步延迟，wbmux 采用有界退避回读轮询，在落账后自动调用 <code>claim</code> 接口将积分与能量真正领到账号中，无需人工反复盯梢。
+        </p>
+      </section>
     </div>
     <div data-page="checkin" hidden>
   <section>
@@ -3728,6 +3980,7 @@
       loadUsage(true, true);
     }
     if (page === "log") loadProxyLog(true);
+    if (page === "growth") loadDomesticGrowth(false);
     // 签到**不在切页时重发写请求**。
     //
     // 打开界面时已经签过一遍（loadCheckin(true)，见启动段）。切回来再发一次
@@ -4290,6 +4543,325 @@
     }).catch(function (e) {
       toast("领取失败：" + e.message, "bad");
     }).then(function () { checkinBusy(false); });
+  }
+
+  // ---------- 成长任务与福利中心 (Growth Hub) ----------
+  var growthLastTasks = null;
+  var growthBusyFlag = false;
+
+  function growthBusy(on) {
+    growthBusyFlag = on;
+    ["btn-growth-sweep", "btn-growth-refresh", "btn-growth-comp-claim"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = on;
+    });
+  }
+
+  function updateGrowthSidebarBadge(data) {
+    var b = document.getElementById("nav-growth-badge");
+    if (!b) return;
+    if (!data || !data.items) {
+      b.textContent = "+1950c";
+      b.style.background = "rgba(235,178,58,0.2)";
+      b.style.color = "#ebb23a";
+      return;
+    }
+    var pendingCredit = data.totalCreditPending || 0;
+    var allClaimed = true;
+    data.items.forEach(function (t) {
+      if (t.canAutomate && !t.claimed) allClaimed = false;
+    });
+    if (allClaimed) {
+      b.textContent = "已达成";
+      b.style.background = "rgba(46,196,182,0.18)";
+      b.style.color = "var(--ok)";
+    } else if (pendingCredit > 0) {
+      b.textContent = "+" + pendingCredit + "c";
+      b.style.background = "rgba(235,178,58,0.2)";
+      b.style.color = "#ebb23a";
+    } else {
+      b.textContent = "待领奖";
+      b.style.background = "rgba(255,107,107,0.2)";
+      b.style.color = "#ff6b6b";
+    }
+  }
+
+  function loadDomesticGrowth(quiet) {
+    var list = document.getElementById("growth-tasks-list");
+    if (!quiet && list && (!growthLastTasks || !growthLastTasks.items)) {
+      clear(list);
+      list.appendChild(el("div", { class: "hint", style: "grid-column:1/-1" }, [
+        el("span", { class: "spinner" }),
+        " 正在拉取国内侧最新任务列表与补偿状态…"
+      ]));
+    }
+    if (!quiet) growthBusy(true);
+
+    Promise.all([
+      api("/api/growth/domestic/tasks"),
+      api("/api/growth/domestic/compensation").catch(function () { return { hasPending: false }; })
+    ]).then(function (results) {
+      var taskData = results[0];
+      var compData = results[1];
+      growthLastTasks = taskData;
+
+      // 更新官方补偿横幅
+      var banner = document.getElementById("growth-comp-banner");
+      if (banner) {
+        if (compData && compData.hasPending) {
+          banner.hidden = false;
+          var titleEl = document.getElementById("growth-comp-title");
+          var descEl = document.getElementById("growth-comp-desc");
+          if (titleEl) titleEl.textContent = "🎁 官方服务异常故障补偿待领取 (" + (compData.rewards || "丰厚积分礼包") + ")";
+          if (descEl && compData.desc) descEl.textContent = compData.desc;
+        } else {
+          banner.hidden = true;
+        }
+      }
+
+      // 更新主战果卡片与侧边栏
+      var statCredit = document.getElementById("growth-stat-credit");
+      var statEnergy = document.getElementById("growth-stat-energy");
+      var lastSync = document.getElementById("growth-last-sync");
+      if (statCredit) statCredit.textContent = "+" + (taskData.totalCreditPending || 0);
+      if (statEnergy) statEnergy.textContent = "+" + (taskData.totalEnergyPending || 0);
+      if (lastSync) {
+        var d = new Date();
+        lastSync.textContent = "同步于 " + d.toLocaleTimeString();
+      }
+      updateGrowthSidebarBadge(taskData);
+
+      // 渲染任务矩阵
+      renderDomesticTasks(taskData);
+    }).catch(function (e) {
+      if (!quiet) toast("拉取成长任务失败：" + e.message, "bad");
+      if (list) {
+        clear(list);
+        list.appendChild(el("div", { class: "note bad", style: "grid-column:1/-1", text: "拉取成长任务失败：" + e.message }));
+      }
+    }).then(function () {
+      if (!quiet) growthBusy(false);
+    });
+  }
+
+  function renderDomesticTasks(data) {
+    var list = document.getElementById("growth-tasks-list");
+    var countLabel = document.getElementById("growth-task-count");
+    if (!list) return;
+    clear(list);
+
+    var items = (data && data.items) || [];
+    var total = items.length;
+    var claimedCount = 0;
+    var claimableCount = 0;
+    var pendingCount = 0;
+
+    items.forEach(function (t) {
+      if (t.claimed) claimedCount++;
+      else if (t.claimable) claimableCount++;
+      else pendingCount++;
+    });
+
+    if (countLabel) {
+      countLabel.textContent = "共 " + total + " 项 · 已入账 " + claimedCount + " 项 · 待领奖 " + claimableCount + " 项 · 待扫荡 " + pendingCount + " 项";
+    }
+
+    if (items.length === 0) {
+      list.appendChild(el("div", { class: "hint", style: "grid-column:1/-1", text: "暂无成长任务数据或国内侧未登录。" }));
+      return;
+    }
+
+    items.forEach(function (t) {
+      var card = el("div", { class: "growth-card" + (t.claimed ? " done" : "") });
+
+      // Header: 标题与分类标签
+      var header = el("div", { class: "growth-card-header" }, [
+        el("span", { class: "growth-card-title", text: t.name || t.code }),
+        el("span", { class: "growth-card-cat", text: t.category || "常用" })
+      ]);
+
+      // Description
+      var desc = el("div", { class: "growth-card-desc", text: t.desc || "官方成长加速任务" });
+
+      // Progress bar
+      var progStr = t.progress || "0/1";
+      var pParts = progStr.split("/");
+      var curP = parseInt(pParts[0], 10) || 0;
+      var maxP = parseInt(pParts[1], 10) || 1;
+      var pct = Math.min(100, Math.max(0, Math.round((curP / maxP) * 100)));
+
+      var progBox = el("div", { class: "growth-progress-box" }, [
+        el("div", { class: "growth-progress-bar" }, [
+          el("div", { class: "growth-progress-fill", style: "width:" + pct + "%" })
+        ]),
+        el("div", { class: "growth-progress-text" }, [
+          el("span", { text: "完成度 " + pct + "%" }),
+          el("span", { text: progStr })
+        ])
+      ]);
+
+      // Footer
+      var pillClass = "growth-pill pending";
+      var pillText = "待完成";
+      if (t.claimed) {
+        pillClass = "growth-pill claimed";
+        pillText = "✓ 已入账";
+      } else if (t.claimable) {
+        pillClass = "growth-pill claimable";
+        pillText = "🎁 待领奖";
+      }
+
+      var pill = el("span", { class: pillClass, text: pillText });
+
+      // Action button
+      var btnAction;
+      if (t.claimed) {
+        btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px;opacity:0.65", disabled: true, text: "已完成" });
+      } else if (t.claimable) {
+        btnAction = el("button", { class: "primary", style: "font-size:11px;padding:4px 10px;background:#ebb23a;color:#111;font-weight:600;border:none", text: "领取奖励" });
+        btnAction.addEventListener("click", function () {
+          runDomesticTask(t.code, btnAction);
+        });
+      } else if (t.canAutomate) {
+        btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px", text: "⚡ 点亮领奖" });
+        btnAction.addEventListener("click", function () {
+          runDomesticTask(t.code, btnAction);
+        });
+      } else {
+        btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px", text: "微信支持" });
+        btnAction.addEventListener("click", function () {
+          alert("此项为开源微信 0.01 元捐赠打赏专属任务，需在微信小程序端真实完成。");
+        });
+      }
+
+      var footer = el("div", { class: "growth-card-footer" }, [
+        el("div", { style: "display:flex;align-items:center;gap:6px" }, [
+          pill,
+          el("span", { class: "growth-reward-badge", text: t.rewardText || "+积分" })
+        ]),
+        btnAction
+      ]);
+
+      card.appendChild(header);
+      card.appendChild(desc);
+      card.appendChild(progBox);
+      card.appendChild(footer);
+      list.appendChild(card);
+    });
+  }
+
+  function runDomesticTask(taskCode, btn) {
+    if (growthBusyFlag) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "执行中…";
+    }
+    growthBusy(true);
+    api("/api/growth/domestic/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskCode: taskCode })
+    }).then(function (res) {
+      if (res.success) {
+        toast("任务「" + (res.taskName || taskCode) + "」" + res.message, "ok");
+        if (res.credit > 0 || res.energy > 0) {
+          if (usageData) loadUsage(true, true);
+        }
+      } else {
+        toast("执行提示：" + res.message, "warn");
+      }
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      toast("执行失败：" + e.message, "bad");
+      loadDomesticGrowth(false);
+    }).then(function () {
+      growthBusy(false);
+    });
+  }
+
+  function sweepDomesticGrowth() {
+    if (growthBusyFlag) return;
+    var consoleBox = document.getElementById("growth-sweep-console");
+    var logBox = document.getElementById("growth-sweep-log");
+    var statusLabel = document.getElementById("growth-sweep-status");
+    var progressLabel = document.getElementById("growth-sweep-progress");
+
+    if (consoleBox) consoleBox.hidden = false;
+    if (logBox) clear(logBox);
+    if (statusLabel) statusLabel.textContent = "正在注入桌面 5.5.6/Web/小程序三端指纹，全自动顺序执行 17 项任务…";
+    if (progressLabel) progressLabel.textContent = "运行中";
+
+    var now = new Date();
+    if (logBox) {
+      logBox.appendChild(el("div", {
+        style: "color:var(--brand);margin-bottom:4px",
+        text: "[" + now.toLocaleTimeString() + "] 启动成长任务纯 API 自动化逆向流水引擎，启用 1.05s 真人节律防抖与 SSE 会话探针..."
+      }));
+    }
+
+    growthBusy(true);
+
+    api("/api/growth/domestic/sweep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (res) {
+      if (statusLabel) statusLabel.textContent = "一键扫荡完毕！成功执行 " + (res.successCount || 0) + " 项，入账 " + (res.totalCreditEarned || 0) + " 积分！";
+      if (progressLabel) progressLabel.textContent = "100%";
+
+      if (logBox && res.results) {
+        res.results.forEach(function (r) {
+          var isOk = r.success;
+          var sign = isOk ? "✓ " : "⚠ ";
+          var color = isOk ? "var(--ok)" : "var(--warn)";
+          var detail = "[" + r.taskCode + "] " + r.taskName + "：" + r.message;
+          if (r.credit > 0) detail += " (入账 +" + r.credit + " 积分)";
+          if (r.energy > 0) detail += " (入账 +" + r.energy + " 能量)";
+          logBox.appendChild(el("div", { style: "color:" + color + ";margin:2px 0", text: sign + detail }));
+        });
+
+        var summaryTime = new Date();
+        logBox.appendChild(el("div", {
+          style: "color:#ebb23a;font-weight:600;margin-top:6px;border-top:1px dashed var(--g4);padding-top:4px",
+          text: "[" + summaryTime.toLocaleTimeString() + "] 扫荡战报：共完成 " + res.successCount + " 项，累积领取 " + res.totalCreditEarned + " 积分、" + res.totalEnergyEarned + " 能量。"
+        }));
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      toast("扫荡完成！本次已入账 " + (res.totalCreditEarned || 0) + " 积分、" + (res.totalEnergyEarned || 0) + " 能量", "ok");
+      if (usageData) loadUsage(true, true);
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      if (statusLabel) statusLabel.textContent = "扫荡中断：" + e.message;
+      if (progressLabel) progressLabel.textContent = "异常";
+      if (logBox) {
+        logBox.appendChild(el("div", { style: "color:var(--bad);margin-top:4px", text: "× 扫荡请求异常：" + e.message }));
+      }
+      toast("扫荡失败：" + e.message, "bad");
+      loadDomesticGrowth(false);
+    }).then(function () {
+      growthBusy(false);
+    });
+  }
+
+  function claimDomesticCompensation() {
+    if (growthBusyFlag) return;
+    growthBusy(true);
+    api("/api/growth/domestic/compensation/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (res) {
+      toast(res.message || "官方故障补偿礼包已领取入账！", "ok");
+      var banner = document.getElementById("growth-comp-banner");
+      if (banner) banner.hidden = true;
+      if (usageData) loadUsage(true, true);
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      toast("领取补偿失败：" + e.message, "bad");
+    }).then(function () {
+      growthBusy(false);
+    });
   }
 
   // ---------- 会话工作区 ----------
@@ -6935,6 +7507,14 @@
   document.getElementById("btn-ws-plan").addEventListener("click", wsPlan);
   document.getElementById("btn-ws-apply").addEventListener("click", wsApply);
 
+  // 成长任务与福利中心事件
+  var btnGrowthSweep = document.getElementById("btn-growth-sweep");
+  if (btnGrowthSweep) btnGrowthSweep.addEventListener("click", sweepDomesticGrowth);
+  var btnGrowthRefresh = document.getElementById("btn-growth-refresh");
+  if (btnGrowthRefresh) btnGrowthRefresh.addEventListener("click", function () { loadDomesticGrowth(false); });
+  var btnGrowthCompClaim = document.getElementById("btn-growth-comp-claim");
+  if (btnGrowthCompClaim) btnGrowthCompClaim.addEventListener("click", claimDomesticCompensation);
+
   // 签到。和回收站同理：切到这一页才去读，读一次要借客户端的运行时解凭据，
   // 没必要在启动时就跑。
   // 「刷新状态」是**只读**重查，不碰自动签到——用户点它是想看现在什么状态，
@@ -8093,6 +8673,8 @@
   }
   updateTelemetryBadge();
   setInterval(updateTelemetryBadge, 60000);
+  // 静默初始化成长任务中心状态与侧边栏徽章
+  loadDomesticGrowth(true);
 
   // 兜底启动：若 500ms 内 state 仍未完成加载，自动补充拉取一次
   setTimeout(function () {

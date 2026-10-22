@@ -1,0 +1,136 @@
+package webui
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/HMuSeaB/wbmux/internal/credential"
+	"github.com/HMuSeaB/wbmux/internal/growth"
+	"github.com/HMuSeaB/wbmux/internal/variant"
+)
+
+func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
+	// 启动假上游服务器模拟 CodeBuddy / WorkBuddy 接口
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v2/activity/growth/tasks":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"tasks": []map[string]any{
+						{
+							"task_code":     "chat_5",
+							"title":         "对话活跃 5 次",
+							"reward_credit": 100,
+							"reward_energy": 0,
+							"target":        5,
+							"current":       5,
+							"accept_status": "completed",
+							"claimable":     true,
+						},
+					},
+				},
+			})
+
+		case "/v2/activity/growth/tasks/accept":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok"})
+
+		case "/v2/activity/growth/tasks/reward/claim":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{"reward_credit": 100, "reward_energy": 0},
+			})
+
+		case growth.DesktopReportPath:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok"})
+
+		case "/v2/billing/meter/compensation-status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"active":          true,
+					"claimed":         false,
+					"credit_num":      500,
+					"validity_period": 1,
+					"end_time":        "2026-10-31 23:59:59",
+				},
+			})
+
+		case "/v2/billing/meter/claim-compensation":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{"credit_granted": 500},
+			})
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	srv := &Server{
+		opts: Options{
+			Probe: variant.DefaultProbe(),
+		},
+		domesticCredFn: func(*variant.Probe) (credential.Credential, error) {
+			return credential.Credential{Token: "mock-token", UID: "mock-uid"}, nil
+		},
+		domesticEndpointFn: func() string {
+			return ts.URL
+		},
+	}
+
+	// 1. GET /api/growth/domestic/tasks
+	req := httptest.NewRequest(http.MethodGet, "/api/growth/domestic/tasks", nil)
+	rec := httptest.NewRecorder()
+	srv.handleGrowthDomesticTasks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var tasksResp DomesticTasksResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &tasksResp); err != nil {
+		t.Fatalf("unmarshal tasks response failed: %v", err)
+	}
+	if len(tasksResp.Tasks) != 1 || tasksResp.PotentialCredit != 100 {
+		t.Fatalf("unexpected tasks response: %+v", tasksResp)
+	}
+	if tasksResp.Compensation == nil || !tasksResp.Compensation.Pending() {
+		t.Fatalf("compensation should be pending: %+v", tasksResp.Compensation)
+	}
+
+	// 2. POST /api/growth/domestic/run
+	runReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/run", strings.NewReader(`{"task_code":"chat_5"}`))
+	runRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticRun(runRec, runReq)
+
+	if runRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for run, got %d: %s", runRec.Code, runRec.Body.String())
+	}
+
+	// 3. POST /api/growth/domestic/sweep
+	sweepReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/sweep", nil)
+	sweepRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticSweep(sweepRec, sweepReq)
+
+	if sweepRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for sweep, got %d: %s", sweepRec.Code, sweepRec.Body.String())
+	}
+
+	// 4. POST /api/growth/domestic/compensation/claim
+	compReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/compensation/claim", nil)
+	compRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticCompensationClaim(compRec, compReq)
+
+	if compRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for compensation claim, got %d: %s", compRec.Code, compRec.Body.String())
+	}
+}
