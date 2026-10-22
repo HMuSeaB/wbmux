@@ -133,4 +133,30 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 	if compRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for compensation claim, got %d: %s", compRec.Code, compRec.Body.String())
 	}
+
+	// 5. POST /api/growth/domestic/claim (单任务纯领奖)
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/claim", strings.NewReader(`{"task_code":"chat_5"}`))
+	claimRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticClaim(claimRec, claimReq)
+
+	if claimRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for domestic claim, got %d: %s", claimRec.Code, claimRec.Body.String())
+	}
+	var claimResp map[string]any
+	if err := json.Unmarshal(claimRec.Body.Bytes(), &claimResp); err != nil || claimResp["claimed"] != true {
+		t.Fatalf("unexpected claim response: %+v, err: %v", claimResp, err)
+	}
+
+	// 6. POST /api/growth/domestic/claim-all (一键全量领奖)
+	claimAllReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/claim-all", nil)
+	claimAllRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticClaimAll(claimAllRec, claimAllReq)
+
+	if claimAllRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for domestic claim-all, got %d: %s", claimAllRec.Code, claimAllRec.Body.String())
+	}
+	var sweepResp growth.SweepResult
+	if err := json.Unmarshal(claimAllRec.Body.Bytes(), &sweepResp); err != nil {
+		t.Fatalf("unexpected claim-all response: %+v, err: %v", sweepResp, err)
+	}
 }

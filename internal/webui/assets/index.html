@@ -2493,6 +2493,10 @@
           </div>
 
           <div class="row" style="margin-top:16px;gap:10px;flex-wrap:wrap">
+            <button class="primary" id="btn-growth-claim-all" style="background:linear-gradient(135deg, #10b981 0%, #059669 100%);color:#fff;font-weight:650;border:none;box-shadow:0 2px 14px rgba(16,185,129,0.35);display:inline-flex;align-items:center;gap:6px" hidden>
+              <svg class="ico ico-sm" aria-hidden="true"><use href="#i-check"/></svg>
+              <span id="btn-growth-claim-all-text">🎁 一键领取全部待领奖励</span>
+            </button>
             <button class="primary" id="btn-growth-sweep" style="background:linear-gradient(135deg, #ebb23a 0%, #d49520 100%);color:#0b0c0e;font-weight:650;border:none;box-shadow:0 2px 10px rgba(235,178,58,0.3)">
               <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
               ⚡ 一键自动扫荡全部待办并领奖
@@ -4888,6 +4892,20 @@
       else if (f === "milestone") btn.textContent = "📱 连续打卡 (" + catCounts.milestone + ")";
     });
 
+    // 动态控制 Hero 区域「一键领取全部待领奖励」按钮
+    var btnClaimAll = document.getElementById("btn-growth-claim-all");
+    var btnClaimAllText = document.getElementById("btn-growth-claim-all-text");
+    if (btnClaimAll) {
+      if (claimableCount > 0) {
+        btnClaimAll.hidden = false;
+        if (btnClaimAllText) {
+          btnClaimAllText.textContent = "🎁 一键领取全部待领奖励 (" + claimableCount + " 项可领)";
+        }
+      } else {
+        btnClaimAll.hidden = true;
+      }
+    }
+
     if (items.length === 0) {
       if (countLabel) countLabel.textContent = "暂无任务";
       list.appendChild(el("div", { class: "hint", style: "grid-column:1/-1", text: "暂无成长任务数据或国内侧未登录。" }));
@@ -5012,9 +5030,13 @@
           text: "已完成 (防刷保护)"
         });
       } else if (isClaimable) {
-        btnAction = el("button", { class: "primary", style: "font-size:11px;padding:4px 10px;background:#ebb23a;color:#111;font-weight:600;border:none", text: "领取奖励" });
+        btnAction = el("button", {
+          class: "primary",
+          style: "font-size:11px;padding:4px 10px;background:#ebb23a;color:#111;font-weight:600;border:none;box-shadow:0 0 10px rgba(235,178,58,0.3)",
+          text: "🎁 领取奖励"
+        });
         btnAction.addEventListener("click", function () {
-          runDomesticTask(code, btnAction);
+          claimDomesticTask(code, btnAction);
         });
       } else if (canAuto) {
         btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px", text: "⚡ 点亮领奖" });
@@ -5041,6 +5063,76 @@
       card.appendChild(progBox);
       card.appendChild(footer);
       list.appendChild(card);
+    });
+  }
+
+  function claimDomesticTask(taskCode, btn) {
+    if (growthBusyFlag) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "正在入账…";
+    }
+    growthBusy(true);
+
+    api("/api/growth/domestic/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_code: taskCode, code: taskCode })
+    }).then(function (res) {
+      var cr = res.credit_granted || 0;
+      var en = res.energy_granted || 0;
+      var rewardText = "";
+      if (cr > 0 && en > 0) rewardText = "（+" + cr + " 积分 · +" + en + " 能量）";
+      else if (cr > 0) rewardText = "（+" + cr + " 积分）";
+      else if (en > 0) rewardText = "（+" + en + " 能量）";
+      toast("奖励已成功入账 " + rewardText, "ok");
+
+      if (growthLastTasks) {
+        var items = growthLastTasks.items || growthLastTasks.tasks || [];
+        items.forEach(function (t) {
+          if (t.code === taskCode || t.task_code === taskCode) {
+            t.claimed = true;
+            t.claimable = false;
+            t.accept_status = "claimed";
+          }
+        });
+        renderDomesticTasks(growthLastTasks);
+      }
+      loadDomesticGrowth(true);
+    }).catch(function (e) {
+      toast("领奖失败：" + e.message, "bad");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "重试领取";
+      }
+    }).then(function () {
+      growthBusy(false);
+    });
+  }
+
+  function claimAllDomesticTasks() {
+    if (growthBusyFlag) return;
+    var btn = document.getElementById("btn-growth-claim-all");
+    if (btn) {
+      btn.disabled = true;
+      var textEl = document.getElementById("btn-growth-claim-all-text");
+      if (textEl) textEl.textContent = "正在批量领奖…";
+    }
+    growthBusy(true);
+
+    api("/api/growth/domestic/claim-all", {
+      method: "POST"
+    }).then(function (res) {
+      var n = res.successCount || res.tasksCompleted || 0;
+      var cr = res.totalCreditEarned || res.totalCreditGranted || 0;
+      var en = res.totalEnergyEarned || res.totalEnergyGranted || 0;
+      toast("全部已达成奖励已成功入账！共 " + n + " 项（+" + cr + " 积分 · +" + en + " 能量）", "ok");
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      toast("一键领奖失败：" + e.message, "bad");
+      if (btn) btn.disabled = false;
+    }).then(function () {
+      growthBusy(false);
     });
   }
 
@@ -7846,15 +7938,17 @@
   if (btnGrowthRefresh) btnGrowthRefresh.addEventListener("click", function () { loadDomesticGrowth(false); });
   var btnGrowthCompClaim = document.getElementById("btn-growth-comp-claim");
   if (btnGrowthCompClaim) btnGrowthCompClaim.addEventListener("click", claimDomesticCompensation);
+  var btnGrowthClaimAll = document.getElementById("btn-growth-claim-all");
+  if (btnGrowthClaimAll) btnGrowthClaimAll.addEventListener("click", claimAllDomesticTasks);
 
   function openWorkBuddyWeb() {
-    var officialURL = "https://www.workbuddy.cn";
+    var officialURL = "https://www.workbuddy.cn/profile/growth-center";
     api("/api/open-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: officialURL })
     }).then(function () {
-      toast("已在系统默认浏览器中打开官方主页", "ok");
+      toast("已在系统默认浏览器中打开官方成长计划页面", "ok");
     }).catch(function () {
       window.open(officialURL, "_blank");
       toast("已尝试在浏览器窗口中打开官方主页", "ok");

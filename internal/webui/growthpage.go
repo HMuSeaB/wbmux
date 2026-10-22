@@ -235,7 +235,7 @@ func (s *Server) handleGrowthDomesticRun(w http.ResponseWriter, r *http.Request)
 	}
 
 	client := growth.NewClient(s.domesticEndpoint())
-	res, err := client.RunTask(cred, req.TaskCode)
+	res, err := client.RunTask(cred, taskCode)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -245,6 +245,98 @@ func (s *Server) handleGrowthDomesticRun(w http.ResponseWriter, r *http.Request)
 		s.note(ProxyLogEntry{
 			Level: "info",
 			Text:  fmt.Sprintf("成长任务「%s」自动达成并入账：+%d 积分, +%d 能量！", res.Title, res.CreditGranted, res.EnergyGranted),
+		})
+	}
+
+	writeJSON(w, res)
+}
+
+// handleGrowthDomesticClaim 单任务快速领奖接口（仅针对已达标任务，不执行任何消耗性任务动作）。
+func (s *Server) handleGrowthDomesticClaim(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	var req struct {
+		TaskCode      string `json:"task_code"`
+		Code          string `json:"code"`
+		TaskCodeCamel string `json:"taskCode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求解析失败")
+		return
+	}
+	taskCode := req.TaskCode
+	if taskCode == "" {
+		taskCode = req.Code
+	}
+	if taskCode == "" {
+		taskCode = req.TaskCodeCamel
+	}
+	if taskCode == "" {
+		writeErr(w, http.StatusBadRequest, "请求缺少 taskCode 参数")
+		return
+	}
+
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeErr(w, http.StatusNotFound, "未检测到国内侧有效凭证")
+		return
+	}
+
+	client := growth.NewClient(s.domesticEndpoint())
+	isMP := growth.IsMPTask(taskCode)
+	credit, energy, err := client.ClaimReward(cred, taskCode, isMP)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "领取奖励失败: "+err.Error())
+		return
+	}
+
+	if credit > 0 || energy > 0 {
+		s.note(ProxyLogEntry{
+			Level: "info",
+			Text:  fmt.Sprintf("成长任务「%s」奖励已领取入账：+%d 积分, +%d 能量！", taskCode, credit, energy),
+		})
+	}
+
+	writeJSON(w, map[string]any{
+		"ok":             true,
+		"task_code":      taskCode,
+		"claimed":        true,
+		"credit_granted": credit,
+		"energy_granted": energy,
+		"message":        fmt.Sprintf("奖励已成功入账（+%dc +%de）", credit, energy),
+	})
+}
+
+// handleGrowthDomesticClaimAll 一键全量领取当前所有已达成未领取的奖励。
+func (s *Server) handleGrowthDomesticClaimAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeErr(w, http.StatusNotFound, "未检测到国内侧有效凭证")
+		return
+	}
+
+	client := growth.NewClient(s.domesticEndpoint())
+	res, err := client.ClaimAllPending(cred)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "一键领取奖励失败: "+err.Error())
+		return
+	}
+
+	if res.TotalCreditGranted > 0 || res.TotalEnergyGranted > 0 {
+		s.note(ProxyLogEntry{
+			Level: "info",
+			Text: fmt.Sprintf("已一键领取全部已达成奖励！共入账 %d 项，累计 +%d 积分，+%d 能量！",
+				res.TasksCompleted, res.TotalCreditGranted, res.TotalEnergyGranted),
 		})
 	}
 

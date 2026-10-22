@@ -295,6 +295,7 @@ func (c *Client) AcceptTasks(cred credential.Credential, taskCodes []string, isM
 }
 
 // ClaimReward 领取已达标任务的奖励积分与能量（幂等；重复领返回 0, 0, nil）。
+// 支持官方 Web 域指纹对齐与双端点容灾回退。
 func (c *Client) ClaimReward(cred credential.Credential, taskCode string, isMP bool) (int64, int64, error) {
 	if cred.Token == "" {
 		return 0, 0, fmt.Errorf("credential token is empty")
@@ -304,60 +305,77 @@ func (c *Client) ClaimReward(cred credential.Credential, taskCode string, isMP b
 		"task_code": taskCode,
 	})
 
-	url := c.endpoint + "/v2/activity/growth/tasks/reward/claim"
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return 0, 0, err
+	endpoints := []string{c.endpoint}
+	if !strings.Contains(c.endpoint, "workbuddy.cn") {
+		endpoints = append(endpoints, "https://www.workbuddy.cn")
 	}
 
-	applyHeaders(req, cred)
-	if isMP {
-		ApplyMPHeaders(req, cred.Token, cred.UID)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var resDoc struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			RewardCredit int64 `json:"reward_credit"`
-			RewardEnergy int64 `json:"reward_energy"`
-			Credit       int64 `json:"credit"`
-			Energy       int64 `json:"energy"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resDoc); err != nil {
-		return 0, 0, fmt.Errorf("unmarshal claim reward: %w", err)
-	}
-
-	// 重复领取容错：already_claimed 业务返回 0, 0
-	if resDoc.Code != 0 {
-		if strings.Contains(resDoc.Msg, "already") || strings.Contains(resDoc.Msg, "已领取") {
-			return 0, 0, nil
+	var lastErr error
+	for _, ep := range endpoints {
+		url := ep + "/v2/activity/growth/tasks/reward/claim"
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		return 0, 0, fmt.Errorf("claim failed: %s", resDoc.Msg)
+
+		if isMP {
+			applyHeaders(req, cred)
+			ApplyMPHeaders(req, cred.Token, cred.UID)
+		} else {
+			ApplyWebHeaders(req, cred.Token, cred.UID, "https://www.workbuddy.cn", "https://www.workbuddy.cn/profile/growth-center")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var resDoc struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+			Data struct {
+				RewardCredit int64 `json:"reward_credit"`
+				RewardEnergy int64 `json:"reward_energy"`
+				Credit       int64 `json:"credit"`
+				Energy       int64 `json:"energy"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &resDoc); err != nil {
+			lastErr = fmt.Errorf("unmarshal claim reward: %w", err)
+			continue
+		}
+
+		// 重复领取容错：already_claimed 业务返回 0, 0
+		if resDoc.Code != 0 {
+			if strings.Contains(resDoc.Msg, "already") || strings.Contains(resDoc.Msg, "已领取") {
+				return 0, 0, nil
+			}
+			lastErr = fmt.Errorf("claim failed: %s", resDoc.Msg)
+			continue
+		}
+
+		credit := resDoc.Data.RewardCredit
+		if credit == 0 {
+			credit = resDoc.Data.Credit
+		}
+		energy := resDoc.Data.RewardEnergy
+		if energy == 0 {
+			energy = resDoc.Data.Energy
+		}
+
+		return credit, energy, nil
 	}
 
-	credit := resDoc.Data.RewardCredit
-	if credit == 0 {
-		credit = resDoc.Data.Credit
-	}
-	energy := resDoc.Data.RewardEnergy
-	if energy == 0 {
-		energy = resDoc.Data.Energy
-	}
-
-	return credit, energy, nil
+	return 0, 0, lastErr
 }
 
 // FetchCompensationStatus 查询当前账号的官方限时故障补偿状态。

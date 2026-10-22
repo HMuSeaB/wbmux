@@ -151,6 +151,29 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		}, nil
 	}
 
+	// 若任务此前已达成（如在客户端或网页端已达 1/1，或 accept_status 为 completed），无需重复跑动作，直接领奖！
+	if targetTask.Claimable || (targetTask.Target > 0 && targetTask.Current >= targetTask.Target) || targetTask.AcceptStatus == "completed" {
+		credit, energy, cerr := c.ClaimReward(cred, taskCode, isMP)
+		if cerr == nil {
+			return &TaskRunResult{
+				TaskCode:       taskCode,
+				Code:           taskCode,
+				Title:          targetTask.Title,
+				TaskName:       targetTask.Title,
+				Name:           targetTask.Title,
+				ProgressBefore: progBefore,
+				ProgressAfter:  "claimed",
+				Claimed:        true,
+				CreditGranted:  credit,
+				Credit:         credit,
+				EnergyGranted:  energy,
+				Energy:         energy,
+				Success:        true,
+				Message:        fmt.Sprintf("任务此前已达成（%s），直接领奖入账（+%dc +%de）", progBefore, credit, energy),
+			}, nil
+		}
+	}
+
 	// 2. 若未报名则先 accept 并短暂等待登记生效
 	if targetTask.AcceptStatus == "not_accepted" || targetTask.AcceptStatus == "" {
 		_ = c.AcceptTasks(cred, []string{taskCode}, isMP)
@@ -522,7 +545,51 @@ func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 		}
 	}
 
-	// 3. 顺带检查官方异常补偿状态
+	// 3. 收割所有残留达标待领奖任务（防止由于异步延迟或非核心列表遗漏）
+	tasksAfterNormal, _ := c.ListTasks(cred, false)
+	tasksAfterMP, _ := c.ListTasks(cred, true)
+	allFinalTasks := make(map[string]GrowthTask)
+	for _, t := range tasksAfterNormal {
+		allFinalTasks[t.TaskCode] = t
+	}
+	for _, t := range tasksAfterMP {
+		if _, exists := allFinalTasks[t.TaskCode]; !exists {
+			allFinalTasks[t.TaskCode] = t
+		}
+	}
+
+	for _, t := range allFinalTasks {
+		if t.Claimed {
+			continue
+		}
+		if t.Claimable || (t.Target > 0 && t.Current >= t.Target) || t.AcceptStatus == "completed" {
+			isMP := IsMPTask(t.TaskCode)
+			credit, energy, cerr := c.ClaimReward(cred, t.TaskCode, isMP)
+			if cerr == nil && (credit > 0 || energy > 0) {
+				result.TasksCompleted++
+				result.TotalCreditGranted += credit
+				result.TotalEnergyGranted += energy
+				result.Details = append(result.Details, TaskRunResult{
+					TaskCode:       t.TaskCode,
+					Code:           t.TaskCode,
+					Title:          t.Title,
+					TaskName:       t.Title,
+					Name:           t.Title,
+					ProgressBefore: fmt.Sprintf("%d/%d", t.Current, t.Target),
+					ProgressAfter:  "claimed",
+					Claimed:        true,
+					CreditGranted:  credit,
+					Credit:         credit,
+					EnergyGranted:  energy,
+					Energy:         energy,
+					Success:        true,
+					Message:        fmt.Sprintf("残留待领奖任务已自动入账（+%dc +%de）", credit, energy),
+				})
+			}
+		}
+	}
+
+	// 4. 顺带检查官方异常补偿状态
 	comp, err := c.FetchCompensationStatus(cred)
 	if err == nil && comp != nil && comp.Pending() {
 		granted, cerr := c.ClaimCompensation(cred)
@@ -541,3 +608,82 @@ func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 
 	return result, nil
 }
+
+// ClaimAllPending 一键立即领取当前账号中所有已达标但尚未领取的奖励（不执行任何消耗性任务动作）。
+func (c *Client) ClaimAllPending(cred credential.Credential) (*SweepResult, error) {
+	if cred.Token == "" {
+		return nil, fmt.Errorf("credential token is empty")
+	}
+
+	tasksNormal, _ := c.ListTasks(cred, false)
+	tasksMP, _ := c.ListTasks(cred, true)
+
+	taskMap := make(map[string]GrowthTask)
+	for _, t := range tasksNormal {
+		taskMap[t.TaskCode] = t
+	}
+	for _, t := range tasksMP {
+		if _, exists := taskMap[t.TaskCode]; !exists {
+			taskMap[t.TaskCode] = t
+		}
+	}
+
+	result := &SweepResult{
+		Details: make([]TaskRunResult, 0),
+	}
+
+	for _, t := range taskMap {
+		if t.Claimed {
+			continue
+		}
+		isReached := t.Claimable || (t.Target > 0 && t.Current >= t.Target) || t.AcceptStatus == "completed"
+		if !isReached {
+			continue
+		}
+
+		isMP := IsMPTask(t.TaskCode)
+		credit, energy, cerr := c.ClaimReward(cred, t.TaskCode, isMP)
+		runRes := TaskRunResult{
+			TaskCode:       t.TaskCode,
+			Code:           t.TaskCode,
+			Title:          t.Title,
+			TaskName:       t.Title,
+			Name:           t.Title,
+			ProgressBefore: fmt.Sprintf("%d/%d", t.Current, t.Target),
+			ProgressAfter:  "claimed",
+			Success:        cerr == nil,
+		}
+		if cerr == nil {
+			runRes.Claimed = true
+			runRes.CreditGranted = credit
+			runRes.Credit = credit
+			runRes.EnergyGranted = energy
+			runRes.Energy = energy
+			runRes.Message = fmt.Sprintf("已成功领奖入账（+%dc +%de）", credit, energy)
+			result.TasksCompleted++
+			result.TotalCreditGranted += credit
+			result.TotalEnergyGranted += energy
+		} else {
+			runRes.Message = "领奖失败: " + cerr.Error()
+		}
+		result.Details = append(result.Details, runRes)
+	}
+
+	// 顺带检查官方异常补偿状态
+	comp, err := c.FetchCompensationStatus(cred)
+	if err == nil && comp != nil && comp.Pending() {
+		granted, cerr := c.ClaimCompensation(cred)
+		if cerr == nil && granted > 0 {
+			result.TotalCreditGranted += granted
+			result.CompensationNotice = fmt.Sprintf("发现官方异常补偿并已自动领取 +%d 积分！", granted)
+		}
+	}
+
+	result.TotalCreditEarned = result.TotalCreditGranted
+	result.TotalEnergyEarned = result.TotalEnergyGranted
+	result.SuccessCount = result.TasksCompleted
+	result.Results = result.Details
+
+	return result, nil
+}
+
