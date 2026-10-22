@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // Key 是 app-config.json 里那个开关的名字。
@@ -129,6 +130,7 @@ func load(path string) (map[string]json.RawMessage, bool, error) {
 		}
 		return nil, false, err
 	}
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 	doc := map[string]json.RawMessage{}
 	trimmed := bytes.TrimSpace(raw)
 	// 空文件与 `null` 都当"没有内容"：json.Unmarshal 会接受它们并留下空 map，
@@ -177,4 +179,94 @@ func Enabled(appConfigPath string) (enabled bool, ok bool) {
 		return false, false
 	}
 	return cur, true
+}
+
+// DefaultUpdatePaths 返回当前操作系统下客户端可能用于下载或暂存更新包的路径。
+func DefaultUpdatePaths() []string {
+	var paths []string
+	if runtime.GOOS == "windows" {
+		temp := os.TempDir()
+		if temp != "" {
+			paths = append(paths, filepath.Join(temp, "workbuddy-update-x64"))
+		}
+		localApp := os.Getenv("LOCALAPPDATA")
+		if localApp != "" {
+			paths = append(paths, filepath.Join(localApp, "@genieworkbuddy-desktop-updater"))
+		}
+	} else if runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			paths = append(paths, filepath.Join(home, "Library", "Caches", "workbuddy-updater"))
+		}
+	} else {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			paths = append(paths, filepath.Join(home, ".cache", "workbuddy-updater"))
+		}
+	}
+	return paths
+}
+
+// LockDownloadPaths 针对指定的更新暂存路径部署只读物理占位锁：
+// 若路径已是只读占位文件，则跳过；若为目录，清理其中的下载文件并替换为 0 字节只读文件；
+// 若不存在，直接创建 0 字节只读文件。返回被锁定的路径列表。
+func LockDownloadPaths(paths ...string) ([]string, error) {
+	if len(paths) == 0 {
+		paths = DefaultUpdatePaths()
+	}
+	var locked []string
+	for _, p := range paths {
+		fi, err := os.Lstat(p)
+		if err == nil {
+			if !fi.IsDir() {
+				// 已经是文件，确保只读
+				_ = os.Chmod(p, 0o444)
+				locked = append(locked, p)
+				continue
+			}
+			// 是目录，先递归清空其中的安装文件
+			_ = os.RemoveAll(p)
+		}
+		// 确保父目录存在
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		// 写入 0 字节占位文件并设置只读权限
+		if err := os.WriteFile(p, []byte(""), 0o444); err == nil {
+			_ = os.Chmod(p, 0o444)
+			locked = append(locked, p)
+		}
+	}
+	return locked, nil
+}
+
+// UnlockDownloadPaths 移除指定路径上的只读物理占位锁，恢复客户端的正常更新下载能力。
+func UnlockDownloadPaths(paths ...string) ([]string, error) {
+	if len(paths) == 0 {
+		paths = DefaultUpdatePaths()
+	}
+	var unlocked []string
+	for _, p := range paths {
+		fi, err := os.Lstat(p)
+		if err == nil && !fi.IsDir() {
+			// 先去掉只读权限再删除
+			_ = os.Chmod(p, 0o666)
+			if err := os.Remove(p); err == nil {
+				unlocked = append(unlocked, p)
+			}
+		}
+	}
+	return unlocked, nil
+}
+
+// IsDownloadLocked 报告是否至少有一个更新暂存路径处于只读占位锁保护状态。
+func IsDownloadLocked(paths ...string) bool {
+	if len(paths) == 0 {
+		paths = DefaultUpdatePaths()
+	}
+	for _, p := range paths {
+		fi, err := os.Lstat(p)
+		if err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }

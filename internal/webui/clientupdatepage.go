@@ -40,6 +40,8 @@ type ClientUpdateResult struct {
 	Targets        []ClientUpdateTarget `json:"targets"`
 	ModifiedCount  int                  `json:"modifiedCount"`
 	ProtectedCount int                  `json:"protectedCount"`
+	DownloadLocked bool                 `json:"downloadLocked"`
+	LockedPaths    []string             `json:"lockedPaths,omitempty"`
 	Note           string               `json:"note"`
 }
 
@@ -118,10 +120,12 @@ func (s *Server) handleClientUpdatePolicy(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, ClientUpdateResult{
-		Enabled:    on,
-		CustomPath: cfg.CustomClientAppConfigPath,
-		Targets:    targets,
-		Note:       note,
+		Enabled:        on,
+		CustomPath:     cfg.CustomClientAppConfigPath,
+		Targets:        targets,
+		DownloadLocked: autoupdate.IsDownloadLocked(),
+		LockedPaths:    autoupdate.DefaultUpdatePaths(),
+		Note:           note,
 	})
 }
 
@@ -240,11 +244,29 @@ func (s *Server) applyClientUpdatePolicy(on bool, customPath string) ClientUpdat
 		Targets:    targets,
 	}
 
+	if on {
+		locked, _ := autoupdate.LockDownloadPaths()
+		res.DownloadLocked = len(locked) > 0
+		res.LockedPaths = locked
+		s.note(ProxyLogEntry{
+			Level: "info",
+			Text:  "已启用客户端防强制更新物理锁（已清除残留安装包并锁死临时目录，彻底杜绝后台静默下载）",
+		})
+	} else {
+		unlocked, _ := autoupdate.UnlockDownloadPaths()
+		res.DownloadLocked = false
+		res.LockedPaths = nil
+		s.note(ProxyLogEntry{
+			Level: "info",
+			Text:  fmt.Sprintf("已解除客户端防更新物理锁并恢复官方自动更新通道（已恢复 %d 处更新目录读写权限）", len(unlocked)),
+		})
+	}
+
 	if len(targets) == 0 {
 		if on {
-			res.Note = "未检测到本地客户端数据目录。若您安装在非默认盘或使用了便携目录，可在下方指定自定义路径。"
+			res.Note = "未检测到本地客户端数据目录（已部署下载目录物理锁）。若您安装在非默认盘或使用了便携目录，可在下方指定自定义路径。"
 		} else {
-			res.Note = "未检测到本地客户端数据目录，当前无需修改配置。"
+			res.Note = "未检测到本地客户端数据目录（已解除下载目录物理锁），已恢复官方原生更新策略。"
 		}
 		return res
 	}
@@ -299,15 +321,15 @@ func (s *Server) applyClientUpdatePolicy(on bool, customPath string) ClientUpdat
 
 	if on {
 		if res.ModifiedCount > 0 {
-			res.Note = fmt.Sprintf("已成功开启保护并写入 %d 处客户端配置（已压制启动静默更新）：%s", res.ModifiedCount, pathSummary)
+			res.Note = fmt.Sprintf("已成功开启保护并写入 %d 处客户端配置（已压制启动静默更新并锁死下载目录）：%s", res.ModifiedCount, pathSummary)
 		} else {
-			res.Note = fmt.Sprintf("配置已生效，已防护 %d 处客户端（启动静默更新已处于关闭状态）：%s", len(targets), pathSummary)
+			res.Note = fmt.Sprintf("配置已生效，已防护 %d 处客户端（启动静默更新与后台下载已全面锁死）：%s", len(targets), pathSummary)
 		}
 	} else {
 		if res.ModifiedCount > 0 {
-			res.Note = fmt.Sprintf("已成功恢复 %d 处客户端官方原生更新策略：%s", res.ModifiedCount, pathSummary)
+			res.Note = fmt.Sprintf("已成功恢复 %d 处客户端官方原生更新策略与下载权限：%s", res.ModifiedCount, pathSummary)
 		} else {
-			res.Note = fmt.Sprintf("已恢复客户端官方原生更新策略：%s", pathSummary)
+			res.Note = fmt.Sprintf("已恢复客户端官方原生更新策略与下载权限：%s", pathSummary)
 		}
 	}
 

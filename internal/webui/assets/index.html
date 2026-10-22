@@ -2308,6 +2308,29 @@
     </div>
   </section>
 
+  <section id="sec-client-autoupdate">
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-shield"/></svg>客户端自动更新物理防护与恢复</h2>
+    <div class="card" style="padding:16px 20px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);border-radius:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="client-update-status-badge" class="growth-task-tag" style="background:rgba(34,197,94,0.15);color:#22c55e;font-size:12px;font-weight:600">
+              🛡️ 自动更新物理锁已启用 (5.8.3 稳定受保护)
+            </span>
+          </div>
+          <p id="client-update-desc" class="hint" style="margin:6px 0 0 0;font-size:12px;color:var(--ink-2)">
+            已清空更新缓存并部署只读物理占位锁，底层拦截后台静默下包与“新版本重启更新”弹窗。
+          </p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button type="button" id="btn-toggle-client-update" class="ghost" style="padding:6px 14px;font-size:12px">
+            🔓 恢复官方自动更新
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="preview-sec" hidden>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-scan"/></svg>将要做的改动</h2>
     <div id="preview-body"></div>
@@ -4222,6 +4245,7 @@
     }
     if (page === "log") loadProxyLog(true);
     if (page === "growth") loadDomesticGrowth(false);
+    if (page === "switch") loadClientUpdateState();
     // 签到**不在切页时重发写请求**。
     //
     // 打开界面时已经签过一遍（loadCheckin(true)，见启动段）。切回来再发一次
@@ -4646,9 +4670,12 @@
     });
   }
 
+  var lastClientUpdateData = null;
+
   // renderClientUpdateData 统一刷新客户端自动更新相关界面组件
   function renderClientUpdateData(d) {
     if (!d) return;
+    lastClientUpdateData = d;
     var chk = document.getElementById("chk-client-update");
     if (chk) chk.checked = !!d.enabled;
     renderClientUpdateState(!!d.enabled);
@@ -4665,6 +4692,52 @@
         noteBox.appendChild(el("div", { class: isWarn ? "note warn" : "note ok", text: d.note }));
       }
     }
+
+    // 联动刷新 switch 页面上的物理防护状态卡片
+    var badge = document.getElementById("client-update-status-badge");
+    var desc = document.getElementById("client-update-desc");
+    var btn = document.getElementById("btn-toggle-client-update");
+    if (badge && desc && btn) {
+      var isLocked = !!(d.enabled || d.downloadLocked);
+      if (isLocked) {
+        badge.textContent = "🛡️ 自动更新物理锁已启用 (5.8.3 稳定受保护)";
+        badge.style.background = "rgba(34,197,94,0.15)";
+        badge.style.color = "#22c55e";
+        desc.textContent = "已清空更新缓存并部署只读物理占位锁，底层拦截后台静默下包与“新版本重启更新”弹窗。";
+        btn.textContent = "🔓 恢复官方自动更新 (允许升级)";
+        btn.className = "ghost";
+      } else {
+        badge.textContent = "⚡ 官方自动更新已就绪 (允许升级新版本)";
+        badge.style.background = "rgba(235,178,58,0.15)";
+        badge.style.color = "#ebb23a";
+        desc.textContent = "当前保持官方原生更新通道，若官方推送新版将正常提示更新。";
+        btn.textContent = "🛡️ 一键开启防强制更新 (物理锁死)";
+        btn.className = "primary";
+      }
+    }
+  }
+
+  // 绑定物理锁一键开启/恢复切换按钮
+  var btnToggleUpdate = document.getElementById("btn-toggle-client-update");
+  if (btnToggleUpdate) {
+    btnToggleUpdate.addEventListener("click", function () {
+      var curEnabled = !!(lastClientUpdateData && (lastClientUpdateData.enabled || lastClientUpdateData.downloadLocked));
+      var nextState = !curEnabled;
+      btnToggleUpdate.disabled = true;
+      toast(nextState ? "正在开启物理锁并清除残留安装包…" : "正在解除物理锁并恢复官方更新通道…", "info");
+      api("/api/client-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: nextState })
+      }).then(function (res) {
+        toast(nextState ? "已成功开启防强制更新物理锁！" : "已成功恢复官方自动更新通道！", "ok");
+        renderClientUpdateData(res);
+      }).catch(function (err) {
+        toast("操作失败: " + err.message, "bad");
+      }).then(function () {
+        btnToggleUpdate.disabled = false;
+      });
+    });
   }
 
   // 首次进入时读一次开关状态与物理路径

@@ -283,3 +283,77 @@ func TestReleaseThenEnsureRoundTrip(t *testing.T) {
 		t.Errorf("再 Ensure 后应为 false/true，得到 %v/%v", v, ok)
 	}
 }
+
+// TestLockAndUnlockDownloadPaths 验证物理只读占位锁部署、拦截写入与一键还原。
+func TestLockAndUnlockDownloadPaths(t *testing.T) {
+	tempDir := t.TempDir()
+	fakeUpdatePath := filepath.Join(tempDir, "workbuddy-update-x64")
+
+	// 1. 模拟客户端之前下载过的残留目录与安装包
+	if err := os.MkdirAll(fakeUpdatePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeExe := filepath.Join(fakeUpdatePath, "WorkBuddy-Setup-5.9.0.exe")
+	if err := os.WriteFile(fakeExe, []byte("fake binary installer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. 执行锁定：应递归清理残留安装包并创建 0 字节只读文件
+	locked, err := LockDownloadPaths(fakeUpdatePath)
+	if err != nil {
+		t.Fatalf("LockDownloadPaths: %v", err)
+	}
+	if len(locked) != 1 || locked[0] != fakeUpdatePath {
+		t.Fatalf("expected 1 locked path, got %v", locked)
+	}
+
+	// 验证已成为文件而不是目录
+	fi, err := os.Lstat(fakeUpdatePath)
+	if err != nil {
+		t.Fatalf("stat %s: %v", fakeUpdatePath, err)
+	}
+	if fi.IsDir() {
+		t.Errorf("expected placeholder to be a file, not directory")
+	}
+	if fi.Size() != 0 {
+		t.Errorf("expected 0-byte placeholder, got size %d", fi.Size())
+	}
+	if !IsDownloadLocked(fakeUpdatePath) {
+		t.Errorf("expected IsDownloadLocked to be true")
+	}
+
+	// 验证尝试在其中创建目录或写文件会被物理拦截
+	if err := os.Mkdir(filepath.Join(fakeUpdatePath, "sub"), 0o755); err == nil {
+		t.Errorf("expected Mkdir inside locked file to fail, but succeeded")
+	}
+
+	// 3. 执行恢复解锁：应安全移除只读占位文件
+	unlocked, err := UnlockDownloadPaths(fakeUpdatePath)
+	if err != nil {
+		t.Fatalf("UnlockDownloadPaths: %v", err)
+	}
+	if len(unlocked) != 1 {
+		t.Fatalf("expected 1 unlocked path, got %v", unlocked)
+	}
+	if _, err := os.Stat(fakeUpdatePath); !os.IsNotExist(err) {
+		t.Errorf("expected placeholder file to be removed, but stat got err: %v", err)
+	}
+	if IsDownloadLocked(fakeUpdatePath) {
+		t.Errorf("expected IsDownloadLocked to be false after unlock")
+	}
+}
+
+// TestLoadAcceptsUTF8BOM 验证 app-config.json 带 BOM 头时能安全容错解析。
+func TestLoadAcceptsUTF8BOM(t *testing.T) {
+	tempDir := t.TempDir()
+	p := filepath.Join(tempDir, "app-config.json")
+	bodyWithBOM := append([]byte("\xef\xbb\xbf"), []byte("{\n  \"locale\": \"zh-CN\",\n  \"startupForceAutoUpdate\": false\n}\n")...)
+	if err := os.WriteFile(p, bodyWithBOM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v, ok := Enabled(p)
+	if !ok || v {
+		t.Fatalf("带 BOM 头的配置文件应能正确解析，得到 v=%v ok=%v", v, ok)
+	}
+}
