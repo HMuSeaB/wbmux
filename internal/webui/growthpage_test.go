@@ -143,6 +143,12 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 			return ts.URL
 		},
 	}
+	srv.growthGuardian = growth.NewTravelGuardian(growth.GuardianConfig{
+		Endpoint: ts.URL,
+		CredGetter: func() (credential.Credential, error) {
+			return credential.Credential{Token: "mock-token", UID: "mock-uid"}, nil
+		},
+	})
 
 	// 1. GET /api/growth/domestic/tasks
 	req := httptest.NewRequest(http.MethodGet, "/api/growth/domestic/tasks", nil)
@@ -238,5 +244,21 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 	srv.handleGrowthDomesticBuddyTravel(travelRec, travelReq)
 	if travelRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for buddy travel, got %d: %s", travelRec.Code, travelRec.Body.String())
+	}
+
+	// 10. GET /api/growth/domestic/guardian
+	guardReq := httptest.NewRequest(http.MethodGet, "/api/growth/domestic/guardian", nil)
+	guardRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticGuardian(guardRec, guardReq)
+	if guardRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for guardian status, got %d: %s", guardRec.Code, guardRec.Body.String())
+	}
+
+	// 11. POST /api/growth/domestic/guardian/trigger
+	trigReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/guardian/trigger", nil)
+	trigRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticGuardianTrigger(trigRec, trigReq)
+	if trigRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for guardian trigger, got %d: %s", trigRec.Code, trigRec.Body.String())
 	}
 }

@@ -551,10 +551,47 @@ func (s *Server) handleGrowthDomesticBuddyTravel(w http.ResponseWriter, r *http.
 		Text:  "Buddy 旅行打理：" + message,
 	})
 
+	if s.growthGuardian != nil {
+		s.growthGuardian.TriggerNow()
+	}
+
 	writeJSON(w, map[string]any{
 		"ok":      true,
 		"message": message,
 		"travel":  newStatus,
+	})
+}
+
+// handleGrowthDomesticGuardian 返回猫咪旅行自适应后台守护器的运行快照。
+func (s *Server) handleGrowthDomesticGuardian(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+
+	if s.growthGuardian == nil {
+		writeJSON(w, map[string]any{"running": false})
+		return
+	}
+	writeJSON(w, s.growthGuardian.GetStatus())
+}
+
+// handleGrowthDomesticGuardianTrigger 立即唤醒守护器执行打理巡检。
+func (s *Server) handleGrowthDomesticGuardianTrigger(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	if s.growthGuardian == nil {
+		writeErr(w, http.StatusServiceUnavailable, "守护器未就绪")
+		return
+	}
+	s.growthGuardian.TriggerNow()
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"message": "已成功唤醒守护器执行打理巡检",
+		"status":  s.growthGuardian.GetStatus(),
 	})
 }
 

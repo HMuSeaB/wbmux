@@ -2568,10 +2568,13 @@
                 <span style="font-size:11.5px;color:var(--ink-2)">旅行挂机（被动产出 5~10 积分）：</span>
                 <span id="buddy-travel-status" class="growth-task-tag" style="background:rgba(59,130,246,0.15);color:#60a5fa">查询中…</span>
               </div>
-              <div style="display:flex;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
                 <button type="button" id="btn-buddy-travel-action" class="primary" style="padding:4px 12px;font-size:11.5px;font-weight:600">
                   ✈️ 自动打理旅行
                 </button>
+                <span id="growth-guardian-badge" class="growth-task-tag" style="background:rgba(34,197,94,0.12);color:#22c55e;font-size:11px" title="后台全天候自适应守护运行中：到站自动收割积分并再次出发，每日首次登录自动静默扫荡">
+                  🟢 后台自动收割中
+                </span>
               </div>
             </div>
           </div>
@@ -4857,11 +4860,13 @@
     Promise.all([
       api("/api/growth/domestic/tasks"),
       api("/api/growth/domestic/compensation").catch(function () { return { hasPending: false }; }),
-      api("/api/growth/domestic/buddy").catch(function () { return null; })
+      api("/api/growth/domestic/buddy").catch(function () { return null; }),
+      api("/api/growth/domestic/guardian").catch(function () { return null; })
     ]).then(function (results) {
       var taskData = results[0];
       var compData = results[1];
       var buddyData = results[2];
+      var guardianData = results[3];
       growthLastTasks = taskData;
 
       // 更新官方补偿横幅
@@ -4895,7 +4900,7 @@
         lastSync.textContent = "同步于 " + d.toLocaleTimeString();
       }
       updateGrowthSidebarBadge(taskData);
-      if (buddyData) renderBuddyPanel(buddyData, taskData);
+      if (buddyData) renderBuddyPanel(buddyData, taskData, guardianData);
 
       // 渲染任务矩阵
       renderDomesticTasks(taskData);
@@ -5344,7 +5349,7 @@
   }
 
   var growthCurrentBuddyData = null;
-  function renderBuddyPanel(bData, tData) {
+  function renderBuddyPanel(bData, tData, gData) {
     growthCurrentBuddyData = bData;
     var b = bData ? bData.buddy : null;
     var tr = bData ? bData.travel : null;
@@ -5356,6 +5361,29 @@
     var fallbackEl = document.getElementById("buddy-avatar-fallback");
     var energyEl = document.getElementById("buddy-energy-val");
     var travelEl = document.getElementById("buddy-travel-status");
+    var guardianBadge = document.getElementById("growth-guardian-badge");
+
+    if (guardianBadge) {
+      if (gData && gData.running) {
+        guardianBadge.style.display = "inline-block";
+        var tooltip = "后台全天候守护运行中：\n- 自动收割猫猫旅行积分并重新派遣\n- 每日首次登录自动静默扫荡日常任务";
+        if (gData.totalHarvests > 0) {
+          tooltip += "\n- 累计已自动收割 " + gData.totalHarvests + " 次 (+" + gData.totalHarvestCredits + " 积分)";
+        }
+        if (gData.nextCheckAt) {
+          var nextT = new Date(gData.nextCheckAt);
+          tooltip += "\n- 下次自适应巡检预计：" + nextT.toLocaleTimeString();
+        }
+        guardianBadge.title = tooltip;
+        if (gData.totalHarvestCredits > 0) {
+          guardianBadge.textContent = "🟢 自动守护中 (+" + gData.totalHarvestCredits + "分)";
+        } else {
+          guardianBadge.textContent = "🟢 后台自动守护中";
+        }
+      } else {
+        guardianBadge.style.display = "none";
+      }
+    }
 
     if (b) {
       if (nameEl) nameEl.textContent = b.name || "专属 Buddy";

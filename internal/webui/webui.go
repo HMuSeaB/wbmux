@@ -27,6 +27,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
+	"github.com/HMuSeaB/wbmux/internal/growth"
 	"github.com/HMuSeaB/wbmux/internal/runner"
 	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/usage"
@@ -123,6 +124,9 @@ type Server struct {
 
 	// guardian 负责后台自适应遥测与活跃心跳守护，防服务端风控。
 	guardian *telemetry.Guardian
+
+	// growthGuardian 负责后台猫咪旅行自适应巡检、自动收割与每日任务扫荡。
+	growthGuardian *growth.TravelGuardian
 
 	done     chan struct{}
 	doneOnce sync.Once
@@ -224,6 +228,19 @@ func New(opts Options) (*Server, error) {
 		}
 		return didRefresh, err
 	})
+	srv.growthGuardian = growth.NewTravelGuardian(growth.GuardianConfig{
+		Endpoint: srv.domesticEndpoint(),
+		CredGetter: func() (credential.Credential, error) {
+			return srv.domesticCred(srv.probe())
+		},
+		OnNote: func(level, text string) {
+			srv.note(ProxyLogEntry{
+				Level: level,
+				Text:  text,
+			})
+		},
+		AutoDailySweep: true,
+	})
 	return srv, nil
 }
 
@@ -318,6 +335,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/growth/domestic/buddy", s.guard(s.handleGrowthDomesticBuddy))
 	mux.HandleFunc("/api/growth/domestic/buddy/open", s.guard(s.handleGrowthDomesticBuddyOpen))
 	mux.HandleFunc("/api/growth/domestic/buddy/travel", s.guard(s.handleGrowthDomesticBuddyTravel))
+	mux.HandleFunc("/api/growth/domestic/guardian", s.guard(s.handleGrowthDomesticGuardian))
+	mux.HandleFunc("/api/growth/domestic/guardian/trigger", s.guard(s.handleGrowthDomesticGuardianTrigger))
 	mux.HandleFunc("/api/search/test", s.guard(s.handleSearchDebug))
 
 	s.http = &http.Server{
@@ -327,6 +346,7 @@ func (s *Server) Start() error {
 	go func() { _ = s.http.Serve(ln) }()
 	go s.watchIdle()
 	go s.startTelemetryGuardian()
+	go s.startGrowthGuardian()
 	s.resumeAutoClean()
 	s.applyAutoUpdatePolicy()
 	return nil
@@ -918,6 +938,19 @@ func (s *Server) startTelemetryGuardian() {
 		cancel()
 	}()
 	s.guardian.Start(ctx)
+}
+
+// startGrowthGuardian 在后台启动猫咪旅行自适应巡检与每日任务全自动静默扫荡。
+func (s *Server) startGrowthGuardian() {
+	if s.growthGuardian == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-s.done
+		cancel()
+	}()
+	s.growthGuardian.Start(ctx)
 }
 
 // handleTelemetry 返回当前遥测守护状态。
