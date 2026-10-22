@@ -2,6 +2,7 @@ package product
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,6 +272,17 @@ func TestParseRejectsGarbage(t *testing.T) {
 	}
 	if _, err := Parse([]byte("null")); err == nil {
 		t.Error("null 应报错")
+	}
+}
+
+func TestParseAcceptsUTF8BOM(t *testing.T) {
+	withBOM := append([]byte("\xef\xbb\xbf"), []byte(`{"applicationName":"WorkBuddy"}`)...)
+	doc, err := Parse(withBOM)
+	if err != nil {
+		t.Fatalf("带 BOM 的产品配置应当被自动容错解析，收到错误: %v", err)
+	}
+	if fmt.Sprint(doc["applicationName"]) != "WorkBuddy" {
+		t.Fatalf("解析内容不匹配: %v", doc["applicationName"])
 	}
 }
 

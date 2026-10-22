@@ -74,6 +74,7 @@ func Load(path string) (Document, error) {
 
 // Parse 从字节解析产品配置。
 func Parse(raw []byte) (Document, error) {
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var doc Document
