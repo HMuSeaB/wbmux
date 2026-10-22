@@ -3575,8 +3575,9 @@
 
     api("/api/compact").then(function (st) {
       clear(bodyContainer);
+      var actualTokens = contextTokens || (st && st.lastContextTokens > 0 ? st.lastContextTokens : 122900);
       var comp = buildContextMeterComponent({
-        initialTokens: contextTokens || 358400,
+        initialTokens: actualTokens,
         effective: st.effective,
         state: st,
         onApplied: function () {
@@ -3616,9 +3617,14 @@
       class: "card",
       style: "background:#17181c;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px 24px;margin-bottom:16px;"
     });
-    mainCard.appendChild(el("div", { class: "cm-title", style: "margin-bottom:12px;", text: "官方同款会话上下文用量与分段滑块" }));
+    var titleText = "官方同款会话上下文用量与分段滑块";
+    var actualTokens = (st && st.lastContextTokens > 0) ? st.lastContextTokens : 122900;
+    if (st && st.lastContextTokens > 0) {
+      titleText += " · 实时联动最近请求 (~" + (st.lastContextTokens / 1000).toFixed(1) + "k Tokens)";
+    }
+    mainCard.appendChild(el("div", { class: "cm-title", style: "margin-bottom:12px;", text: titleText }));
     var comp = buildContextMeterComponent({
-      initialTokens: 358400,
+      initialTokens: actualTokens,
       effective: st.effective,
       state: st,
       onApplied: function (newSt) {

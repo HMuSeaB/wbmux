@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 )
 
 // compactEnvName 是客户端读的那个环境变量。
@@ -75,6 +77,9 @@ type CompactState struct {
 	// 拿不到客户端安装位置之类的情况要如实说，而不是给个假按钮。
 	Available bool   `json:"available"`
 	Note      string `json:"note,omitempty"`
+
+	// LastContextTokens 来自最近一笔网关真实拦截到的请求上下文输入量。
+	LastContextTokens int `json:"lastContextTokens,omitempty"`
 }
 
 // compactPreMessageRatio 对应产品配置里的 inputTokens.preMessage。
@@ -211,5 +216,10 @@ func (s *Server) handleCompactSetting(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET 或 POST")
 		return
 	}
-	writeJSON(w, readCompactState())
+	st := readCompactState()
+	sum := gatewayaudit.Default().GetSummary(1)
+	if len(sum.RecentRecords) > 0 && sum.RecentRecords[0].PromptTokens > 0 {
+		st.LastContextTokens = sum.RecentRecords[0].PromptTokens
+	}
+	writeJSON(w, st)
 }
