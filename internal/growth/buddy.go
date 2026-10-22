@@ -113,6 +113,48 @@ func (c *Client) FetchBuddyInfo(cred credential.Credential) (*BuddyItem, error) 
 	return resDoc.Data.Buddy, nil
 }
 
+// FetchEnergyBalance 拉取当前用户真实可用能量值余额。
+func (c *Client) FetchEnergyBalance(cred credential.Credential) (int64, error) {
+	if cred.Token == "" {
+		return 0, fmt.Errorf("credential token is empty")
+	}
+
+	url := c.endpointFor("/activity/growth/energy")
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	ApplyWebHeaders(req, cred.Token, cred.UID, "https://www.workbuddy.cn", "https://www.workbuddy.cn/profile/growth-center")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	var resDoc struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			Balance int64 `json:"balance"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resDoc); err != nil {
+		return 0, fmt.Errorf("unmarshal energy: %w", err)
+	}
+	if resDoc.Code != 0 {
+		return 0, fmt.Errorf("energy rejected: %s", resDoc.Msg)
+	}
+
+	return resDoc.Data.Balance, nil
+}
+
+
 // OpenBlindBox 消耗能量开启盲盒（每次消耗 10 能量）。
 func (c *Client) OpenBlindBox(cred credential.Credential, count int) (*OpenBlindBoxResponse, error) {
 	if cred.Token == "" {

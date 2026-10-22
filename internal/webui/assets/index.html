@@ -5375,8 +5375,20 @@
       if (descEl) descEl.textContent = "完成首领猫咪任务即可领养专属 Buddy";
     }
 
-    var pendingEnergy = (tData && tData.totalEnergyPending !== undefined) ? tData.totalEnergyPending : ((tData && tData.potential_energy) || 0);
-    if (energyEl) energyEl.textContent = pendingEnergy + " 能量";
+    var actualEnergy = (bData && bData.energy_balance !== undefined) ? bData.energy_balance : null;
+    if (energyEl) {
+      if (actualEnergy !== null) {
+        energyEl.textContent = actualEnergy + " 能量";
+        if (actualEnergy < 10) {
+          energyEl.title = "开盒需 10 能量，当前差 " + (10 - actualEnergy) + " 能量（完成下方待办任务可获取）";
+        } else {
+          energyEl.title = "可开启 " + Math.floor(actualEnergy / 10) + " 次盲盒";
+        }
+      } else {
+        var pendingEnergy = (tData && tData.totalEnergyPending !== undefined) ? tData.totalEnergyPending : ((tData && tData.potential_energy) || 0);
+        energyEl.textContent = pendingEnergy + " 能量";
+      }
+    }
 
     if (travelEl) {
       if (!tr || tr.state === "idle") {

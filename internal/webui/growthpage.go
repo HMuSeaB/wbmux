@@ -428,11 +428,13 @@ func (s *Server) handleGrowthDomesticBuddy(w http.ResponseWriter, r *http.Reques
 		buddy = nil
 	}
 	travel, _ := client.FetchTravelStatus(cred)
+	energyBalance, _ := client.FetchEnergyBalance(cred)
 
 	writeJSON(w, map[string]any{
-		"ok":     true,
-		"buddy":  buddy,
-		"travel": travel,
+		"ok":             true,
+		"buddy":          buddy,
+		"travel":         travel,
+		"energy_balance": energyBalance,
 	})
 }
 
