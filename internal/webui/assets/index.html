@@ -2311,7 +2311,8 @@
   <section id="sec-client-autoupdate">
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-shield"/></svg>客户端自动更新物理防护与恢复</h2>
     <div class="card" style="padding:16px 20px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);border-radius:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <!-- 顶部综合状态徽标与主操作按钮 -->
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.06)">
         <div>
           <div style="display:flex;align-items:center;gap:8px">
             <span id="client-update-status-badge" class="growth-task-tag" style="background:rgba(34,197,94,0.15);color:#22c55e;font-size:12px;font-weight:600">
@@ -2328,6 +2329,45 @@
           </button>
         </div>
       </div>
+
+      <!-- 核心防护开关联动 -->
+      <label class="check" style="margin-bottom:10px">
+        <input type="checkbox" id="chk-client-update">
+        <span>禁止客户端自动更新
+          <span class="desc" id="client-update-state">（压制启动静默更新，保护本地配置）</span>
+        </span>
+      </label>
+
+      <p class="sub" style="margin:0 0 12px 0;font-size:11.5px;color:var(--ink-2)">
+        开启后将向数据目录写入更新抑制配置，并在系统临时目录建立物理占位锁，彻底防住偷跑下载；取消勾选将完整恢复官方原生更新决策。
+      </p>
+
+      <!-- 检测到的客户端配置目标 -->
+      <div id="client-update-targets-box" style="background:var(--g2);border:1px solid var(--g3);border-radius:6px;padding:10px 12px">
+        <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+          <svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>检测到的客户端配置目标
+        </div>
+        <div id="client-update-targets-list" style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:11.5px;color:var(--ink-3)">正在探测客户端配置路径…</div>
+        </div>
+      </div>
+
+      <!-- 自定义客户端路径配置 -->
+      <div style="margin-top:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:4px">
+          ⚙️ 自定义客户端数据目录或配置文件路径
+        </div>
+        <p class="sub" style="margin-bottom:6px;font-size:11.5px">
+          若您的客户端安装在非系统盘、使用了绿色便携版或自定义数据目录，请在此输入目录或 <code>app-config.json</code> 路径：
+        </p>
+        <div class="row" style="margin:0;gap:8px">
+          <input type="text" id="ipt-custom-client-path" placeholder="例如：D:\Tools\WorkBuddy\.workbuddy 或 C:\...\app-config.json" style="flex:1;font-family:var(--mono);font-size:12px">
+          <button id="btn-save-custom-client-path" class="ghost" style="padding:4px 12px;font-size:12px">保存并应用</button>
+          <button id="btn-clear-custom-client-path" class="ghost" style="padding:4px 8px;font-size:12px" title="清空自定义路径并恢复自动探测">清空</button>
+        </div>
+      </div>
+
+      <div id="client-update-note" style="margin-top:10px"></div>
     </div>
   </section>
 
@@ -2687,51 +2727,6 @@
       想在固定时刻领（比如每天 9 点），用命令行 <code>wbmux checkin claim</code>
       交给系统任务计划程序，它同样是幂等的：签过就如实回报，不会重复领也不会报错。
     </p>
-  </section>
-  <section>
-    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>客户端自动更新管理（可选功能）</h2>
-    <p class="sub">
-      这是一项可选防护功能。开启后可关闭客户端的<strong>启动静默更新</strong>，避免官方升级改动内部配置格式导致注入模型失效；
-      未开启时，<strong>wbmux 绝不主动修改客户端配置</strong>，完全保持客户端官方默认的更新策略。
-    </p>
-    <label class="check">
-      <input type="checkbox" id="chk-client-update">
-      <span>禁止客户端自动更新
-        <span class="desc" id="client-update-state"></span>
-      </span>
-    </label>
-    <p class="sub" style="margin-top:10px">
-      关掉的是"启动静默自动更新"，<strong>不影响你在客户端里手动检查与安装更新</strong>——想升级随时可升。
-    </p>
-    <p class="sub">
-      原理是向客户端的 <code>app/app-config.json</code> 写入开关；取消勾选会将该键<strong>彻底删除</strong>，完整恢复客户端官方原生决策。
-    </p>
-    <!-- 真实物理路径与状态看板 -->
-    <div id="client-update-targets-box" style="margin-top:12px;background:var(--g2);border:1px solid var(--g3);border-radius:6px;padding:10px 12px">
-      <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:6px;display:flex;align-items:center;gap:6px">
-        <svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>检测到的客户端配置目标
-      </div>
-      <div id="client-update-targets-list" style="display:flex;flex-direction:column;gap:6px">
-        <div style="font-size:11.5px;color:var(--ink-3)">正在探测客户端配置路径…</div>
-      </div>
-    </div>
-
-    <!-- 自定义客户端路径配置 -->
-    <div style="margin-top:12px">
-      <div style="font-size:12px;font-weight:600;color:var(--ink-1);margin-bottom:4px">
-        ⚙️ 自定义客户端数据目录或配置文件路径
-      </div>
-      <p class="sub" style="margin-bottom:6px">
-        若您的客户端安装在非系统盘、使用了绿色便携版或自定义数据目录，请在此输入目录或 <code>app-config.json</code> 路径：
-      </p>
-      <div class="row" style="margin:0;gap:8px">
-        <input type="text" id="ipt-custom-client-path" placeholder="例如：D:\Tools\WorkBuddy\.workbuddy 或 C:\...\app-config.json" style="flex:1;font-family:var(--mono);font-size:12px">
-        <button id="btn-save-custom-client-path" class="ghost" style="padding:4px 12px;font-size:12px">保存并应用</button>
-        <button id="btn-clear-custom-client-path" class="ghost" style="padding:4px 8px;font-size:12px" title="清空自定义路径并恢复自动探测">清空</button>
-      </div>
-    </div>
-
-    <div id="client-update-note" style="margin-top:10px"></div>
   </section>
     </div>
     <div data-page="recycle" hidden>
