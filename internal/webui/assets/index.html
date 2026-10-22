@@ -1748,6 +1748,57 @@
     max-height: 160px;
     overflow-y: auto;
   }
+  .growth-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .growth-filter-btn {
+    background: var(--g1);
+    border: 1px solid var(--g3);
+    color: var(--ink-2);
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: var(--r-full);
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .growth-filter-btn:hover {
+    background: var(--g2);
+    color: var(--ink);
+    border-color: var(--g4);
+  }
+  .growth-filter-btn.active {
+    background: rgba(235, 178, 58, 0.16);
+    color: #ffd700;
+    border-color: rgba(235, 178, 58, 0.4);
+    font-weight: 600;
+  }
+  .growth-period-badge {
+    font-size: 10px;
+    padding: 1.5px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    margin-left: 6px;
+    letter-spacing: 0.2px;
+    display: inline-block;
+  }
+  .growth-period-badge.daily {
+    background: rgba(46, 196, 182, 0.12);
+    color: var(--ok);
+    border: 1px solid rgba(46, 196, 182, 0.25);
+  }
+  .growth-period-badge.once {
+    background: rgba(168, 85, 247, 0.12);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+  }
+  .growth-period-badge.milestone {
+    background: rgba(235, 178, 58, 0.12);
+    color: #ebb23a;
+    border: 1px solid rgba(235, 178, 58, 0.25);
+  }
 </style>
 </head>
 <body>
@@ -2366,6 +2417,21 @@
             <h3 style="font-size:13.5px;font-weight:650;color:var(--ink);margin:0">全量成长任务矩阵 (17项自动化 + 1项微信捐赠)</h3>
             <span style="font-size:11.5px;color:var(--ink-3)" id="growth-task-count">加载中…</span>
           </div>
+
+          <!-- 分类筛选导航条与过滤开关 -->
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+            <div class="growth-filter-bar" id="growth-filter-tabs">
+              <button type="button" class="growth-filter-btn active" data-filter="all">全部任务</button>
+              <button type="button" class="growth-filter-btn" data-filter="daily">📅 每日可刷</button>
+              <button type="button" class="growth-filter-btn" data-filter="once">🎁 一次性福利</button>
+              <button type="button" class="growth-filter-btn" data-filter="milestone">📱 连续打卡</button>
+            </div>
+            <label style="font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none">
+              <input type="checkbox" id="chk-growth-hide-claimed" style="margin:0">
+              隐藏已入账任务（只看待办）
+            </label>
+          </div>
+
           <div id="growth-tasks-list" class="growth-task-grid">
             <div class="hint" style="grid-column:1/-1"><span class="spinner"></span> 正在拉取国内侧最新任务列表与进度…</div>
           </div>
@@ -4554,6 +4620,21 @@
   // ---------- 成长任务与福利中心 (Growth Hub) ----------
   var growthLastTasks = null;
   var growthBusyFlag = false;
+  var growthCurrentFilter = "all";
+  var growthHideClaimed = false;
+
+  function inferJsTaskPeriod(code) {
+    if (!code) return { period: "once", label: "一次性福利" };
+    if (code.indexOf("Sequential_Tasks_") === 0 || code === "school_season") {
+      return { period: "milestone", label: "连续阶段" };
+    }
+    if (code === "chat_5" || code === "Model_chat_GLM5.2" || code === "RichMeow_Chat" ||
+        code === "Buddy_App" || code === "Buddy_App_QQ" || code === "automation_1" ||
+        code === "expert_5" || code === "Expert_team_use_3") {
+      return { period: "daily", label: "每日刷新" };
+    }
+    return { period: "once", label: "一次性福利" };
+  }
 
   function growthBusy(on) {
     growthBusyFlag = on;
@@ -4680,16 +4761,39 @@
       else pendingCount++;
     });
 
-    if (countLabel) {
-      countLabel.textContent = "共 " + total + " 项 · 已入账 " + claimedCount + " 项 · 待领奖 " + claimableCount + " 项 · 待扫荡 " + pendingCount + " 项";
-    }
-
     if (items.length === 0) {
+      if (countLabel) countLabel.textContent = "暂无任务";
       list.appendChild(el("div", { class: "hint", style: "grid-column:1/-1", text: "暂无成长任务数据或国内侧未登录。" }));
       return;
     }
 
-    items.forEach(function (t) {
+    var filteredItems = items.filter(function (t) {
+      var code = t.code || t.task_code || "";
+      var isClaimed = !!t.claimed || t.accept_status === "claimed";
+      if (growthHideClaimed && isClaimed) return false;
+      var periodInfo = (t.period && t.period_label) ? { period: t.period, label: t.period_label } : inferJsTaskPeriod(code);
+      if (growthCurrentFilter !== "all" && periodInfo.period !== growthCurrentFilter) {
+        return false;
+      }
+      return true;
+    });
+
+    if (countLabel) {
+      var filterDesc = (growthCurrentFilter === "all" ? "全部" : (growthCurrentFilter === "daily" ? "每日" : (growthCurrentFilter === "once" ? "一次性" : "连续打卡")));
+      var filterNote = (filteredItems.length !== total || growthHideClaimed) ? (" (当前筛选「" + filterDesc + (growthHideClaimed ? "·隐藏已入账" : "") + "」显示 " + filteredItems.length + " 项)") : "";
+      countLabel.textContent = "共 " + total + " 项 · 已入账 " + claimedCount + " 项 · 待领奖 " + claimableCount + " 项 · 待扫荡 " + pendingCount + " 项" + filterNote;
+    }
+
+    if (filteredItems.length === 0) {
+      list.appendChild(el("div", {
+        class: "hint",
+        style: "grid-column:1/-1;padding:24px;text-align:center",
+        text: "当前筛选条件下没有匹配的任务（可切换分类或取消「隐藏已入账」查看）。"
+      }));
+      return;
+    }
+
+    filteredItems.forEach(function (t) {
       var code = t.code || t.task_code || "";
       var name = t.name || t.title || code;
       var desc = t.desc || t.description || t.task_desc || "官方成长加速任务";
@@ -4697,12 +4801,23 @@
       var isClaimable = !isClaimed && (!!t.claimable || (t.target > 0 && t.current >= t.target) || t.accept_status === "completed");
       var canAuto = (t.can_automate !== undefined) ? t.can_automate : ((t.canAutomate !== undefined) ? t.canAutomate : (code !== "donate_author"));
       var category = t.category || t.tag || "常用任务";
+      var periodInfo = (t.period && t.period_label) ? { period: t.period, label: t.period_label } : inferJsTaskPeriod(code);
 
       var card = el("div", { class: "growth-card" + (isClaimed ? " done" : "") });
 
-      // Header: 标题与分类标签
-      var header = el("div", { class: "growth-card-header" }, [
+      // Header: 标题 + 周期角标 + 分类标签
+      var periodBadge = el("span", {
+        class: "growth-period-badge " + periodInfo.period,
+        text: periodInfo.label
+      });
+
+      var titleWrap = el("div", { style: "display:flex;align-items:center;flex-wrap:wrap;gap:4px" }, [
         el("span", { class: "growth-card-title", text: name }),
+        periodBadge
+      ]);
+
+      var header = el("div", { class: "growth-card-header" }, [
+        titleWrap,
         el("span", { class: "growth-card-cat", text: category })
       ]);
 
@@ -4759,7 +4874,13 @@
       // Action button
       var btnAction;
       if (isClaimed) {
-        btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px;opacity:0.65", disabled: true, text: "已完成" });
+        btnAction = el("button", {
+          class: "ghost",
+          style: "font-size:11px;padding:4px 8px;opacity:0.65",
+          disabled: true,
+          title: "该任务已在官方服务器结算入账，防刷机制已生效，重置周期前不会重复请求",
+          text: "已完成 (防刷保护)"
+        });
       } else if (isClaimable) {
         btnAction = el("button", { class: "primary", style: "font-size:11px;padding:4px 10px;background:#ebb23a;color:#111;font-weight:600;border:none", text: "领取奖励" });
         btnAction.addEventListener("click", function () {
@@ -7576,6 +7697,27 @@
   if (btnGrowthRefresh) btnGrowthRefresh.addEventListener("click", function () { loadDomesticGrowth(false); });
   var btnGrowthCompClaim = document.getElementById("btn-growth-comp-claim");
   if (btnGrowthCompClaim) btnGrowthCompClaim.addEventListener("click", claimDomesticCompensation);
+
+  var filterTabs = document.getElementById("growth-filter-tabs");
+  if (filterTabs) {
+    filterTabs.addEventListener("click", function (e) {
+      var btn = e.target.closest(".growth-filter-btn");
+      if (!btn) return;
+      var filter = btn.getAttribute("data-filter") || "all";
+      growthCurrentFilter = filter;
+      var allBtns = filterTabs.querySelectorAll(".growth-filter-btn");
+      allBtns.forEach(function (b) { b.classList.toggle("active", b === btn); });
+      if (growthLastTasks) renderDomesticTasks(growthLastTasks);
+    });
+  }
+
+  var chkHideClaimed = document.getElementById("chk-growth-hide-claimed");
+  if (chkHideClaimed) {
+    chkHideClaimed.addEventListener("change", function () {
+      growthHideClaimed = !!this.checked;
+      if (growthLastTasks) renderDomesticTasks(growthLastTasks);
+    });
+  }
 
   // 签到。和回收站同理：切到这一页才去读，读一次要借客户端的运行时解凭据，
   // 没必要在启动时就跑。

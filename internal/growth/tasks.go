@@ -40,6 +40,8 @@ type GrowthTask struct {
 	Claimable    bool   `json:"claimable"`
 	Claimed      bool   `json:"claimed"`
 	CanAutomate  bool   `json:"can_automate"`
+	Period       string `json:"period,omitempty"`       // daily / once / milestone
+	PeriodLabel  string `json:"period_label,omitempty"` // 每日刷新 / 一次性福利 / 连续序列
 }
 
 // CompensationStatus 代表官方不定期服务故障补偿状态（先查后领）。
@@ -140,8 +142,22 @@ func (r rawTask) toGrowthTask() GrowthTask {
 	t.CanAutomate = (t.TaskCode != "donate_author")
 	t.Category = inferTaskCategory(t.TaskCode, t.Tag)
 	t.RewardText = formatRewardText(t.Credit, t.Energy)
+	t.Period, t.PeriodLabel = inferTaskPeriod(t.TaskCode)
 
 	return t
+}
+
+func inferTaskPeriod(code string) (string, string) {
+	switch {
+	case strings.HasPrefix(code, "Sequential_Tasks_") || code == "school_season":
+		return "milestone", "连续阶段"
+	case code == "chat_5" || code == "Model_chat_GLM5.2" || code == "RichMeow_Chat" ||
+		code == "Buddy_App" || code == "Buddy_App_QQ" || code == "automation_1" ||
+		code == "expert_5" || code == "Expert_team_use_3":
+		return "daily", "每日刷新"
+	default:
+		return "once", "一次性福利"
+	}
 }
 
 func inferTaskCategory(code, tag string) string {
