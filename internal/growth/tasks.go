@@ -14,23 +14,32 @@ import (
 // GrowthTask 代表国内端成长计划中单个任务的状态与奖励。
 type GrowthTask struct {
 	TaskCode     string `json:"task_code"`
+	Code         string `json:"code,omitempty"`
 	Title        string `json:"title,omitempty"`
+	Name         string `json:"name,omitempty"`
 	Description  string `json:"description,omitempty"`
+	Desc         string `json:"desc,omitempty"`
 	TaskDesc     string `json:"task_desc,omitempty"`
 	Credit       int64  `json:"credit,omitempty"`
+	RewardCredit int64  `json:"reward_credit,omitempty"`
 	Energy       int64  `json:"energy,omitempty"`
+	RewardEnergy int64  `json:"reward_energy,omitempty"`
 	HasReward    bool   `json:"has_reward,omitempty"`
 	RewardBuddy  bool   `json:"reward_buddy,omitempty"`
+	RewardText   string `json:"reward_text,omitempty"`
 	TaskType     string `json:"task_type,omitempty"`
 	Tag          string `json:"tag,omitempty"`
+	Category     string `json:"category,omitempty"`
 	JumpURL      string `json:"jump_url,omitempty"`
 	Locked       bool   `json:"locked,omitempty"`
 	Target       int64  `json:"target"`
 	Current      int64  `json:"current"`
+	Progress     string `json:"progress,omitempty"`
 	AcceptStatus string `json:"accept_status,omitempty"` // not_accepted / accepted / completed / claimed
 	Status       string `json:"status,omitempty"`
-	Claimable    bool   `json:"claimable,omitempty"`
-	Claimed      bool   `json:"claimed,omitempty"`
+	Claimable    bool   `json:"claimable"`
+	Claimed      bool   `json:"claimed"`
+	CanAutomate  bool   `json:"can_automate"`
 }
 
 // CompensationStatus 代表官方不定期服务故障补偿状态（先查后领）。
@@ -115,7 +124,58 @@ func (r rawTask) toGrowthTask() GrowthTask {
 		t.Claimable = true
 	}
 
+	// 补全前端友好别名字段
+	t.Code = t.TaskCode
+	t.Name = t.Title
+	if t.Name == "" {
+		t.Name = t.TaskCode
+	}
+	t.Desc = t.Description
+	if t.Desc == "" {
+		t.Desc = t.TaskDesc
+	}
+	t.RewardCredit = t.Credit
+	t.RewardEnergy = t.Energy
+	t.Progress = fmt.Sprintf("%d/%d", t.Current, t.Target)
+	t.CanAutomate = (t.TaskCode != "donate_author")
+	t.Category = inferTaskCategory(t.TaskCode, t.Tag)
+	t.RewardText = formatRewardText(t.Credit, t.Energy)
+
 	return t
+}
+
+func inferTaskCategory(code, tag string) string {
+	if tag != "" {
+		return tag
+	}
+	switch {
+	case strings.HasPrefix(code, "Sequential_Tasks_") || code == "school_season":
+		return "小程序任务"
+	case strings.Contains(code, "desktop") || code == "switch_theme":
+		return "桌面端体验"
+	case strings.Contains(code, "Buddy") || strings.Contains(code, "chat"):
+		return "Buddy应用"
+	case strings.Contains(code, "canvas") || strings.Contains(code, "template"):
+		return "灵感设计"
+	case code == "donate_author":
+		return "开源赞赏"
+	default:
+		return "常用任务"
+	}
+}
+
+func formatRewardText(credit, energy int64) string {
+	var parts []string
+	if credit > 0 {
+		parts = append(parts, fmt.Sprintf("+%d 积分", credit))
+	}
+	if energy > 0 {
+		parts = append(parts, fmt.Sprintf("+%d 能量", energy))
+	}
+	if len(parts) == 0 {
+		return "福利奖励"
+	}
+	return strings.Join(parts, " · ")
 }
 
 // ListTasks 查询国内成长计划的全量任务列表。

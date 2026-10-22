@@ -11,11 +11,17 @@ import (
 // TaskRunResult 描述单个成长任务的执行与领奖结果。
 type TaskRunResult struct {
 	TaskCode       string `json:"task_code"`
+	Code           string `json:"code,omitempty"`
 	Title          string `json:"title"`
+	TaskName       string `json:"task_name,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Success        bool   `json:"success"`
 	Skipped        bool   `json:"skipped,omitempty"`
 	Claimed        bool   `json:"claimed"`
 	CreditGranted  int64  `json:"credit_granted"`
+	Credit         int64  `json:"credit,omitempty"`
 	EnergyGranted  int64  `json:"energy_granted"`
+	Energy         int64  `json:"energy,omitempty"`
 	ProgressBefore string `json:"progress_before"`
 	ProgressAfter  string `json:"progress_after"`
 	Message        string `json:"message"`
@@ -24,10 +30,14 @@ type TaskRunResult struct {
 // SweepResult 描述一键扫荡全部任务的战报总结。
 type SweepResult struct {
 	TotalCreditGranted int64           `json:"total_credit_granted"`
+	TotalCreditEarned  int64           `json:"total_credit_earned"`
 	TotalEnergyGranted int64           `json:"total_energy_granted"`
+	TotalEnergyEarned  int64           `json:"total_energy_earned"`
 	TasksCompleted     int             `json:"tasks_completed"`
+	SuccessCount       int             `json:"success_count"`
 	TasksSkipped       int             `json:"tasks_skipped"`
 	Details            []TaskRunResult `json:"details"`
+	Results            []TaskRunResult `json:"results,omitempty"`
 	CompensationNotice string          `json:"compensation_notice,omitempty"`
 }
 
@@ -128,7 +138,11 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 	if targetTask.Claimed {
 		return &TaskRunResult{
 			TaskCode:       taskCode,
+			Code:           taskCode,
 			Title:          targetTask.Title,
+			TaskName:       targetTask.Title,
+			Name:           targetTask.Title,
+			Success:        true,
 			Skipped:        true,
 			Claimed:        true,
 			ProgressBefore: "claimed",
@@ -177,10 +191,14 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 	// 5. 达标即自动领奖
 	res := &TaskRunResult{
 		TaskCode:       taskCode,
+		Code:           taskCode,
 		Title:          targetTask.Title,
+		TaskName:       targetTask.Title,
+		Name:           targetTask.Title,
 		ProgressBefore: progBefore,
 		ProgressAfter:  progAfter,
 		Message:        actionMsg,
+		Success:        true,
 	}
 
 	if finalTask != nil && (finalTask.Claimable || finalTask.Current >= targetTask.Target) && !finalTask.Claimed {
@@ -188,7 +206,9 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		if cerr == nil && (credit > 0 || energy > 0) {
 			res.Claimed = true
 			res.CreditGranted = credit
+			res.Credit = credit
 			res.EnergyGranted = energy
+			res.Energy = energy
 			res.ProgressAfter = "claimed"
 			res.Message += fmt.Sprintf("；已自动领奖入账（+%dc +%de）", credit, energy)
 		}
@@ -470,6 +490,11 @@ func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 			result.CompensationNotice = fmt.Sprintf("发现官方异常补偿（+%d 积分，截止: %s），待领取", comp.CreditNum, comp.EndTime)
 		}
 	}
+
+	result.TotalCreditEarned = result.TotalCreditGranted
+	result.TotalEnergyEarned = result.TotalEnergyGranted
+	result.SuccessCount = result.TasksCompleted
+	result.Results = result.Details
 
 	return result, nil
 }

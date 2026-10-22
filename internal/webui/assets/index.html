@@ -4560,16 +4560,20 @@
   function updateGrowthSidebarBadge(data) {
     var b = document.getElementById("nav-growth-badge");
     if (!b) return;
-    if (!data || !data.items) {
+    var items = (data && (data.items || data.tasks)) || [];
+    if (!data || items.length === 0) {
       b.textContent = "+1950c";
       b.style.background = "rgba(235,178,58,0.2)";
       b.style.color = "#ebb23a";
       return;
     }
-    var pendingCredit = data.totalCreditPending || 0;
+    var pendingCredit = (data.totalCreditPending !== undefined) ? data.totalCreditPending : (data.potential_credit || 0);
     var allClaimed = true;
-    data.items.forEach(function (t) {
-      if (t.canAutomate && !t.claimed) allClaimed = false;
+    items.forEach(function (t) {
+      var code = t.code || t.task_code || "";
+      var canAuto = (t.can_automate !== undefined) ? t.can_automate : ((t.canAutomate !== undefined) ? t.canAutomate : (code !== "donate_author"));
+      var isClaimed = !!t.claimed || t.accept_status === "claimed";
+      if (canAuto && !isClaimed) allClaimed = false;
     });
     if (allClaimed) {
       b.textContent = "已达成";
@@ -4588,7 +4592,7 @@
 
   function loadDomesticGrowth(quiet) {
     var list = document.getElementById("growth-tasks-list");
-    if (!quiet && list && (!growthLastTasks || !growthLastTasks.items)) {
+    if (!quiet && list && (!growthLastTasks || (!growthLastTasks.items && !growthLastTasks.tasks))) {
       clear(list);
       list.appendChild(el("div", { class: "hint", style: "grid-column:1/-1" }, [
         el("span", { class: "spinner" }),
@@ -4608,12 +4612,16 @@
       // 更新官方补偿横幅
       var banner = document.getElementById("growth-comp-banner");
       if (banner) {
-        if (compData && compData.hasPending) {
+        var hasComp = (compData && compData.hasPending) ||
+          (taskData && taskData.compensation && taskData.compensation.active && !taskData.compensation.claimed && taskData.compensation.credit_num > 0);
+        if (hasComp) {
           banner.hidden = false;
           var titleEl = document.getElementById("growth-comp-title");
           var descEl = document.getElementById("growth-comp-desc");
-          if (titleEl) titleEl.textContent = "🎁 官方服务异常故障补偿待领取 (" + (compData.rewards || "丰厚积分礼包") + ")";
-          if (descEl && compData.desc) descEl.textContent = compData.desc;
+          var rewards = (compData && compData.rewards) || ("+" + (taskData.compensation ? taskData.compensation.credit_num : 500) + " 积分");
+          if (titleEl) titleEl.textContent = "🎁 官方服务异常故障补偿待领取 (" + rewards + ")";
+          if (descEl && compData && compData.desc) descEl.textContent = compData.desc;
+          else if (descEl && taskData.compensation) descEl.textContent = "官方服务异常限时补偿礼包（有效截止至：" + taskData.compensation.end_time + "）";
         } else {
           banner.hidden = true;
         }
@@ -4623,8 +4631,10 @@
       var statCredit = document.getElementById("growth-stat-credit");
       var statEnergy = document.getElementById("growth-stat-energy");
       var lastSync = document.getElementById("growth-last-sync");
-      if (statCredit) statCredit.textContent = "+" + (taskData.totalCreditPending || 0);
-      if (statEnergy) statEnergy.textContent = "+" + (taskData.totalEnergyPending || 0);
+      var pendingCredit = (taskData.totalCreditPending !== undefined) ? taskData.totalCreditPending : (taskData.potential_credit || 0);
+      var pendingEnergy = (taskData.totalEnergyPending !== undefined) ? taskData.totalEnergyPending : (taskData.potential_energy || 0);
+      if (statCredit) statCredit.textContent = "+" + pendingCredit;
+      if (statEnergy) statEnergy.textContent = "+" + pendingEnergy;
       if (lastSync) {
         var d = new Date();
         lastSync.textContent = "同步于 " + d.toLocaleTimeString();
@@ -4650,15 +4660,17 @@
     if (!list) return;
     clear(list);
 
-    var items = (data && data.items) || [];
+    var items = (data && (data.items || data.tasks)) || [];
     var total = items.length;
     var claimedCount = 0;
     var claimableCount = 0;
     var pendingCount = 0;
 
     items.forEach(function (t) {
-      if (t.claimed) claimedCount++;
-      else if (t.claimable) claimableCount++;
+      var isClaimed = !!t.claimed || t.accept_status === "claimed";
+      var isClaimable = !isClaimed && (!!t.claimable || (t.target > 0 && t.current >= t.target) || t.accept_status === "completed");
+      if (isClaimed) claimedCount++;
+      else if (isClaimable) claimableCount++;
       else pendingCount++;
     });
 
@@ -4672,30 +4684,44 @@
     }
 
     items.forEach(function (t) {
-      var card = el("div", { class: "growth-card" + (t.claimed ? " done" : "") });
+      var code = t.code || t.task_code || "";
+      var name = t.name || t.title || code;
+      var desc = t.desc || t.description || t.task_desc || "官方成长加速任务";
+      var isClaimed = !!t.claimed || t.accept_status === "claimed";
+      var isClaimable = !isClaimed && (!!t.claimable || (t.target > 0 && t.current >= t.target) || t.accept_status === "completed");
+      var canAuto = (t.can_automate !== undefined) ? t.can_automate : ((t.canAutomate !== undefined) ? t.canAutomate : (code !== "donate_author"));
+      var category = t.category || t.tag || "常用任务";
+
+      var card = el("div", { class: "growth-card" + (isClaimed ? " done" : "") });
 
       // Header: 标题与分类标签
       var header = el("div", { class: "growth-card-header" }, [
-        el("span", { class: "growth-card-title", text: t.name || t.code }),
-        el("span", { class: "growth-card-cat", text: t.category || "常用" })
+        el("span", { class: "growth-card-title", text: name }),
+        el("span", { class: "growth-card-cat", text: category })
       ]);
 
       // Description
-      var desc = el("div", { class: "growth-card-desc", text: t.desc || "官方成长加速任务" });
+      var descEl = el("div", { class: "growth-card-desc", text: desc });
 
       // Progress bar
-      var progStr = t.progress || "0/1";
+      var progStr = t.progress;
+      if (!progStr) {
+        var cur = (t.current !== undefined) ? t.current : 0;
+        var tgt = (t.target !== undefined && t.target > 0) ? t.target : 1;
+        progStr = cur + "/" + tgt;
+      }
       var pParts = progStr.split("/");
       var curP = parseInt(pParts[0], 10) || 0;
       var maxP = parseInt(pParts[1], 10) || 1;
       var pct = Math.min(100, Math.max(0, Math.round((curP / maxP) * 100)));
+      if (isClaimed) pct = 100;
 
       var progBox = el("div", { class: "growth-progress-box" }, [
         el("div", { class: "growth-progress-bar" }, [
           el("div", { class: "growth-progress-fill", style: "width:" + pct + "%" })
         ]),
         el("div", { class: "growth-progress-text" }, [
-          el("span", { text: "完成度 " + pct + "%" }),
+          el("span", { text: isClaimed ? "已达成 100%" : ("完成度 " + pct + "%") }),
           el("span", { text: progStr })
         ])
       ]);
@@ -4703,29 +4729,40 @@
       // Footer
       var pillClass = "growth-pill pending";
       var pillText = "待完成";
-      if (t.claimed) {
+      if (isClaimed) {
         pillClass = "growth-pill claimed";
         pillText = "✓ 已入账";
-      } else if (t.claimable) {
+      } else if (isClaimable) {
         pillClass = "growth-pill claimable";
         pillText = "🎁 待领奖";
       }
 
       var pill = el("span", { class: pillClass, text: pillText });
 
+      // Reward Text
+      var rewardStr = t.reward_text || t.rewardText;
+      if (!rewardStr) {
+        var cr = (t.reward_credit !== undefined) ? t.reward_credit : ((t.credit !== undefined) ? t.credit : 0);
+        var en = (t.reward_energy !== undefined) ? t.reward_energy : ((t.energy !== undefined) ? t.energy : 0);
+        if (cr > 0 && en > 0) rewardStr = "+" + cr + " 积分 · +" + en + " 能量";
+        else if (cr > 0) rewardStr = "+" + cr + " 积分";
+        else if (en > 0) rewardStr = "+" + en + " 能量";
+        else rewardStr = "福利奖励";
+      }
+
       // Action button
       var btnAction;
-      if (t.claimed) {
+      if (isClaimed) {
         btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px;opacity:0.65", disabled: true, text: "已完成" });
-      } else if (t.claimable) {
+      } else if (isClaimable) {
         btnAction = el("button", { class: "primary", style: "font-size:11px;padding:4px 10px;background:#ebb23a;color:#111;font-weight:600;border:none", text: "领取奖励" });
         btnAction.addEventListener("click", function () {
-          runDomesticTask(t.code, btnAction);
+          runDomesticTask(code, btnAction);
         });
-      } else if (t.canAutomate) {
+      } else if (canAuto) {
         btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px", text: "⚡ 点亮领奖" });
         btnAction.addEventListener("click", function () {
-          runDomesticTask(t.code, btnAction);
+          runDomesticTask(code, btnAction);
         });
       } else {
         btnAction = el("button", { class: "ghost", style: "font-size:11px;padding:4px 8px", text: "微信支持" });
@@ -4737,13 +4774,13 @@
       var footer = el("div", { class: "growth-card-footer" }, [
         el("div", { style: "display:flex;align-items:center;gap:6px" }, [
           pill,
-          el("span", { class: "growth-reward-badge", text: t.rewardText || "+积分" })
+          el("span", { class: "growth-reward-badge", text: rewardStr })
         ]),
         btnAction
       ]);
 
       card.appendChild(header);
-      card.appendChild(desc);
+      card.appendChild(descEl);
       card.appendChild(progBox);
       card.appendChild(footer);
       list.appendChild(card);
@@ -4760,15 +4797,17 @@
     api("/api/growth/domestic/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ taskCode: taskCode })
+      body: JSON.stringify({ taskCode: taskCode, task_code: taskCode, code: taskCode })
     }).then(function (res) {
-      if (res.success) {
-        toast("任务「" + (res.taskName || taskCode) + "」" + res.message, "ok");
-        if (res.credit > 0 || res.energy > 0) {
+      var name = res.task_name || res.taskName || res.title || res.name || taskCode;
+      var msg = res.message || "执行完成";
+      if (res.success || res.claimed || res.skipped) {
+        toast("任务「" + name + "」" + msg, "ok");
+        if (res.credit > 0 || res.energy > 0 || res.credit_granted > 0) {
           if (usageData) loadUsage(true, true);
         }
       } else {
-        toast("执行提示：" + res.message, "warn");
+        toast("执行提示：" + msg, "warn");
       }
       loadDomesticGrowth(false);
     }).catch(function (e) {
@@ -4806,29 +4845,46 @@
       headers: { "Content-Type": "application/json" },
       body: "{}"
     }).then(function (res) {
-      if (statusLabel) statusLabel.textContent = "一键扫荡完毕！成功执行 " + (res.successCount || 0) + " 项，入账 " + (res.totalCreditEarned || 0) + " 积分！";
+      var succCount = (res.success_count !== undefined) ? res.success_count : ((res.successCount !== undefined) ? res.successCount : (res.tasks_completed || 0));
+      var creditEarned = (res.total_credit_earned !== undefined) ? res.total_credit_earned : ((res.totalCreditEarned !== undefined) ? res.totalCreditEarned : (res.total_credit_granted || 0));
+      var energyEarned = (res.total_energy_earned !== undefined) ? res.total_energy_earned : ((res.totalEnergyEarned !== undefined) ? res.totalEnergyEarned : (res.total_energy_granted || 0));
+
+      if (statusLabel) statusLabel.textContent = "一键扫荡完毕！成功执行 " + succCount + " 项，入账 " + creditEarned + " 积分！";
       if (progressLabel) progressLabel.textContent = "100%";
 
-      if (logBox && res.results) {
-        res.results.forEach(function (r) {
-          var isOk = r.success;
+      var list = res.results || res.details || [];
+      if (logBox && list.length > 0) {
+        list.forEach(function (r) {
+          var isOk = (r.success !== undefined) ? r.success : (r.claimed || r.skipped || (r.credit_granted > 0) || (r.credit > 0));
           var sign = isOk ? "✓ " : "⚠ ";
           var color = isOk ? "var(--ok)" : "var(--warn)";
-          var detail = "[" + r.taskCode + "] " + r.taskName + "：" + r.message;
-          if (r.credit > 0) detail += " (入账 +" + r.credit + " 积分)";
-          if (r.energy > 0) detail += " (入账 +" + r.energy + " 能量)";
+          var tCode = r.task_code || r.taskCode || r.code || "";
+          var tName = r.task_name || r.taskName || r.title || r.name || tCode;
+          var msg = r.message || (r.claimed ? "领取成功" : "已完成");
+          var cr = (r.credit !== undefined) ? r.credit : (r.credit_granted || 0);
+          var en = (r.energy !== undefined) ? r.energy : (r.energy_granted || 0);
+
+          var detail = "[" + tCode + "] " + tName + "：" + msg;
+          if (cr > 0) detail += " (入账 +" + cr + " 积分)";
+          if (en > 0) detail += " (入账 +" + en + " 能量)";
           logBox.appendChild(el("div", { style: "color:" + color + ";margin:2px 0", text: sign + detail }));
         });
 
         var summaryTime = new Date();
         logBox.appendChild(el("div", {
           style: "color:#ebb23a;font-weight:600;margin-top:6px;border-top:1px dashed var(--g4);padding-top:4px",
-          text: "[" + summaryTime.toLocaleTimeString() + "] 扫荡战报：共完成 " + res.successCount + " 项，累积领取 " + res.totalCreditEarned + " 积分、" + res.totalEnergyEarned + " 能量。"
+          text: "[" + summaryTime.toLocaleTimeString() + "] 扫荡战报：共完成 " + succCount + " 项，累积领取 " + creditEarned + " 积分、" + energyEarned + " 能量。"
         }));
+        if (res.compensation_notice) {
+          logBox.appendChild(el("div", {
+            style: "color:#38bdf8;font-weight:600;margin-top:3px",
+            text: "🎁 " + res.compensation_notice
+          }));
+        }
         logBox.scrollTop = logBox.scrollHeight;
       }
 
-      toast("扫荡完成！本次已入账 " + (res.totalCreditEarned || 0) + " 积分、" + (res.totalEnergyEarned || 0) + " 能量", "ok");
+      toast("扫荡完成！本次已入账 " + creditEarned + " 积分、" + energyEarned + " 能量", "ok");
       if (usageData) loadUsage(true, true);
       loadDomesticGrowth(false);
     }).catch(function (e) {

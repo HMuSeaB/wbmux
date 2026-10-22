@@ -99,12 +99,15 @@ func (s *Server) handleGrowthRedeem(w http.ResponseWriter, r *http.Request) {
 
 // DomesticTasksResponse 国内端成长计划全量任务与收益响应。
 type DomesticTasksResponse struct {
-	Tasks           []growth.GrowthTask        `json:"tasks"`
-	PotentialCredit int64                      `json:"potential_credit"`
-	PotentialEnergy int64                      `json:"potential_energy"`
-	ClaimableCredit int64                      `json:"claimable_credit"`
-	ClaimableEnergy int64                      `json:"claimable_energy"`
-	Compensation    *growth.CompensationStatus `json:"compensation,omitempty"`
+	Tasks              []growth.GrowthTask        `json:"tasks"`
+	Items              []growth.GrowthTask        `json:"items"`
+	PotentialCredit    int64                      `json:"potential_credit"`
+	TotalCreditPending int64                      `json:"totalCreditPending"`
+	PotentialEnergy    int64                      `json:"potential_energy"`
+	TotalEnergyPending int64                      `json:"totalEnergyPending"`
+	ClaimableCredit    int64                      `json:"claimable_credit"`
+	ClaimableEnergy    int64                      `json:"claimable_energy"`
+	Compensation       *growth.CompensationStatus `json:"compensation,omitempty"`
 }
 
 // handleGrowthDomesticTasks 查询国内侧全量成长计划任务状态与官方故障补偿。
@@ -159,12 +162,40 @@ func (s *Server) handleGrowthDomesticTasks(w http.ResponseWriter, r *http.Reques
 	comp, _ := client.FetchCompensationStatus(cred)
 
 	writeJSON(w, DomesticTasksResponse{
-		Tasks:           tasks,
-		PotentialCredit: potentialCredit,
-		PotentialEnergy: potentialEnergy,
-		ClaimableCredit: claimableCredit,
-		ClaimableEnergy: claimableEnergy,
-		Compensation:    comp,
+		Tasks:              tasks,
+		Items:              tasks,
+		PotentialCredit:    potentialCredit,
+		TotalCreditPending: potentialCredit,
+		PotentialEnergy:    potentialEnergy,
+		TotalEnergyPending: potentialEnergy,
+		ClaimableCredit:    claimableCredit,
+		ClaimableEnergy:    claimableEnergy,
+		Compensation:       comp,
+	})
+}
+
+// handleGrowthDomesticCompensation 查询官方故障补偿状态。
+func (s *Server) handleGrowthDomesticCompensation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeJSON(w, map[string]any{"hasPending": false})
+		return
+	}
+	client := growth.NewClient(s.domesticEndpoint())
+	comp, err := client.FetchCompensationStatus(cred)
+	if err != nil || comp == nil || !comp.Pending() {
+		writeJSON(w, map[string]any{"hasPending": false})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"hasPending": true,
+		"rewards":    fmt.Sprintf("+%d 积分", comp.CreditNum),
+		"desc":       fmt.Sprintf("官方服务异常补偿礼包（有效截止至：%s）", comp.EndTime),
 	})
 }
 
@@ -176,10 +207,23 @@ func (s *Server) handleGrowthDomesticRun(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		TaskCode string `json:"task_code"`
+		TaskCode      string `json:"task_code"`
+		Code          string `json:"code"`
+		TaskCodeCamel string `json:"taskCode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TaskCode == "" {
-		writeErr(w, http.StatusBadRequest, "请求缺少 task_code 参数")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求解析失败")
+		return
+	}
+	taskCode := req.TaskCode
+	if taskCode == "" {
+		taskCode = req.Code
+	}
+	if taskCode == "" {
+		taskCode = req.TaskCodeCamel
+	}
+	if taskCode == "" {
+		writeErr(w, http.StatusBadRequest, "请求缺少 taskCode 参数")
 		return
 	}
 

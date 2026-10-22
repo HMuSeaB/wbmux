@@ -310,6 +310,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/growth/domestic/tasks", s.guard(s.handleGrowthDomesticTasks))
 	mux.HandleFunc("/api/growth/domestic/run", s.guard(s.handleGrowthDomesticRun))
 	mux.HandleFunc("/api/growth/domestic/sweep", s.guard(s.handleGrowthDomesticSweep))
+	mux.HandleFunc("/api/growth/domestic/compensation", s.guard(s.handleGrowthDomesticCompensation))
 	mux.HandleFunc("/api/growth/domestic/compensation/claim", s.guard(s.handleGrowthDomesticCompensationClaim))
 
 	s.http = &http.Server{
