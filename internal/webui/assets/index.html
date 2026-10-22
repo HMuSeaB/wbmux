@@ -669,9 +669,9 @@
   .log-tag.warn { background: rgba(234, 88, 12, 0.15); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.35); }
   .log-tag.bad { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
   /* ---- 提供方（BYOK）表单 ---- */
-  /* 全局输入框统一暗色现代高质感样式（杜绝原生惨白背景） */
-  input[type="text"], input[type="password"], input[type="search"], input[type="number"], textarea,
-  .form input[type="text"], .form input[type="password"], .form textarea {
+  /* 全局输入框统一暗色现代高质感样式（杜绝原生惨白背景遗漏，涵盖所有文本型 input 与无 type 默认 input） */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="image"]),
+  textarea {
     background: rgba(0, 0, 0, 0.32) !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
     border-radius: var(--r-sm);
@@ -682,8 +682,8 @@
     box-sizing: border-box;
     transition: all 0.18s ease;
   }
-  input[type="text"]:focus, input[type="password"]:focus, input[type="search"]:focus, input[type="number"]:focus, textarea:focus,
-  .form input:focus, .form textarea:focus {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="image"]):focus,
+  textarea:focus {
     outline: none !important;
     border-color: var(--brand) !important;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
@@ -2529,13 +2529,17 @@
       把整个工作区搬到另一个目录：文件复制过去、会话记录改指向、<strong>会话正文里
       记着的绝对路径也一并改写</strong>。源目录不会删——确认没问题后你自己删。
     </p>
-    <div class="row" style="margin-top:12px">
-      <label class="hint" style="margin:0">从</label>
-      <input id="ws-from" style="flex:1;min-width:220px" placeholder="当前工作区路径，从上面点一下可自动填入">
-    </div>
-    <div class="row" style="margin-top:8px">
-      <label class="hint" style="margin:0">到</label>
-      <input id="ws-to" style="flex:1;min-width:220px" placeholder="新目录（必须不存在或为空）">
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+      <div class="client-path-group" style="padding:4px 8px 4px 12px">
+        <span style="font-size:12px;font-weight:600;color:var(--brand);flex:none;margin-right:4px">从</span>
+        <svg class="ico-sm" style="color:var(--ink-3);flex:none;opacity:0.75" aria-hidden="true"><use href="#i-folder"/></svg>
+        <input type="text" id="ws-from" placeholder="当前工作区路径（从上方列表中点击可自动填入）" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="client-path-group" style="padding:4px 8px 4px 12px">
+        <span style="font-size:12px;font-weight:600;color:var(--ok);flex:none;margin-right:4px">到</span>
+        <svg class="ico-sm" style="color:var(--ink-3);flex:none;opacity:0.75" aria-hidden="true"><use href="#i-folder"/></svg>
+        <input type="text" id="ws-to" placeholder="新目录路径（目标目录必须不存在或为空）" autocomplete="off" spellcheck="false">
+      </div>
     </div>
     <div class="row" style="margin-top:12px">
       <button id="btn-ws-plan">先看会改什么</button>
