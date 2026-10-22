@@ -301,6 +301,9 @@ func (s *Server) openaiGuard(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) registerOpenAI(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/models", s.openaiGuard(s.handleOpenAIModels))
 	mux.HandleFunc("/v1/chat/completions", s.openaiGuard(s.handleOpenAIChat))
+	// 官方全网联网搜索：Anthropic Messages 兼容形态与原生极简形态
+	mux.HandleFunc("/v1/search/messages", s.searchAuthGuard(s.handleSearchMessages))
+	mux.HandleFunc("/v1/search", s.searchAuthGuard(s.handleSearchNative))
 }
 
 // handleOpenAIModels 返回国际侧实时模型清单（OpenAI 格式）。
