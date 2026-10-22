@@ -151,9 +151,10 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		}, nil
 	}
 
-	// 2. 若未报名则先 accept
+	// 2. 若未报名则先 accept 并短暂等待登记生效
 	if targetTask.AcceptStatus == "not_accepted" || targetTask.AcceptStatus == "" {
 		_ = c.AcceptTasks(cred, []string{taskCode}, isMP)
+		time.Sleep(800 * time.Millisecond)
 	}
 
 	// 3. 执行特定动作
@@ -162,10 +163,10 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		return nil, fmt.Errorf("执行任务动作失败: %w", err)
 	}
 
-	// 4. 有界轮询异步计分（最多 3 轮，每次退避 1.5s）
+	// 4. 有界轮询异步计分（最多 5 轮，每次 2.5s，总计 12.5s 覆盖官方服务端异步落账延迟）
 	var finalTask *GrowthTask
-	for attempt := 0; attempt < 3; attempt++ {
-		time.Sleep(1500 * time.Millisecond)
+	for attempt := 0; attempt < 5; attempt++ {
+		time.Sleep(2500 * time.Millisecond)
 		tasksNow, qerr := c.ListTasks(cred, isMP)
 		if qerr == nil {
 			for i := range tasksNow {
@@ -175,7 +176,7 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 				}
 			}
 		}
-		if finalTask != nil && (finalTask.Claimable || finalTask.Claimed || finalTask.Current >= targetTask.Target) {
+		if finalTask != nil && (finalTask.Claimable || finalTask.Claimed || finalTask.Current >= targetTask.Target || finalTask.AcceptStatus == "completed") {
 			break
 		}
 	}
@@ -201,7 +202,7 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		Success:        true,
 	}
 
-	if finalTask != nil && (finalTask.Claimable || finalTask.Current >= targetTask.Target) && !finalTask.Claimed {
+	if finalTask != nil && (finalTask.Claimable || finalTask.Current >= targetTask.Target || finalTask.AcceptStatus == "completed") && !finalTask.Claimed {
 		credit, energy, cerr := c.ClaimReward(cred, taskCode, isMP)
 		if cerr == nil && (credit > 0 || energy > 0) {
 			res.Claimed = true
@@ -301,7 +302,7 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		}
 		return "已上报资料库介绍阅读事件", nil
 
-	case "template_5":
+	case "template_5", "template_use":
 		templates := [][2]string{{"1", "深度研究"}, {"2", "周报生成"}, {"3", "竞品分析"}, {"4", "活动策划"}, {"5", "代码评审"}}
 		for i, tp := range templates {
 			cID := fmt.Sprintf("%s-%d", convID, i)
@@ -319,14 +320,14 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		}
 		return "已上报灵感案例做同款 Prompt 发送事件", nil
 
-	case "create_canvas":
+	case "create_canvas", "canvas_node_create":
 		events := BuildDesignCanvasSequence(convID, reqID)
 		if err := c.ReportDesktopEvent(cred, events...); err != nil {
 			return "", err
 		}
 		return "已上报设计创意画布创建与打开事件（+300c +5e）", nil
 
-	case "Hp_Appearance":
+	case "Hp_Appearance", "switch_theme":
 		_ = c.SetAppearanceTheme(cred, "theme-tkmw7j")
 		time.Sleep(300 * time.Millisecond)
 		ev := map[string]any{
@@ -337,6 +338,11 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		}
 		_ = c.ReportDesktopEvent(cred, ev)
 		return "已设置激战金秋主题并上报皮肤生效事件", nil
+
+	case "desktop_login":
+		events := BuildDesktopLoginSequence()
+		_ = c.ReportDesktopEvent(cred, events...)
+		return "已上报桌面客户端登录成功事件", nil
 
 	case "skill_1":
 		_, probeReqID, _ := c.ShortChatProbe(cred, "fast-model", "")
@@ -380,30 +386,67 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 
 	case "expert_5", "Expert_team_use_3":
 		rounds := 5
+		expertType := "agent"
 		if code == "Expert_team_use_3" {
 			rounds = 3
+			expertType = "team"
 		}
+		// 动态拉取市场真实在架专家列表，防止自造假 ID 被服务端静默丢弃
+		realExperts, _ := c.MarketExpertList(cred, expertType)
+		var fallbackIDs = []string{"ex_2cvvUZQhDyeJ", "ex_1789234850", "ex_2097350077599879168"}
+
 		for i := 0; i < rounds; i++ {
 			cID := fmt.Sprintf("%s-%d", convID, i)
-			_, pReqID, _ := c.ShortChatProbe(cred, "fast-model", "")
+			eID := fallbackIDs[i%len(fallbackIDs)]
+			eName := "腾讯效能专家"
+			if len(realExperts) > i {
+				eID = realExperts[i].ExpertID
+				if realExperts[i].DisplayNameZH != "" {
+					eName = realExperts[i].DisplayNameZH
+				}
+			}
+
+			_, pReqID, _ := c.ShortChatProbe(cred, "fast-model", eID)
 			if pReqID == "" {
 				pReqID = fmt.Sprintf("%s-%d", reqID, i)
 			}
 			events := BuildDesktopChatSequence(cID, pReqID, "msg-"+pReqID, "fast-model", "fast-model")
 			events = append(events, map[string]any{
 				"eventCode":      "expert_actual_use",
-				"id":             "ex_official_agent",
-				"name":           "官方效能专家",
-				"mode":           "craft",
+				"id":             eID,
+				"name":           eName,
+				"mode":           "LOCAL",
 				"conversationId": cID,
 				"requestId":      pReqID,
 			})
 			_ = c.ReportDesktopEvent(cred, events...)
 			time.Sleep(300 * time.Millisecond)
 		}
-		return fmt.Sprintf("已完成 %d 轮专家/专家团真实召唤与使用事件链", rounds), nil
+		return fmt.Sprintf("已完成 %d 轮真实在架专家/专家团召唤与使用事件链", rounds), nil
 
-	case "school_season", "Sequential_Tasks_1", "Sequential_Tasks_2", "Sequential_Tasks_3":
+	case "Sequential_Tasks_2":
+		// 小程序选中专家并完成有效对话：mp 指纹 expert_actual_use + 真实在架专家 ID
+		experts, _ := c.MarketExpertList(cred, "")
+		expertID := "ex_2cvvUZQhDyeJ"
+		expertName := "腾讯轻量云专家"
+		if len(experts) > 0 {
+			expertID = experts[0].ExpertID
+			if experts[0].DisplayNameZH != "" {
+				expertName = experts[0].DisplayNameZH
+			}
+		}
+		ev := map[string]any{
+			"eventCode":  "expert_actual_use",
+			"id":         expertID,
+			"name":       expertName,
+			"type":       "send_message",
+			"extVersion": "2.2.8",
+			"source":     "mini_program",
+		}
+		_ = c.ReportMPEvent(cred, ev)
+		return "已按小程序口径上报专家对话事件（+200c +5e）", nil
+
+	case "school_season", "Sequential_Tasks_1", "Sequential_Tasks_3":
 		ev := map[string]any{
 			"eventCode":                         "chat_request_send",
 			"source":                            "mini_program",

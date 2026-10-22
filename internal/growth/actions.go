@@ -390,3 +390,59 @@ func (c *Client) CompleteFirstBuddy(cred credential.Credential) error {
 	defer resp.Body.Close()
 	return nil
 }
+
+// MarketExpert 描述官方专家市场在架的真实专家实体。
+type MarketExpert struct {
+	ExpertID      string `json:"expert_id"`
+	ExpertType    string `json:"expert_type"`
+	DisplayNameZH string `json:"display_name_zh"`
+	ProfessionZH  string `json:"profession_zh"`
+	Version       string `json:"version"`
+}
+
+// MarketExpertList 从官方在架市场拉取真实专家列表，防止自造虚假 ID 被服务端静默丢弃。
+func (c *Client) MarketExpertList(cred credential.Credential, expertType string) ([]MarketExpert, error) {
+	body := map[string]any{"page": 1, "page_size": 20, "sort_by": "reco_rank", "sort_order": "desc"}
+	if expertType != "" {
+		body["expert_type"] = expertType
+	}
+	raw, _ := json.Marshal(body)
+	url := c.endpoint + "/portal/operation-platform/market/expert/list"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	ApplyDesktopHeaders(req, cred.Token, cred.UID, c.endpoint)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Code int `json:"code"`
+		Data struct {
+			List []MarketExpert `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Data.List, nil
+}
+
+// BuildDesktopLoginSequence 构造桌面端登录启动事件序列。
+func BuildDesktopLoginSequence() []map[string]any {
+	return []map[string]any{
+		{
+			"eventCode": "desktop_login_success",
+			"loginType": "account",
+			"source":    "desktop_startup",
+		},
+		{
+			"eventCode": "desktop_startup",
+			"isAuto":    false,
+			"launchWay": "shortcut",
+		},
+	}
+}

@@ -4930,13 +4930,32 @@
       var msg = res.message || "执行完成";
       if (res.success || res.claimed || res.skipped) {
         toast("任务「" + name + "」" + msg, "ok");
+
+        // 乐观状态同步：如果后端确认已领奖或达成，就地更新内存状态，消除服务端微延迟造成的 0/1 闪烁
+        if (growthLastTasks) {
+          var items = growthLastTasks.items || growthLastTasks.tasks || [];
+          items.forEach(function (it) {
+            var itCode = it.code || it.task_code;
+            if (itCode === taskCode) {
+              if (res.claimed || res.progress_after === "claimed") {
+                it.claimed = true;
+                it.accept_status = "claimed";
+                it.claimable = false;
+              } else if (res.progress_after) {
+                it.progress = res.progress_after;
+              }
+            }
+          });
+          renderDomesticTasks(growthLastTasks);
+        }
+
         if (res.credit > 0 || res.energy > 0 || res.credit_granted > 0) {
           if (usageData) loadUsage(true, true);
         }
       } else {
         toast("执行提示：" + msg, "warn");
       }
-      loadDomesticGrowth(false);
+      loadDomesticGrowth(true);
     }).catch(function (e) {
       toast("执行失败：" + e.message, "bad");
       loadDomesticGrowth(false);
