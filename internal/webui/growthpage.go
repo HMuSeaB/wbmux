@@ -406,3 +406,153 @@ func (s *Server) handleGrowthDomesticCompensationClaim(w http.ResponseWriter, r 
 		"granted": granted,
 	})
 }
+
+// handleGrowthDomesticBuddy 获取用户当前佩戴的 Buddy 及旅行状态。
+func (s *Server) handleGrowthDomesticBuddy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeErr(w, http.StatusNotFound, "未检测到国内侧有效凭证")
+		return
+	}
+
+	client := growth.NewClient(s.domesticEndpoint())
+	buddy, berr := client.FetchBuddyInfo(cred)
+	if berr != nil {
+		// 容错处理
+		buddy = nil
+	}
+	travel, _ := client.FetchTravelStatus(cred)
+
+	writeJSON(w, map[string]any{
+		"ok":     true,
+		"buddy":  buddy,
+		"travel": travel,
+	})
+}
+
+// handleGrowthDomesticBuddyOpen 开启指定数量的能量盲盒。
+func (s *Server) handleGrowthDomesticBuddyOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeErr(w, http.StatusNotFound, "未检测到国内侧有效凭证")
+		return
+	}
+
+	var req struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Count <= 0 {
+		req.Count = 1
+	}
+
+	client := growth.NewClient(s.domesticEndpoint())
+	res, err := client.OpenBlindBox(cred, req.Count)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "开启盲盒失败: "+err.Error())
+		return
+	}
+
+	var names []string
+	for _, b := range res.Results {
+		names = append(names, fmt.Sprintf("%s(%s)", b.Name, b.Rarity))
+	}
+
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Text:  fmt.Sprintf("成功开启 %d 个专属 Buddy 盲盒！开出猫咪：%s", res.Count, strings.Join(names, "、")),
+	})
+
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"count":   res.Count,
+		"results": res.Results,
+		"message": fmt.Sprintf("成功开启 %d 只盲盒！开出：%s", res.Count, strings.Join(names, "、")),
+	})
+}
+
+// handleGrowthDomesticBuddyTravel 进行猫猫旅行操作（depart 出发 / claim 领奖 / auto 自动打理）。
+func (s *Server) handleGrowthDomesticBuddyTravel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	p := s.probe()
+	cred, err := s.domesticCred(p)
+	if err != nil || cred.Token == "" {
+		writeErr(w, http.StatusNotFound, "未检测到国内侧有效凭证")
+		return
+	}
+
+	var req struct {
+		Action     string `json:"action"` // auto, depart, claim
+		LocationID int    `json:"location_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Action == "" {
+		req.Action = "auto"
+	}
+
+	client := growth.NewClient(s.domesticEndpoint())
+
+	var message string
+	switch req.Action {
+	case "depart":
+		st, err := client.DepartTravel(cred, req.LocationID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "派遣旅行失败: "+err.Error())
+			return
+		}
+		locName := "咖啡馆"
+		if st.Location != nil {
+			locName = st.Location.Name
+		}
+		message = fmt.Sprintf("猫猫已启程前往「%s」旅行！", locName)
+
+	case "claim":
+		credit, err := client.ClaimTravelReward(cred)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "领取旅行奖励失败: "+err.Error())
+			return
+		}
+		message = fmt.Sprintf("已成功领取旅行明信片，获得 +%d 积分奖励！", credit)
+
+	case "auto":
+		msg, err := client.AutoTravelSweep(cred)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "自动打理失败: "+err.Error())
+			return
+		}
+		message = msg
+
+	default:
+		writeErr(w, http.StatusBadRequest, "不支持的 action: "+req.Action)
+		return
+	}
+
+	newStatus, _ := client.FetchTravelStatus(cred)
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Text:  "Buddy 旅行打理：" + message,
+	})
+
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"message": message,
+		"travel":  newStatus,
+	})
+}
+

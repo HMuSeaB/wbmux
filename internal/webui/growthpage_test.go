@@ -70,6 +70,62 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 				"data": map[string]any{"credit_granted": 500},
 			})
 
+		case "/activity/growth/buddy/info":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"buddy": map[string]any{
+						"instance_id": 1,
+						"name":        "暴富喵",
+						"rarity":      "UR",
+					},
+				},
+			})
+
+		case "/activity/growth/buddy/open":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"count": 1,
+					"results": []map[string]any{
+						{
+							"instance": map[string]any{"id": 101, "template_id": 18},
+							"template": map[string]any{"id": 18, "name": "摸鱼喵", "rarity": "R"},
+						},
+					},
+				},
+			})
+
+		case "/activity/growth/buddy/travel/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"state":    "traveling",
+					"buddy_id": 1,
+					"location": map[string]any{"id": 1, "name": "咖啡馆"},
+				},
+			})
+
+		case "/activity/growth/buddy/travel/depart":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"state":    "traveling",
+					"location": map[string]any{"id": 1, "name": "咖啡馆"},
+				},
+			})
+
+		case "/activity/growth/buddy/travel/claim":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{"reward_credit": 10},
+			})
+
 		default:
 			http.NotFound(w, r)
 		}
@@ -158,5 +214,29 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 	var sweepResp growth.SweepResult
 	if err := json.Unmarshal(claimAllRec.Body.Bytes(), &sweepResp); err != nil {
 		t.Fatalf("unexpected claim-all response: %+v, err: %v", sweepResp, err)
+	}
+
+	// 7. GET /api/growth/domestic/buddy
+	buddyReq := httptest.NewRequest(http.MethodGet, "/api/growth/domestic/buddy", nil)
+	buddyRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticBuddy(buddyRec, buddyReq)
+	if buddyRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for buddy status, got %d: %s", buddyRec.Code, buddyRec.Body.String())
+	}
+
+	// 8. POST /api/growth/domestic/buddy/open
+	openReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/buddy/open", strings.NewReader(`{"count":1}`))
+	openRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticBuddyOpen(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for buddy open, got %d: %s", openRec.Code, openRec.Body.String())
+	}
+
+	// 9. POST /api/growth/domestic/buddy/travel
+	travelReq := httptest.NewRequest(http.MethodPost, "/api/growth/domestic/buddy/travel", strings.NewReader(`{"action":"auto"}`))
+	travelRec := httptest.NewRecorder()
+	srv.handleGrowthDomesticBuddyTravel(travelRec, travelReq)
+	if travelRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for buddy travel, got %d: %s", travelRec.Code, travelRec.Body.String())
 	}
 }

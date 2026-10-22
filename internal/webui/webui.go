@@ -315,6 +315,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/growth/domestic/sweep", s.guard(s.handleGrowthDomesticSweep))
 	mux.HandleFunc("/api/growth/domestic/compensation", s.guard(s.handleGrowthDomesticCompensation))
 	mux.HandleFunc("/api/growth/domestic/compensation/claim", s.guard(s.handleGrowthDomesticCompensationClaim))
+	mux.HandleFunc("/api/growth/domestic/buddy", s.guard(s.handleGrowthDomesticBuddy))
+	mux.HandleFunc("/api/growth/domestic/buddy/open", s.guard(s.handleGrowthDomesticBuddyOpen))
+	mux.HandleFunc("/api/growth/domestic/buddy/travel", s.guard(s.handleGrowthDomesticBuddyTravel))
 	mux.HandleFunc("/api/search/test", s.guard(s.handleSearchDebug))
 
 	s.http = &http.Server{

@@ -2523,6 +2523,58 @@
             </div>
             <div id="growth-sweep-log"></div>
           </div>
+
+          <!-- 专属 Buddy 宠物与挂机旅行站 -->
+          <div id="growth-buddy-panel" class="growth-card" style="margin-top:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div id="buddy-avatar-wrap" style="width:56px;height:56px;border-radius:14px;background:rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">
+                <img id="buddy-avatar" src="" style="width:100%;height:100%;object-fit:cover;display:none" alt="Buddy">
+                <span id="buddy-avatar-fallback" style="font-size:26px">🐱</span>
+              </div>
+              <div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="buddy-name" style="font-size:14.5px;font-weight:700;color:var(--ink)">加载中…</span>
+                  <span id="buddy-rarity" class="growth-task-tag" style="background:rgba(235,178,58,0.15);color:#ebb23a;border:1px solid rgba(235,178,58,0.3)">--</span>
+                </div>
+                <div id="buddy-desc" style="font-size:11.5px;color:var(--ink-2);margin-top:3px;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  清醒务实，搞钱目标感极强
+                </div>
+              </div>
+            </div>
+
+            <div style="height:36px;width:1px;background:rgba(255,255,255,0.08)" class="hide-sm"></div>
+
+            <!-- 盲盒操作区 -->
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:11.5px;color:var(--ink-2)">能量储备：</span>
+                <span id="buddy-energy-val" style="font-size:14px;font-weight:700;color:#22c55e">-- 能量</span>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button type="button" id="btn-buddy-open-1" class="ghost" style="padding:4px 10px;font-size:11.5px;display:inline-flex;align-items:center;gap:4px">
+                  🎁 开 1 次盲盒 (10能量)
+                </button>
+                <button type="button" id="btn-buddy-open-all" class="ghost" style="padding:4px 10px;font-size:11.5px;color:#ebb23a;border-color:rgba(235,178,58,0.4)">
+                  ⚡ 一键开尽全部盲盒
+                </button>
+              </div>
+            </div>
+
+            <div style="height:36px;width:1px;background:rgba(255,255,255,0.08)" class="hide-sm"></div>
+
+            <!-- 猫猫旅行打理区 -->
+            <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:11.5px;color:var(--ink-2)">旅行挂机（被动产出 5~10 积分）：</span>
+                <span id="buddy-travel-status" class="growth-task-tag" style="background:rgba(59,130,246,0.15);color:#60a5fa">查询中…</span>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button type="button" id="btn-buddy-travel-action" class="primary" style="padding:4px 12px;font-size:11.5px;font-weight:600">
+                  ✈️ 自动打理旅行
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 17项任务矩阵列表 -->
@@ -4804,10 +4856,12 @@
 
     Promise.all([
       api("/api/growth/domestic/tasks"),
-      api("/api/growth/domestic/compensation").catch(function () { return { hasPending: false }; })
+      api("/api/growth/domestic/compensation").catch(function () { return { hasPending: false }; }),
+      api("/api/growth/domestic/buddy").catch(function () { return null; })
     ]).then(function (results) {
       var taskData = results[0];
       var compData = results[1];
+      var buddyData = results[2];
       growthLastTasks = taskData;
 
       // 更新官方补偿横幅
@@ -4841,6 +4895,7 @@
         lastSync.textContent = "同步于 " + d.toLocaleTimeString();
       }
       updateGrowthSidebarBadge(taskData);
+      if (buddyData) renderBuddyPanel(buddyData, taskData);
 
       // 渲染任务矩阵
       renderDomesticTasks(taskData);
@@ -5283,6 +5338,95 @@
       loadDomesticGrowth(false);
     }).catch(function (e) {
       toast("领取补偿失败：" + e.message, "bad");
+    }).then(function () {
+      growthBusy(false);
+    });
+  }
+
+  var growthCurrentBuddyData = null;
+  function renderBuddyPanel(bData, tData) {
+    growthCurrentBuddyData = bData;
+    var b = bData ? bData.buddy : null;
+    var tr = bData ? bData.travel : null;
+
+    var nameEl = document.getElementById("buddy-name");
+    var rarityEl = document.getElementById("buddy-rarity");
+    var descEl = document.getElementById("buddy-desc");
+    var avatarEl = document.getElementById("buddy-avatar");
+    var fallbackEl = document.getElementById("buddy-avatar-fallback");
+    var energyEl = document.getElementById("buddy-energy-val");
+    var travelEl = document.getElementById("buddy-travel-status");
+
+    if (b) {
+      if (nameEl) nameEl.textContent = b.name || "专属 Buddy";
+      if (rarityEl) {
+        rarityEl.textContent = b.rarity || "UR";
+        rarityEl.style.display = "inline-block";
+      }
+      if (descEl) descEl.textContent = b.soul_desc || "清醒务实，搞钱目标感极强";
+      if (avatarEl && (b.thumbnail_url || b.base_static_url)) {
+        avatarEl.src = b.thumbnail_url || b.base_static_url;
+        avatarEl.style.display = "block";
+        if (fallbackEl) fallbackEl.style.display = "none";
+      }
+    } else {
+      if (nameEl) nameEl.textContent = "尚未领养 Buddy";
+      if (rarityEl) rarityEl.style.display = "none";
+      if (descEl) descEl.textContent = "完成首领猫咪任务即可领养专属 Buddy";
+    }
+
+    var pendingEnergy = (tData && tData.totalEnergyPending !== undefined) ? tData.totalEnergyPending : ((tData && tData.potential_energy) || 0);
+    if (energyEl) energyEl.textContent = pendingEnergy + " 能量";
+
+    if (travelEl) {
+      if (!tr || tr.state === "idle") {
+        travelEl.textContent = "🐾 猫咪闲置中 (可派遣出发)";
+        travelEl.style.color = "#38bdf8";
+        travelEl.style.background = "rgba(56,189,248,0.15)";
+      } else if (tr.state === "traveling") {
+        var loc = (tr.location && tr.location.name) || "咖啡馆";
+        var remainMin = Math.max(0, Math.round(((tr.arrive_at || 0) - (tr.server_now || Math.floor(Date.now() / 1000))) / 60));
+        travelEl.textContent = "✈️ 「" + loc + "」旅行中 (预计还剩 " + remainMin + " 分钟)";
+        travelEl.style.color = "#f59e0b";
+        travelEl.style.background = "rgba(245,158,11,0.15)";
+      } else if (tr.state === "arrived") {
+        travelEl.textContent = "🎁 已归来！信件与积分待领取";
+        travelEl.style.color = "#22c55e";
+        travelEl.style.background = "rgba(34,197,94,0.15)";
+      }
+    }
+  }
+
+  function openBuddyBlindBox(count) {
+    if (growthBusyFlag) return;
+    growthBusy(true);
+    toast("正在开启 " + count + " 个 Buddy 盲盒…", "info");
+    api("/api/growth/domestic/buddy/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: count })
+    }).then(function (res) {
+      toast(res.message || "盲盒开启成功！", "ok");
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      toast("开启盲盒失败：" + e.message, "bad");
+    }).then(function () {
+      growthBusy(false);
+    });
+  }
+
+  function travelBuddyAction(action) {
+    if (growthBusyFlag) return;
+    growthBusy(true);
+    api("/api/growth/domestic/buddy/travel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: action || "auto", location_id: 1 })
+    }).then(function (res) {
+      toast(res.message || "旅行打理完成！", "ok");
+      loadDomesticGrowth(false);
+    }).catch(function (e) {
+      toast("旅行打理异常：" + e.message, "bad");
     }).then(function () {
       growthBusy(false);
     });
@@ -7940,6 +8084,27 @@
   if (btnGrowthCompClaim) btnGrowthCompClaim.addEventListener("click", claimDomesticCompensation);
   var btnGrowthClaimAll = document.getElementById("btn-growth-claim-all");
   if (btnGrowthClaimAll) btnGrowthClaimAll.addEventListener("click", claimAllDomesticTasks);
+
+  var btnBuddyOpen1 = document.getElementById("btn-buddy-open-1");
+  if (btnBuddyOpen1) btnBuddyOpen1.addEventListener("click", function () { openBuddyBlindBox(1); });
+
+  var btnBuddyOpenAll = document.getElementById("btn-buddy-open-all");
+  if (btnBuddyOpenAll) {
+    btnBuddyOpenAll.addEventListener("click", function () {
+      var energyEl = document.getElementById("buddy-energy-val");
+      var text = energyEl ? energyEl.textContent : "0";
+      var num = parseInt(text.replace(/[^0-9]/g, ""), 10) || 0;
+      var count = Math.floor(num / 10);
+      if (count <= 0) {
+        toast("当前能量不足 10 点，无法开启盲盒", "warn");
+        return;
+      }
+      openBuddyBlindBox(count);
+    });
+  }
+
+  var btnBuddyTravel = document.getElementById("btn-buddy-travel-action");
+  if (btnBuddyTravel) btnBuddyTravel.addEventListener("click", function () { travelBuddyAction("auto"); });
 
   function openWorkBuddyWeb() {
     var officialURL = "https://www.workbuddy.cn/profile/growth-center";
