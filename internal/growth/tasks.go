@@ -295,25 +295,44 @@ func (c *Client) AcceptTasks(cred credential.Credential, taskCodes []string, isM
 }
 
 // ClaimReward 领取已达标任务的奖励积分与能量（幂等；重复领返回 0, 0, nil）。
-// 支持官方 Web 域指纹对齐与双端点容灾回退。
+// 支持官方最新 Web 域路径路由 (/activity/growth/tasks/<task_code>/claim) 与多口径容灾回退。
 func (c *Client) ClaimReward(cred credential.Credential, taskCode string, isMP bool) (int64, int64, error) {
 	if cred.Token == "" {
 		return 0, 0, fmt.Errorf("credential token is empty")
+	}
+
+	isLocal := strings.Contains(c.endpoint, "127.0.0.1") || strings.Contains(c.endpoint, "localhost")
+
+	var urlCandidates []string
+	if isMP {
+		urlCandidates = []string{
+			c.endpoint + "/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/reward/claim",
+		}
+	} else if isLocal {
+		urlCandidates = []string{
+			c.endpoint + "/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/reward/claim",
+		}
+	} else {
+		urlCandidates = []string{
+			"https://www.workbuddy.cn/activity/growth/tasks/" + taskCode + "/claim",
+			"https://www.workbuddy.cn/v2/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/" + taskCode + "/claim",
+			c.endpoint + "/v2/activity/growth/tasks/reward/claim",
+		}
 	}
 
 	payload, _ := json.Marshal(map[string]string{
 		"task_code": taskCode,
 	})
 
-	endpoints := []string{c.endpoint}
-	if !strings.Contains(c.endpoint, "workbuddy.cn") {
-		endpoints = append(endpoints, "https://www.workbuddy.cn")
-	}
-
 	var lastErr error
-	for _, ep := range endpoints {
-		url := ep + "/v2/activity/growth/tasks/reward/claim"
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	for _, targetURL := range urlCandidates {
+		req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(payload))
 		if err != nil {
 			lastErr = err
 			continue
@@ -339,14 +358,20 @@ func (c *Client) ClaimReward(cred credential.Credential, taskCode string, isMP b
 			continue
 		}
 
+		if resp.StatusCode == http.StatusNotFound {
+			lastErr = fmt.Errorf("endpoint 404: %s", targetURL)
+			continue
+		}
+
 		var resDoc struct {
 			Code int    `json:"code"`
 			Msg  string `json:"msg"`
 			Data struct {
-				RewardCredit int64 `json:"reward_credit"`
-				RewardEnergy int64 `json:"reward_energy"`
-				Credit       int64 `json:"credit"`
-				Energy       int64 `json:"energy"`
+				AlreadyClaimed bool  `json:"already_claimed"`
+				RewardCredit   int64 `json:"reward_credit"`
+				RewardEnergy   int64 `json:"reward_energy"`
+				Credit         int64 `json:"credit"`
+				Energy         int64 `json:"energy"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &resDoc); err != nil {
@@ -354,13 +379,17 @@ func (c *Client) ClaimReward(cred credential.Credential, taskCode string, isMP b
 			continue
 		}
 
-		// 重复领取容错：already_claimed 业务返回 0, 0
 		if resDoc.Code != 0 {
 			if strings.Contains(resDoc.Msg, "already") || strings.Contains(resDoc.Msg, "已领取") {
 				return 0, 0, nil
 			}
-			lastErr = fmt.Errorf("claim failed: %s", resDoc.Msg)
+			lastErr = fmt.Errorf("claim failed (%s): %s", targetURL, resDoc.Msg)
 			continue
+		}
+
+		// 官方返回已有 already_claimed 标识
+		if resDoc.Data.AlreadyClaimed {
+			return 0, 0, nil
 		}
 
 		credit := resDoc.Data.RewardCredit
