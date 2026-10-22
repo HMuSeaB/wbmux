@@ -741,6 +741,55 @@ func TestHandleOpenFolder(t *testing.T) {
 	}
 }
 
+func TestHandleOpenURL(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 无 token 拦截 403
+	got := e.do(t, http.MethodPost, "/api/open-url", `{"url":"https://workbuddy.cn"}`, false)
+	if got.code != http.StatusForbidden {
+		t.Fatalf("无 token 应返回 403，得到 %d", got.code)
+	}
+
+	// 2. GET 拦截 405
+	gotGet := e.do(t, http.MethodGet, "/api/open-url", "", true)
+	if gotGet.code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET 应返回 405，得到 %d", gotGet.code)
+	}
+
+	// 3. 空 URL 拦截 400
+	gotEmpty := e.do(t, http.MethodPost, "/api/open-url", `{"url":"   "}`, true)
+	if gotEmpty.code != http.StatusBadRequest {
+		t.Fatalf("空 URL 应返回 400，得到 %d", gotEmpty.code)
+	}
+
+	// 4. 非 http/https 拦截 400
+	gotBadProto := e.do(t, http.MethodPost, "/api/open-url", `{"url":"file:///C:/Windows"}`, true)
+	if gotBadProto.code != http.StatusBadRequest {
+		t.Fatalf("非 http/https 应返回 400，得到 %d", gotBadProto.code)
+	}
+
+	// 5. 合法 URL 正确通过，mock browserOpener
+	oldOpener := browserOpener
+	var openedURL string
+	browserOpener = func(u string) error {
+		openedURL = u
+		return nil
+	}
+	defer func() { browserOpener = oldOpener }()
+
+	var res struct {
+		OK  bool   `json:"ok"`
+		URL string `json:"url"`
+	}
+	e.do(t, http.MethodPost, "/api/open-url", `{"url":"https://www.workbuddy.cn"}`, true).decode(t, &res)
+	if !res.OK || res.URL != "https://www.workbuddy.cn" {
+		t.Fatalf("预期返回 ok:true 与原 URL，实际: %+v", res)
+	}
+	if openedURL != "https://www.workbuddy.cn" {
+		t.Fatalf("预期 mock 捕获到 URL，实际: %q", openedURL)
+	}
+}
+
 func TestHandleUpdateApplyStreamValidation(t *testing.T) {
 	e := newTestEnv(t, Options{})
 

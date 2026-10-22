@@ -214,3 +214,49 @@ func openInExplorer(path string, isDir bool) error {
 	}
 }
 
+// browserOpener 负责调用系统外部浏览器打开 URL，支持单测注入桩函数。
+var browserOpener = openBrowserURL
+
+// handleOpenURL 在系统默认浏览器中安全打开指定 Web URL（仅限 http:// 或 https://）。
+func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	targetURL := strings.TrimSpace(req.URL)
+	if targetURL == "" {
+		writeErr(w, http.StatusBadRequest, "URL 不能为空")
+		return
+	}
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		writeErr(w, http.StatusBadRequest, "仅支持打开 http:// 或 https:// 协议的 Web 网页")
+		return
+	}
+
+	if err := browserOpener(targetURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "打开默认浏览器失败: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "url": targetURL})
+}
+
+// openBrowserURL 调用操作系统默认浏览器打开指定的 URL。
+func openBrowserURL(rawURL string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
+	case "darwin":
+		return exec.Command("open", rawURL).Start()
+	default:
+		return exec.Command("xdg-open", rawURL).Start()
+	}
+}
+
+

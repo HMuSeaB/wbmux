@@ -271,6 +271,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/update/target-info", s.guard(s.handleUpdateTargetInfo))
 	mux.HandleFunc("/api/update/apply-stream", s.guard(s.handleUpdateApplyStream))
 	mux.HandleFunc("/api/open-folder", s.guard(s.handleOpenFolder))
+	mux.HandleFunc("/api/open-url", s.guard(s.handleOpenURL))
 	mux.HandleFunc("/api/update/apply", s.guard(s.handleUpdateApply))
 	mux.HandleFunc("/api/gateway/stats", s.guard(s.handleGatewayStats))
 	mux.HandleFunc("/api/gateway/clear", s.guard(s.handleGatewayClear))
