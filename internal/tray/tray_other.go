@@ -18,11 +18,12 @@ func Available() bool { return false }
 
 // Options 是托盘的行为回调。
 type Options struct {
-	Tooltip string
-	OnOpen  func()
-	OnQuit  func()
-	// Ready 在图标进入通知区域后被调用一次，可为 nil。
-	Ready func()
+	Tooltip      string
+	OnOpen       func()
+	OnQuit       func()
+	Ready        func()
+	OnTravelNow  func()
+	OnDailySweep func()
 }
 
 // Run 在非 Windows 平台直接报错，不应被调用。
@@ -32,3 +33,10 @@ func Run(opts Options) error {
 
 // Notify 在非 Windows 平台是空操作（没有托盘，没有东西可挂气泡）。
 func Notify(title, message string) {}
+
+// NotifyInfo 在非 Windows 平台是空操作。
+func NotifyInfo(title, message string) {}
+
+// UpdateTooltip 在非 Windows 平台是空操作。
+func UpdateTooltip(tip string) {}
+

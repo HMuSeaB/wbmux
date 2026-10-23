@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/autoupdate"
 	"github.com/HMuSeaB/wbmux/internal/browser"
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/console"
@@ -288,10 +289,8 @@ func cmdGUI(args []string) error {
 			// 所以这个 goroutine 要锁住自己的 OS 线程。
 			runtime.LockOSThread()
 			err := tray.Run(tray.Options{
-				// 悬停提示：说清楚"这是什么"和"怎么用"。图标本身是画出来的
-				// （见 internal/tray/icon.go），加上这句才算能认。
-				// headless 模式下多一句，免得用户以为"关了界面就停了"。
-				Tooltip: trayTooltip(srv.Addr(), headless),
+				// 悬停提示：说清楚"这是什么"和当前运行状态。
+				Tooltip: trayTooltip(srv, srv.Addr(), headless),
 				// 打开失败必须说出来：原先这里是 `_ = browser.Open(...)`，
 				// 出错直接丢掉，用户点了菜单什么都没发生，只能理解为
 				// "这功能没用"（2026-09-28 的反馈）。气泡里带上地址，
@@ -304,13 +303,28 @@ func cmdGUI(args []string) error {
 					}
 					guiLog("托盘：已请求打开界面（%s）", srv.Addr())
 				},
+				OnTravelNow: func() {
+					guiLog("托盘：触发立即打理猫咪旅行")
+					srv.TriggerGrowthGuardian()
+					tray.NotifyInfo("🐱 [猫咪旅行守护者]", "已立即唤醒后台巡检与收割调度！")
+				},
+				OnDailySweep: func() {
+					guiLog("托盘：触发立即扫荡每日任务")
+					go func() {
+						if err := srv.TriggerDailySweep(); err != nil {
+							tray.Notify("每日日常扫荡异常", err.Error())
+						} else {
+							tray.NotifyInfo("⚡ [成长中心日常]", "今日日常任务已全自动扫荡完成！")
+						}
+					}()
+				},
 				OnQuit: func() {
 					guiLog("托盘：选择退出")
 					srv.Shutdown()
 				},
 				Ready: func() {
 					guiLog("托盘：图标已就绪")
-					u.ok("托盘图标已就绪（右键可打开界面或退出）")
+					u.ok("托盘图标已就绪（右键可打开控制台、打理猫咪、扫荡日常或退出）")
 					select {
 					case ready <- struct{}{}:
 					default:
@@ -324,6 +338,37 @@ func cmdGUI(args []string) error {
 			select {
 			case ready <- struct{}{}:
 			default:
+			}
+		}()
+
+		// 托盘动态状态定时刷新与猫咪收割气泡通知
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			var lastCredits int64
+			// 首次记录基准积分，避免刚启动时误报
+			if st, ok := srv.GrowthGuardianStatus(); ok {
+				lastCredits = st.TotalHarvestCredits
+			}
+
+			for {
+				select {
+				case <-srv.Done():
+					return
+				case <-ticker.C:
+					// 1. 动态刷新托盘 Tooltip
+					tip := trayTooltip(srv, srv.Addr(), headless)
+					tray.UpdateTooltip(tip)
+
+					// 2. 检测猫咪收菜收益，触发系统气泡通知
+					if st, ok := srv.GrowthGuardianStatus(); ok {
+						if st.TotalHarvestCredits > lastCredits {
+							earned := st.TotalHarvestCredits - lastCredits
+							lastCredits = st.TotalHarvestCredits
+							tray.NotifyInfo("🐱 猫咪旅行归来", fmt.Sprintf("猫咪已顺利返回，自动收获 +%d 积分并再次启程！", earned))
+						}
+					}
+				}
 			}
 		}()
 	} else {
@@ -383,16 +428,47 @@ func cmdGUI(args []string) error {
 	return nil
 }
 
-// trayTooltip 拼托盘的悬停提示。
-//
-// headless 模式下必须点明"关了界面服务还在"——否则用户按常理关掉标签页，
-// 以为已经停服了，而注入到国内客户端的模型其实还在跑（或者反过来，
-// 用户以为还能用，其实已经退了）。这句话就是两种预期的分界线。
-func trayTooltip(addr string, headless bool) string {
+// trayTooltip 拼托盘的悬停提示（多行微型状态面板）。
+func trayTooltip(srv *webui.Server, addr string, headless bool) string {
+	var sb strings.Builder
 	if headless {
-		return "wbmux 转发服务（只做转发：关掉界面也继续跑；右键：打开界面 / 退出）· " + addr
+		sb.WriteString("wbmux 守护服务 · " + addr)
+	} else {
+		sb.WriteString("wbmux · " + addr)
 	}
-	return "wbmux 图形界面（右键：打开界面 / 退出）· " + addr
+
+	if srv != nil {
+		if status, ok := srv.GrowthGuardianStatus(); ok {
+			sb.WriteString("\n🐱 猫咪: ")
+			switch status.LastState {
+			case "traveling":
+				remaining := time.Until(status.NextCheckAt).Round(time.Minute)
+				if remaining < 0 {
+					remaining = 0
+				}
+				sb.WriteString(fmt.Sprintf("在前往咖啡馆途中 (剩%v", remaining))
+				if status.TotalHarvestCredits > 0 {
+					sb.WriteString(fmt.Sprintf(" | 累收+%d分", status.TotalHarvestCredits))
+				}
+				sb.WriteString(")")
+			case "arrived":
+				sb.WriteString(fmt.Sprintf("已归来待领奖 (累收+%d分)", status.TotalHarvestCredits))
+			case "idle":
+				sb.WriteString("闲置待出发")
+			default:
+				if status.Running {
+					sb.WriteString("全天候守护巡检中")
+				} else {
+					sb.WriteString("后台守护已就绪")
+				}
+			}
+		}
+
+		if autoupdate.IsDownloadLocked() {
+			sb.WriteString("\n🛡️ 防强制更新: 物理锁已生效")
+		}
+	}
+	return sb.String()
 }
 
 // parseMode 解析 --mode。

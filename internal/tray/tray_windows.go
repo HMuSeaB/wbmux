@@ -45,6 +45,10 @@ type Options struct {
 	// 返回真才是真的注册成功。有了它，调用方能给出正面确认，
 	// 而不是让用户对着一个不知道有没有生效的功能猜。
 	Ready func()
+	// OnTravelNow 在右键菜单点击"🐱 立即打理猫咪旅行"时调用，可为 nil。
+	OnTravelNow func()
+	// OnDailySweep 在右键菜单点击"⚡ 立即扫荡每日日常"时调用，可为 nil。
+	OnDailySweep func()
 }
 
 var (
@@ -107,8 +111,10 @@ const (
 	mfSeparator = 0x00000800
 
 	// menuOpenID / menuQuitID 是右键菜单项的编号。
-	menuOpenID = 1
-	menuQuitID = 2
+	menuOpenID   = 1
+	menuQuitID   = 2
+	menuTravelID = 3
+	menuSweepID  = 4
 
 	// idiApplication 是系统通用应用图标。
 	idiApplication = 32512
@@ -278,6 +284,14 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 			if state.opts.OnOpen != nil {
 				state.opts.OnOpen()
 			}
+		case menuTravelID:
+			if state.opts.OnTravelNow != nil {
+				go state.opts.OnTravelNow()
+			}
+		case menuSweepID:
+			if state.opts.OnDailySweep != nil {
+				go state.opts.OnDailySweep()
+			}
 		case menuQuitID:
 			if state.opts.OnQuit != nil {
 				state.opts.OnQuit()
@@ -303,10 +317,23 @@ func showMenu(hwnd uintptr) {
 	}
 	defer func() { _, _, _ = procDestroyMenu.Call(menu) }()
 
-	openLabel, _ := syscall.UTF16PtrFromString("打开界面")
+	openLabel, _ := syscall.UTF16PtrFromString("打开控制台")
+	travelLabel, _ := syscall.UTF16PtrFromString("🐱 立即打理猫咪旅行")
+	sweepLabel, _ := syscall.UTF16PtrFromString("⚡ 立即扫荡每日日常")
 	quitLabel, _ := syscall.UTF16PtrFromString("退出")
 
 	_, _, _ = procAppendMenuW.Call(menu, mfString, menuOpenID, uintptr(unsafe.Pointer(openLabel)))
+
+	if state.opts.OnTravelNow != nil || state.opts.OnDailySweep != nil {
+		_, _, _ = procAppendMenuW.Call(menu, mfSeparator, 0, 0)
+		if state.opts.OnTravelNow != nil {
+			_, _, _ = procAppendMenuW.Call(menu, mfString, menuTravelID, uintptr(unsafe.Pointer(travelLabel)))
+		}
+		if state.opts.OnDailySweep != nil {
+			_, _, _ = procAppendMenuW.Call(menu, mfString, menuSweepID, uintptr(unsafe.Pointer(sweepLabel)))
+		}
+	}
+
 	_, _, _ = procAppendMenuW.Call(menu, mfSeparator, 0, 0)
 	_, _, _ = procAppendMenuW.Call(menu, mfString, menuQuitID, uintptr(unsafe.Pointer(quitLabel)))
 
@@ -333,14 +360,7 @@ func showMenu(hwnd uintptr) {
 	_, _, _ = procPostMessageW.Call(hwnd, 0, 0, 0)
 }
 
-// Notify 弹一个气泡通知（挂在托盘图标上）。
-//
-// # 为什么需要它
-//
-// 托盘菜单里的动作失败时必须说话。原先"打开界面"是
-// `_ = browser.Open(...)`——错误直接丢掉，用户点了什么都没发生，只能得出
-// "这功能没用"（2026-09-28 的实际反馈）。气泡能把"为什么没开"和"手动该访问
-// 哪个地址"告诉用户，而且是随手就有的能力，不需要额外依赖。
+// Notify 弹一个警告级别气泡通知（挂在托盘图标上）。
 //
 // 未初始化（没有托盘）时静默返回：调用方不必为此加判断。
 func Notify(title, message string) {
@@ -356,6 +376,38 @@ func Notify(title, message string) {
 	}
 	setUTF16(nid.szInfoTitle[:], title)
 	setUTF16(nid.szInfo[:], message)
+	_, _, _ = procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
+}
+
+// NotifyInfo 弹出一个蓝色信息级系统气泡通知（NIIF_INFO）。
+func NotifyInfo(title, message string) {
+	if !state.inited {
+		return
+	}
+	nid := notifyIconDataW{
+		cbSize:      uint32(unsafe.Sizeof(notifyIconDataW{})),
+		hWnd:        state.hwnd,
+		uID:         1,
+		uFlags:      nifInfo,
+		dwInfoFlags: niifInfo,
+	}
+	setUTF16(nid.szInfoTitle[:], title)
+	setUTF16(nid.szInfo[:], message)
+	_, _, _ = procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
+}
+
+// UpdateTooltip 动态更新托盘图标的鼠标悬浮提示文本（szTip）。
+func UpdateTooltip(tip string) {
+	if !state.inited {
+		return
+	}
+	nid := notifyIconDataW{
+		cbSize: uint32(unsafe.Sizeof(notifyIconDataW{})),
+		hWnd:   state.hwnd,
+		uID:    1,
+		uFlags: nifTip,
+	}
+	setUTF16(nid.szTip[:], tip)
 	_, _, _ = procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
 }
 

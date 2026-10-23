@@ -39,3 +39,21 @@ func TestProcsResolve(t *testing.T) {
 		}
 	}
 }
+
+// TestTraySafeCallsWhenNotInited 确保托盘未初始化时调用 UpdateTooltip / NotifyInfo 安全不崩溃。
+func TestTraySafeCallsWhenNotInited(t *testing.T) {
+	// 在未调用 Run 前，状态为未初始化，应静默安全返回，绝不能 panic
+	UpdateTooltip("测试提示")
+	NotifyInfo("测试标题", "测试内容")
+	Notify("警告标题", "警告内容")
+}
+
+// TestSetUTF16SafeTruncate 验证字符串超长时截断并严格保留尾部 0 终止符。
+func TestSetUTF16SafeTruncate(t *testing.T) {
+	buf := make([]uint16, 5)
+	setUTF16(buf, "hello world")
+	if buf[4] != 0 {
+		t.Fatalf("末尾应为 0 终止符，得到 %d", buf[4])
+	}
+}
+

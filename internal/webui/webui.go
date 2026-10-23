@@ -953,6 +953,43 @@ func (s *Server) startGrowthGuardian() {
 	s.growthGuardian.Start(ctx)
 }
 
+// GrowthGuardianStatus 返回当前猫咪后台守护器状态与是否存在。
+func (s *Server) GrowthGuardianStatus() (growth.GuardianStatus, bool) {
+	if s == nil || s.growthGuardian == nil {
+		return growth.GuardianStatus{}, false
+	}
+	return s.growthGuardian.GetStatus(), true
+}
+
+// TriggerGrowthGuardian 手动立即唤醒后台守护器打理猫咪旅行。
+func (s *Server) TriggerGrowthGuardian() {
+	if s != nil && s.growthGuardian != nil {
+		s.growthGuardian.TriggerNow()
+	}
+}
+
+// TriggerDailySweep 手动触发一次每日任务全量扫荡。
+func (s *Server) TriggerDailySweep() error {
+	if s == nil {
+		return fmt.Errorf("服务未初始化")
+	}
+	cred, err := s.domesticCred(s.probe())
+	if err != nil {
+		return fmt.Errorf("读取国内账号凭证失败: %w", err)
+	}
+	if cred.Token == "" {
+		return fmt.Errorf("国内账号未登录或无有效 Token")
+	}
+	client := growth.NewClient("https://www.workbuddy.cn")
+	sweepRes, err := client.SweepAll(cred)
+	if err != nil {
+		s.note(ProxyLogEntry{Level: "bad", Text: "⚡ [托盘调度] 每日成长任务扫荡失败：" + err.Error()})
+		return err
+	}
+	s.note(ProxyLogEntry{Level: "ok", Text: fmt.Sprintf("⚡ [托盘调度] 今日成长任务扫荡完成，成功达标/入账 %d 项 (获得 +%d 积分)！", sweepRes.SuccessCount, sweepRes.TotalCreditEarned)})
+	return nil
+}
+
 // handleTelemetry 返回当前遥测守护状态。
 func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	if s.guardian == nil {
