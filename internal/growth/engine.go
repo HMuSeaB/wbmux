@@ -84,21 +84,53 @@ var autoTaskOrder = []string{
 
 // accountMu 确保单账号的任务执行互斥，防止并发重跑浪费真实额度。
 var (
-	accountMu sync.Mutex
-	locks     = make(map[string]bool)
+	accountMu  sync.Mutex
+	locks      = make(map[string]accountLockInfo)
+	sweepMu    sync.Mutex
+	sweepLocks = make(map[string]chan struct{})
 )
 
-func lockAccount(uid string) bool {
-	accountMu.Lock()
-	defer accountMu.Unlock()
-	if locks[uid] {
-		return false
+type accountLockInfo struct {
+	lockedAt time.Time
+	taskCode string
+}
+
+func lockAccountWithTimeout(uid, taskCode string, timeout time.Duration) bool {
+	if uid == "" {
+		uid = "default"
 	}
-	locks[uid] = true
-	return true
+	deadline := time.Now().Add(timeout)
+	for {
+		accountMu.Lock()
+		info, locked := locks[uid]
+		if locked {
+			// 若锁持有超过 90 秒，视为死锁/僵尸锁强制回收
+			if time.Since(info.lockedAt) > 90*time.Second {
+				delete(locks, uid)
+				locked = false
+			}
+		}
+		if !locked {
+			locks[uid] = accountLockInfo{
+				lockedAt: time.Now(),
+				taskCode: taskCode,
+			}
+			accountMu.Unlock()
+			return true
+		}
+		accountMu.Unlock()
+
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func unlockAccount(uid string) {
+	if uid == "" {
+		uid = "default"
+	}
 	accountMu.Lock()
 	defer accountMu.Unlock()
 	delete(locks, uid)
@@ -110,7 +142,7 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		return nil, fmt.Errorf("credential token is empty")
 	}
 
-	if !lockAccount(cred.UID) {
+	if !lockAccountWithTimeout(cred.UID, taskCode, 8*time.Second) {
 		return nil, fmt.Errorf("当前账号已有成长任务正在执行中，请稍后再试")
 	}
 	defer unlockAccount(cred.UID)
@@ -494,6 +526,32 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 	if cred.Token == "" {
 		return nil, fmt.Errorf("credential token is empty")
+	}
+
+	uid := cred.UID
+	if uid == "" {
+		uid = "default"
+	}
+
+	sweepMu.Lock()
+	waitCh, running := sweepLocks[uid]
+	if running {
+		sweepMu.Unlock()
+		// 若后台守护或外部已有扫荡在进行中，平滑等待其完成（最多 30s），避免并发冲突
+		select {
+		case <-waitCh:
+		case <-time.After(30 * time.Second):
+		}
+	} else {
+		doneCh := make(chan struct{})
+		sweepLocks[uid] = doneCh
+		sweepMu.Unlock()
+		defer func() {
+			sweepMu.Lock()
+			delete(sweepLocks, uid)
+			close(doneCh)
+			sweepMu.Unlock()
+		}()
 	}
 
 	// 1. 扫描常规任务 + 小程序任务
