@@ -86,16 +86,18 @@ var autoTaskOrder = []string{
 var (
 	accountMu  sync.Mutex
 	locks      = make(map[string]accountLockInfo)
+	tokenGen   uint64
 	sweepMu    sync.Mutex
 	sweepLocks = make(map[string]chan struct{})
 )
 
 type accountLockInfo struct {
+	token    uint64
 	lockedAt time.Time
 	taskCode string
 }
 
-func lockAccountWithTimeout(uid, taskCode string, timeout time.Duration) bool {
+func lockAccountWithTimeout(uid, taskCode string, timeout time.Duration) (uint64, bool) {
 	if uid == "" {
 		uid = "default"
 	}
@@ -111,29 +113,37 @@ func lockAccountWithTimeout(uid, taskCode string, timeout time.Duration) bool {
 			}
 		}
 		if !locked {
+			tokenGen++
+			tok := tokenGen
 			locks[uid] = accountLockInfo{
+				token:    tok,
 				lockedAt: time.Now(),
 				taskCode: taskCode,
 			}
 			accountMu.Unlock()
-			return true
+			return tok, true
 		}
 		accountMu.Unlock()
 
 		if time.Now().After(deadline) {
-			return false
+			return 0, false
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-func unlockAccount(uid string) {
+func unlockAccount(uid string, token uint64) {
 	if uid == "" {
 		uid = "default"
 	}
 	accountMu.Lock()
 	defer accountMu.Unlock()
-	delete(locks, uid)
+	if info, ok := locks[uid]; ok {
+		// 只有 token 匹配时才释放（若 token 为 0 则兜底释放），防止误删超时后被其他人获取的租约
+		if token == 0 || info.token == token {
+			delete(locks, uid)
+		}
+	}
 }
 
 // RunTask 执行单个任务的完整闭环：前置判定 -> 执行动作 -> 异步落账回读 -> 自动领奖。
@@ -142,10 +152,11 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		return nil, fmt.Errorf("credential token is empty")
 	}
 
-	if !lockAccountWithTimeout(cred.UID, taskCode, 8*time.Second) {
+	tok, ok := lockAccountWithTimeout(cred.UID, taskCode, 8*time.Second)
+	if !ok {
 		return nil, fmt.Errorf("当前账号已有成长任务正在执行中，请稍后再试")
 	}
-	defer unlockAccount(cred.UID)
+	defer unlockAccount(cred.UID, tok)
 
 	isMP := IsMPTask(taskCode)
 
@@ -537,22 +548,25 @@ func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 	waitCh, running := sweepLocks[uid]
 	if running {
 		sweepMu.Unlock()
-		// 若后台守护或外部已有扫荡在进行中，平滑等待其完成（最多 30s），避免并发冲突
+		// 若后台守护或外部已有扫荡在进行中，平滑等待其完成（最多 30s）
 		select {
 		case <-waitCh:
+			// 前一个全量扫荡已顺利完成，直接收割残留奖励并返回战报，避免重复繁重流水
+			return c.ClaimAllPending(cred)
 		case <-time.After(30 * time.Second):
+			return nil, fmt.Errorf("当前账号已有全量任务扫荡正在后台执行，请稍后刷新查看最新战报")
 		}
-	} else {
-		doneCh := make(chan struct{})
-		sweepLocks[uid] = doneCh
-		sweepMu.Unlock()
-		defer func() {
-			sweepMu.Lock()
-			delete(sweepLocks, uid)
-			close(doneCh)
-			sweepMu.Unlock()
-		}()
 	}
+
+	doneCh := make(chan struct{})
+	sweepLocks[uid] = doneCh
+	sweepMu.Unlock()
+	defer func() {
+		sweepMu.Lock()
+		delete(sweepLocks, uid)
+		close(doneCh)
+		sweepMu.Unlock()
+	}()
 
 	// 1. 扫描常规任务 + 小程序任务
 	tasksNormal, _ := c.ListTasks(cred, false)
@@ -656,6 +670,16 @@ func (c *Client) SweepAll(cred credential.Credential) (*SweepResult, error) {
 			result.CompensationNotice = fmt.Sprintf("发现官方异常补偿并已自动领取 +%d 积分！", granted)
 		} else {
 			result.CompensationNotice = fmt.Sprintf("发现官方异常补偿（+%d 积分，截止: %s），待领取", comp.CreditNum, comp.EndTime)
+		}
+	}
+
+	// 5. 顺带打理猫猫旅行（到站自动收割再次启程，闲置自动派遣咖啡馆）
+	travelMsg, travelErr := c.AutoTravelSweep(cred)
+	if travelErr == nil && travelMsg != "" {
+		if result.CompensationNotice != "" {
+			result.CompensationNotice += " | 🐱 " + travelMsg
+		} else {
+			result.CompensationNotice = "🐱 " + travelMsg
 		}
 	}
 

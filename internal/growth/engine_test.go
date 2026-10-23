@@ -99,28 +99,30 @@ func TestClient_RunTaskAndSweepAll(t *testing.T) {
 
 func TestLockAccountWithTimeout_Concurrent(t *testing.T) {
 	uid := "concurrent-test-user"
-	ok1 := lockAccountWithTimeout(uid, "task1", 100*time.Millisecond)
-	if !ok1 {
-		t.Fatalf("ok1 should succeed")
+	tok1, ok1 := lockAccountWithTimeout(uid, "task1", 100*time.Millisecond)
+	if !ok1 || tok1 == 0 {
+		t.Fatalf("ok1 should succeed with valid token")
 	}
 
 	done := make(chan bool)
 	go func() {
 		// 在另一个协程尝试获取同一账号的锁，设置 500ms 超时
-		ok2 := lockAccountWithTimeout(uid, "task2", 500*time.Millisecond)
+		tok2, ok2 := lockAccountWithTimeout(uid, "task2", 500*time.Millisecond)
+		if ok2 {
+			unlockAccount(uid, tok2)
+		}
 		done <- ok2
 	}()
 
 	// 150ms 后主协程释放锁
 	time.Sleep(150 * time.Millisecond)
-	unlockAccount(uid)
+	unlockAccount(uid, tok1)
 
 	select {
 	case ok2 := <-done:
 		if !ok2 {
 			t.Fatalf("ok2 should have acquired lock after unlockAccount")
 		}
-		unlockAccount(uid)
 	case <-time.After(1 * time.Second):
 		t.Fatalf("timed out waiting for ok2")
 	}
