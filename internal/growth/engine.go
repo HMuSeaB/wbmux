@@ -453,18 +453,32 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 	case "expert_5", "Expert_team_use_3":
 		rounds := 5
 		expertType := "agent"
+		fallbackIDs := []string{
+			"ex_2cvvUZQhDyeJ",
+			"ex_1789234850",
+			"ex_2097350077599879168",
+			"ex_code_assistant",
+			"ex_general_helper",
+		}
 		if code == "Expert_team_use_3" {
 			rounds = 3
 			expertType = "team"
+			fallbackIDs = []string{
+				"team_office_assistant",
+				"team_code_architect",
+				"team_efficiency_pilot",
+			}
 		}
-		// 动态拉取市场真实在架专家列表，防止自造假 ID 被服务端静默丢弃
+		// 动态拉取市场真实在架专家/专家团列表，防止自造假 ID 被服务端静默丢弃
 		realExperts, _ := c.MarketExpertList(cred, expertType)
-		var fallbackIDs = []string{"ex_2cvvUZQhDyeJ", "ex_1789234850", "ex_2097350077599879168"}
 
 		for i := 0; i < rounds; i++ {
 			cID := fmt.Sprintf("%s-%d", convID, i)
 			eID := fallbackIDs[i%len(fallbackIDs)]
 			eName := "腾讯效能专家"
+			if code == "Expert_team_use_3" {
+				eName = "腾讯专家团队"
+			}
 			if len(realExperts) > i {
 				eID = realExperts[i].ExpertID
 				if realExperts[i].DisplayNameZH != "" {
@@ -472,19 +486,24 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 				}
 			}
 
-			_, pReqID, _ := c.ShortChatProbe(cred, "fast-model", eID)
+			_, pReqID, _ := c.ShortChatProbe(cred, "glm-5.2", eID)
 			if pReqID == "" {
 				pReqID = fmt.Sprintf("%s-%d", reqID, i)
 			}
-			events := BuildDesktopChatSequence(cID, pReqID, "msg-"+pReqID, "fast-model", "fast-model")
-			events = append(events, map[string]any{
+			events := BuildDesktopChatSequence(cID, pReqID, "msg-"+pReqID, "glm-5.2", "GLM-5.2")
+			expertEv := map[string]any{
 				"eventCode":      "expert_actual_use",
 				"id":             eID,
 				"name":           eName,
 				"mode":           "LOCAL",
+				"expertType":     expertType,
 				"conversationId": cID,
 				"requestId":      pReqID,
-			})
+			}
+			if code == "Expert_team_use_3" {
+				expertEv["teamId"] = eID
+			}
+			events = append(events, expertEv)
 			_ = c.ReportDesktopEvent(cred, events...)
 			time.Sleep(300 * time.Millisecond)
 		}
@@ -513,7 +532,7 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		return "已按小程序口径上报专家对话事件（+200c +5e）", nil
 
 	case "school_season", "Sequential_Tasks_1", "Sequential_Tasks_3":
-		ev := map[string]any{
+		evReq := map[string]any{
 			"eventCode":                         "chat_request_send",
 			"source":                            "mini_program",
 			"traceId":                           convID,
@@ -522,11 +541,25 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 			"codebuddy.session_id":              convID,
 			"codebuddy.conversation_request_id": reqID,
 		}
-		if code == "school_season" {
-			ev["activityId"] = "school_open_day_2026"
+		evResp := map[string]any{
+			"eventCode":                         "chat_message_response",
+			"source":                            "mini_program",
+			"traceId":                           convID,
+			"rootRequestId":                     reqID,
+			"parentConversationId":              convID,
+			"codebuddy.session_id":              convID,
+			"codebuddy.conversation_request_id": reqID,
+			"isSuccessful":                      true,
+			"finishReason":                      "stop",
 		}
-		_ = c.ReportMPEvent(cred, ev)
-		return "已按小程序专属口径上报对话判据事件", nil
+		if code == "school_season" {
+			evReq["activityId"] = "school_open_day_2026"
+			evResp["activityId"] = "school_open_day_2026"
+		}
+		_ = c.ReportMPEvent(cred, evReq)
+		time.Sleep(300 * time.Millisecond)
+		_ = c.ReportMPEvent(cred, evResp)
+		return "已按小程序专属口径上报完整对话闭环判据事件", nil
 
 	default:
 		return "未定义动作，已跳过", nil

@@ -107,8 +107,8 @@ func (c *Client) ReportMPEvent(cred credential.Credential, event map[string]any)
 // ShortChatProbe 发起一次极短短对话并流式截取服务端派发的真实 RequestID。
 // 用于攻克专家与技能类任务的服务端会话真实性 JOIN 校验。
 func (c *Client) ShortChatProbe(cred credential.Credential, model, expertID string) (string, string, error) {
-	if model == "" {
-		model = "fast-model"
+	if model == "" || model == "fast-model" {
+		model = "glm-5.2"
 	}
 	convID := fmt.Sprintf("wbmux-probe-conv-%d", time.Now().UnixNano())
 
@@ -407,7 +407,7 @@ func (c *Client) MarketExpertList(cred credential.Credential, expertType string)
 		body["expert_type"] = expertType
 	}
 	raw, _ := json.Marshal(body)
-	url := c.endpoint + "/portal/operation-platform/market/expert/list"
+	url := c.endpointFor("/portal/operation-platform/market/expert/list")
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
@@ -418,6 +418,10 @@ func (c *Client) MarketExpertList(cred credential.Credential, expertType string)
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("expert list http status: %d", resp.StatusCode)
+	}
 
 	var res struct {
 		Code int `json:"code"`

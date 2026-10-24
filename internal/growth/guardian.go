@@ -273,13 +273,21 @@ func (g *TravelGuardian) runDailySweep(cred credential.Credential, today string)
 		return
 	}
 
-	detail := fmt.Sprintf("完成 %d 项任务，自动入账 +%d 积分、+%d 能量", summary.TasksCompleted, summary.TotalCreditGranted, summary.TotalEnergyGranted)
+	var noteText string
+	if summary.TotalCreditGranted > 0 || summary.TotalEnergyGranted > 0 {
+		noteText = fmt.Sprintf("🌅 [每日守护] 今日成长任务自动扫荡入账：达成 %d 项任务，获得 +%d 积分与 +%d 能量！",
+			summary.TasksCompleted, summary.TotalCreditGranted, summary.TotalEnergyGranted)
+	} else if summary.TasksSkipped > 0 {
+		noteText = fmt.Sprintf("🌅 [每日守护] 今日成长任务巡检完毕：此前已领 %d 项日常（当前无需重复领奖）。", summary.TasksSkipped)
+	} else {
+		noteText = "🌅 [每日守护] 今日成长任务巡检完毕：当前账号已是最新状态。"
+	}
 	if summary.CompensationNotice != "" {
-		detail += fmt.Sprintf("（%s）", summary.CompensationNotice)
+		noteText += fmt.Sprintf("（%s）", summary.CompensationNotice)
 	}
 
 	if g.cfg.OnNote != nil {
-		g.cfg.OnNote("info", fmt.Sprintf("🌅 [每日守护] 今日成长任务已全自动静默扫荡完成！%s", detail))
+		g.cfg.OnNote("info", noteText)
 	}
 }
 
