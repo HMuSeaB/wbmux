@@ -75,6 +75,11 @@ var autoTaskOrder = []string{
 	"Hp_Appearance",
 	"skill_1",
 	"Expert_lighthouse",
+	"WorkBuddy_Valorant",
+	"expert_use_maidehao",
+	"expert_use_douyinyin",
+	"expert_use_shangjia_xuanchuan",
+	"expert_use_bowangwang",
 	"expert_5",
 	"Expert_team_use_3",
 	"school_season",
@@ -461,6 +466,40 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		})
 		_ = c.ReportDesktopEvent(cred, events...)
 		return "已完成腾讯轻量云专家召唤与使用（包含免费领取一个月轻量云服务器权益）", nil
+
+	case "WorkBuddy_Valorant", "expert_use_maidehao", "expert_use_douyinyin", "expert_use_shangjia_xuanchuan", "expert_use_bowangwang":
+		expertConfigs := map[string]struct {
+			id   string
+			name string
+		}{
+			"WorkBuddy_Valorant":           {id: "ex_xQHHD1u5Jkua", name: "无畏契约拼豆专家"},
+			"expert_use_maidehao":          {id: "ex_GDl31WahyIH0", name: "中国电商运营专家"},
+			"expert_use_douyinyin":         {id: "ex_FbY5nlWTqDod", name: "抖音策略师"},
+			"expert_use_shangjia_xuanchuan": {id: "ex_Weo3x2EZuSDm", name: "商家宣传页与海报设计师"},
+			"expert_use_bowangwang":        {id: "ex_WZY136wV5aMt", name: "直播电商教练"},
+		}
+		cfg, ok := expertConfigs[code]
+		if !ok {
+			return "未知专家任务，已跳过", nil
+		}
+		_, probeReqID, _ := c.ShortChatProbe(cred, "fast-model", cfg.id)
+		if probeReqID == "" {
+			probeReqID = reqID
+		}
+		events := BuildDesktopChatSequence(convID, probeReqID, "msg-"+probeReqID, "fast-model", "fast-model")
+		events = append(events, map[string]any{
+			"eventCode":      "expert_actual_use",
+			"id":             cfg.id,
+			"name":           cfg.name,
+			"expertTitle":    cfg.name,
+			"type":           "",
+			"mode":           "LOCAL",
+			"cost":           0,
+			"conversationId": convID,
+			"requestId":      probeReqID,
+		})
+		_ = c.ReportDesktopEvent(cred, events...)
+		return fmt.Sprintf("已完成「%s」专家召唤与有效对话事件链", cfg.name), nil
 
 	case "expert_5", "Expert_team_use_3":
 		rounds := 5

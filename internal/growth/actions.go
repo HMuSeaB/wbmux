@@ -123,6 +123,9 @@ func (c *Client) ShortChatProbe(cred credential.Credential, model, expertID stri
 		},
 		"stream": true,
 	}
+	if expertID != "" {
+		payload["expert_id"] = expertID
+	}
 	raw, _ := json.Marshal(payload)
 
 	url := c.endpoint + "/v2/chat/completions"
