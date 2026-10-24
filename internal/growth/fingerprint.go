@@ -140,6 +140,45 @@ func ApplyMPHeaders(req *http.Request, token, uid string) {
 	}
 }
 
+// MPFingerprint 返回微信小程序公共指纹字段。
+func MPFingerprint(uid string) map[string]any {
+	now := time.Now().UnixMilli()
+	return map[string]any{
+		"userId":      uid,
+		"timestamp":   now,
+		"presentAt":   now,
+		"platform":    "miniprogram",
+		"source":      "mini_program",
+		"machineId":   deriveDeviceID(uid, "mpmachine"),
+		"sessionId":   deriveDeviceID(uid, "mpsession"),
+		"extVersion":  "2.2.8",
+		"os":          "ios",
+		"osVersion":   "iOS 17.5.1",
+		"deviceModel": "iPhone 15 Pro",
+		"product":     "SaaS",
+	}
+}
+
+// BuildMPEvents 将小程序公共指纹注入到一组事件载荷中。
+func BuildMPEvents(uid string, events ...map[string]any) []map[string]any {
+	if len(events) == 0 {
+		return nil
+	}
+	fp := MPFingerprint(uid)
+	res := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		m := make(map[string]any, len(fp)+len(ev))
+		for k, v := range fp {
+			m[k] = v
+		}
+		for k, v := range ev {
+			m[k] = v
+		}
+		res = append(res, m)
+	}
+	return res
+}
+
 // BuildWebEvent 构造 Web 端元素点击等遥测事件结构。
 func BuildWebEvent(uid, nickname, eventCode, pageURL, elementID, elementName string) map[string]any {
 	return map[string]any{

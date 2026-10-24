@@ -5283,6 +5283,13 @@
 
       card.appendChild(header);
       card.appendChild(descEl);
+      if (category === "小程序限定" || code.indexOf("Sequential_Tasks_") === 0) {
+        card.appendChild(el("div", {
+          class: "hint",
+          style: "color:var(--text-sub);margin:2px 0 6px 0;font-size:11px;line-height:1.4",
+          text: "💡 提示：此项为微信小程序专属任务。微信搜索打开「腾讯 WorkBuddy」小程序发任意 1 句对话后，点击右下角「点亮领奖」即可秒领入账！"
+        }));
+      }
       card.appendChild(progBox);
       card.appendChild(footer);
       list.appendChild(card);

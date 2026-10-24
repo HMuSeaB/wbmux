@@ -2,6 +2,7 @@ package growth
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -279,6 +280,16 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 			res.Energy = energy
 			res.ProgressAfter = "claimed"
 			res.Message += fmt.Sprintf("；已自动领奖入账（+%dc +%de）", credit, energy)
+		}
+	}
+
+	// 严密研判真实达成与领奖状态：若尚未达成且未领奖，严禁盲目返回 Success: true 造成前端虚假成功
+	if !res.Claimed && finalTask != nil && !finalTask.Claimable && finalTask.Current < targetTask.Target && finalTask.AcceptStatus != "completed" {
+		res.Success = false
+		if strings.HasPrefix(taskCode, "Sequential_Tasks_") || isMP {
+			res.Message = "此项为微信小程序端限定任务：服务端需手机微信原生会话判据。请在手机微信中打开「腾讯 WorkBuddy」小程序发送任意 1 句消息，返回后点击「点亮领奖」即可秒领奖励！"
+		} else {
+			res.Message = fmt.Sprintf("动作已上报，但服务端尚未推进进度（当前 %s）。可稍等 5 秒后重试。", progAfter)
 		}
 	}
 

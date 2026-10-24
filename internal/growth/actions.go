@@ -76,9 +76,13 @@ func (c *Client) ReportWebEvent(cred credential.Credential, event map[string]any
 	return nil
 }
 
-// ReportMPEvent 携带小程序口径头向 /v2/report 上报事件。
-func (c *Client) ReportMPEvent(cred credential.Credential, event map[string]any) error {
-	raw, err := json.Marshal([]map[string]any{event})
+// ReportMPEvent 携带小程序口径头向 /v2/report 批量上报事件，并自动注入小程序公共指纹字段。
+func (c *Client) ReportMPEvent(cred credential.Credential, events ...map[string]any) error {
+	if len(events) == 0 {
+		return nil
+	}
+	mpEvents := BuildMPEvents(cred.UID, events...)
+	raw, err := json.Marshal(mpEvents)
 	if err != nil {
 		return err
 	}
