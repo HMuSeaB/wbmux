@@ -410,7 +410,7 @@
   }
   .mcard .mdesc {
     color: var(--ink-3); font-size: 11.5px; margin-top: 3px; line-height: 1.55;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .mcard .mmeta { color: var(--ink-3); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
   .mcard.injected {
@@ -1699,6 +1699,7 @@
     font-size: 11px;
     color: var(--ink-3);
     white-space: nowrap;
+  }
   /* ---------- 成长与福利中心 (Growth Hub · Awwwards 标准) ---------- */
   .growth-hero {
     background: radial-gradient(ellipse at top right, rgba(235, 178, 58, 0.14) 0%, transparent 55%),

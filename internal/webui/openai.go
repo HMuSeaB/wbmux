@@ -751,6 +751,10 @@ func (s *Server) aggregateChat(w http.ResponseWriter, upstream io.Reader, starte
 			credit = chunk.Usage.Credit
 		}
 	}
+	if err := sc.Err(); err != nil && served == "" {
+		writeOpenAIError(w, http.StatusBadGateway, "读取上游响应失败: "+err.Error())
+		return chatMetrics{}
+	}
 	if served == "" {
 		writeOpenAIError(w, http.StatusBadGateway, "上游没有返回任何内容")
 		return chatMetrics{}

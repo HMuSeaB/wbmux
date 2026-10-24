@@ -432,10 +432,11 @@ func cmdGUI(args []string) error {
 func trayTooltip(srv *webui.Server, addr string, headless bool) string {
 	var sb strings.Builder
 	if headless {
-		sb.WriteString("wbmux 守护服务 · " + addr)
+		sb.WriteString("wbmux 守护服务 · ")
 	} else {
-		sb.WriteString("wbmux · " + addr)
+		sb.WriteString("wbmux · ")
 	}
+	sb.WriteString(addr)
 
 	if srv != nil {
 		if status, ok := srv.GrowthGuardianStatus(); ok {
