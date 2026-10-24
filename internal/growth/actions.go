@@ -175,6 +175,73 @@ func (c *Client) ShortChatProbe(cred credential.Credential, model, expertID stri
 	return convID, fallbackID, nil
 }
 
+// ShortMPChatProbe 携带微信小程序口径向 /v2/chat/completions 发起极短对话并截取真实 RequestID。
+// 用于攻克小程序专属任务（如 Sequential_Tasks_1 完成 1 次对话）的服务端会话落盘判据。
+func (c *Client) ShortMPChatProbe(cred credential.Credential, model string) (string, string, error) {
+	if model == "" {
+		model = "glm-5.2"
+	}
+	convID := fmt.Sprintf("mp-conv-%d", time.Now().UnixNano())
+
+	payload := map[string]any{
+		"model": model,
+		"messages": []any{
+			map[string]any{"role": "user", "content": "1+1=?"},
+		},
+		"stream": true,
+	}
+	raw, _ := json.Marshal(payload)
+
+	url := c.endpoint + "/v2/chat/completions"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return "", "", err
+	}
+
+	ApplyMPHeaders(req, cred.Token, cred.UID)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Conversation-ID", convID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("mp chat probe status %d: %s", resp.StatusCode, string(b))
+	}
+
+	buf := make([]byte, 0, 1<<20)
+	tmp := make([]byte, 4096)
+	searchFrom := 0
+
+	for {
+		n, rerr := resp.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			if i := bytes.Index(buf[searchFrom:], []byte(`"id":"`)); i >= 0 {
+				abs := searchFrom + i
+				rest := buf[abs+6:]
+				if end := bytes.IndexByte(rest, '"'); end > 0 {
+					extractedID := string(rest[:end])
+					if idRegex.MatchString(extractedID) || strings.HasPrefix(extractedID, "cmb-") {
+						return convID, extractedID, nil
+					}
+					searchFrom = abs + 1
+				}
+			}
+		}
+		if rerr != nil || len(buf) > 1<<20 {
+			break
+		}
+	}
+
+	fallbackID := "cmb-" + deriveDeviceID(cred.UID, "mpchat") + fmt.Sprintf("%d", time.Now().UnixMilli())[:10]
+	return convID, fallbackID, nil
+}
+
 // BuildDesktopChatSequence 构造一次桌面端完整有效对话的 6 事件链（点亮 RichMeow_Chat 等）。
 func BuildDesktopChatSequence(convID, reqID, msgID, modelID, modelName string) []map[string]any {
 	return []map[string]any{

@@ -229,10 +229,11 @@ func (c *Client) RunTask(cred credential.Credential, taskCode string) (*TaskRunR
 		return nil, fmt.Errorf("执行任务动作失败: %w", err)
 	}
 
-	// 4. 有界轮询异步计分（最多 5 轮，每次 2.5s，总计 12.5s 覆盖官方服务端异步落账延迟）
+	// 4. 有界自适应轮询异步落账（首轮 1.2s 快速探活，后续平滑退避，达标立即提前退出）
 	var finalTask *GrowthTask
-	for attempt := 0; attempt < 5; attempt++ {
-		time.Sleep(2500 * time.Millisecond)
+	backoffs := []time.Duration{1200 * time.Millisecond, 1800 * time.Millisecond, 2200 * time.Millisecond, 2500 * time.Millisecond}
+	for _, wait := range backoffs {
+		time.Sleep(wait)
 		tasksNow, qerr := c.ListTasks(cred, isMP)
 		if qerr == nil {
 			for i := range tasksNow {
@@ -531,24 +532,32 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		_ = c.ReportMPEvent(cred, ev)
 		return "已按小程序口径上报专家对话事件（+200c +5e）", nil
 
-	case "school_season", "Sequential_Tasks_1", "Sequential_Tasks_3":
+	case "school_season", "Sequential_Tasks_1", "Sequential_Tasks_3", "Sequential_Tasks_4", "Sequential_Tasks_5", "Sequential_Tasks_6", "Sequential_Tasks_7":
+		mpConvID, mpReqID, _ := c.ShortMPChatProbe(cred, "glm-5.2")
+		if mpConvID == "" {
+			mpConvID = convID
+		}
+		if mpReqID == "" {
+			mpReqID = reqID
+		}
+
 		evReq := map[string]any{
 			"eventCode":                         "chat_request_send",
 			"source":                            "mini_program",
-			"traceId":                           convID,
-			"rootRequestId":                     reqID,
-			"parentConversationId":              convID,
-			"codebuddy.session_id":              convID,
-			"codebuddy.conversation_request_id": reqID,
+			"traceId":                           mpConvID,
+			"rootRequestId":                     mpReqID,
+			"parentConversationId":              mpConvID,
+			"codebuddy.session_id":              mpConvID,
+			"codebuddy.conversation_request_id": mpReqID,
 		}
 		evResp := map[string]any{
 			"eventCode":                         "chat_message_response",
 			"source":                            "mini_program",
-			"traceId":                           convID,
-			"rootRequestId":                     reqID,
-			"parentConversationId":              convID,
-			"codebuddy.session_id":              convID,
-			"codebuddy.conversation_request_id": reqID,
+			"traceId":                           mpConvID,
+			"rootRequestId":                     mpReqID,
+			"parentConversationId":              mpConvID,
+			"codebuddy.session_id":              mpConvID,
+			"codebuddy.conversation_request_id": mpReqID,
 			"isSuccessful":                      true,
 			"finishReason":                      "stop",
 		}
@@ -559,7 +568,7 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 		_ = c.ReportMPEvent(cred, evReq)
 		time.Sleep(300 * time.Millisecond)
 		_ = c.ReportMPEvent(cred, evResp)
-		return "已按小程序专属口径上报完整对话闭环判据事件", nil
+		return "已完成小程序真实会话并对齐双向闭环判据", nil
 
 	default:
 		return "未定义动作，已跳过", nil

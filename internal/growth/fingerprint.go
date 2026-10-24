@@ -20,6 +20,9 @@ const (
 
 	// MPPlatform 是小程序专属平台的标头值。
 	MPPlatform = "miniprogram"
+
+	// MPUA 是微信小程序标准移动端 User-Agent。
+	MPUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50 NetType/WIFI Language/zh_CN"
 )
 
 // deriveDeviceID 由账号 UID 稳定派生一个 36 位十六进制设备标识（machineId/sessionId/qimei36）。
@@ -130,6 +133,7 @@ func ApplyMPHeaders(req *http.Request, token, uid string) {
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", MPUA)
 	req.Header.Set("X-Client-Platform", MPPlatform)
 	if uid != "" {
 		req.Header.Set("X-User-Id", uid)
