@@ -82,6 +82,13 @@ func IsExclusiveConsole() bool {
 	return n == 1
 }
 
+// HasConsole 判断当前进程是否依附在某个控制台上。
+// 若返回 false，说明当前为纯 GUI 进程（如 -H=windowsgui）或无关联控制台。
+func HasConsole() bool {
+	hwnd, _, _ := procGetConsoleWindow.Call()
+	return hwnd != 0
+}
+
 // HideConsoleWindow 隐藏当前控制台窗口。
 //
 // 双击启动图形界面时用：控制台子系统的程序双击必然先弹出一个黑窗口，

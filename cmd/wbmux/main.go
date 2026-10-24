@@ -16,9 +16,9 @@ func main() {
 	console.EnableUTF8()
 
 	args := os.Args[1:]
-	// 无参数时区分两种来源：双击启动（Windows 会新开一个只有自己的控制台）
-	// 说明用户不是想敲命令，直接开图形界面；从终端里裸跑则打印帮助。
-	if len(args) == 0 && console.IsExclusiveConsole() {
+	// 无参数时区分来源：双击启动（Windows 会新开一个独占控制台）或纯 GUI 方式启动（无控制台）
+	// 说明用户不是想敲命令，直接开图形界面；从终端命令行里裸跑则打印帮助。
+	if len(args) == 0 && (console.IsExclusiveConsole() || !console.HasConsole()) {
 		args = []string{"gui"}
 	}
 

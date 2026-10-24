@@ -12,5 +12,8 @@ func EnableUTF8() {}
 // 区分的场景，因此一律返回 false，让无参数时走打印帮助的路径。
 func IsExclusiveConsole() bool { return false }
 
+// HasConsole 在非 Windows 平台上恒为 true。
+func HasConsole() bool { return true }
+
 // HideConsoleWindow 在非 Windows 平台上是空操作。
 func HideConsoleWindow() {}
