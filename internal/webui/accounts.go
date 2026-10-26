@@ -168,3 +168,32 @@ func (s *Server) handleAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, res)
 }
+
+// handleAuthWebLogin 生成或重定向至带有官方单点登录（SSO）桥接的官网控制台/账单页面。
+func (s *Server) handleAuthWebLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+	sideParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("side")))
+	targetParam := strings.TrimSpace(r.URL.Query().Get("target"))
+	side := variant.Intl
+	if sideParam == "cn" {
+		side = variant.CN
+	}
+
+	loginURL := credential.GetWebClientLoginURL(s.probe(), side, targetParam)
+
+	// 若请求显式要求 JSON，则返回 JSON 结构
+	if r.URL.Query().Get("json") == "1" || strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, map[string]any{
+			"ok":  true,
+			"url": loginURL,
+		})
+		return
+	}
+
+	// 否则作为普通超链接或 window.open，执行 HTTP 302 临时重定向直达
+	http.Redirect(w, r, loginURL, http.StatusFound)
+}
+

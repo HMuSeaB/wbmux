@@ -323,6 +323,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/accounts/refresh", s.guard(s.handleAccountRefresh))
 	mux.HandleFunc("/api/auth/start", s.guard(s.handleAuthStart))
 	mux.HandleFunc("/api/auth/poll", s.guard(s.handleAuthPoll))
+	mux.HandleFunc("/api/auth/web-login", s.guard(s.handleAuthWebLogin))
 	mux.HandleFunc("/api/growth/streak", s.guard(s.handleGrowthStreak))
 	mux.HandleFunc("/api/growth/redeem", s.guard(s.handleGrowthRedeem))
 	mux.HandleFunc("/api/growth/domestic/tasks", s.guard(s.handleGrowthDomesticTasks))

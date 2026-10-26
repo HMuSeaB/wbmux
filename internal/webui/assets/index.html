@@ -7090,7 +7090,7 @@
 
     var isIntl = side === "intl";
     var titleText = isIntl ? "国际端账户资产与积分明细 (WorkBuddy AI)" : "国内端账户资产与积分明细 (CodeBuddy)";
-    var officialUrl = isIntl ? "https://www.codebuddy.ai/profile/usage" : "https://www.codebuddy.cn/profile/plan";
+    var officialUrl = "/api/auth/web-login?side=" + (isIntl ? "intl" : "cn") + "&target=" + encodeURIComponent(isIntl ? "/profile/usage" : "/profile/plan");
 
     // Head
     var head = el("div", { class: "modal-head" }, [
@@ -7188,7 +7188,7 @@
       body.appendChild(promoSec);
     }
 
-    // 底部：关于官方网页登录的温和说明与直达
+    // 底部：关于官方网页登录的免密 SSO 说明与直达
     var footNotice = el("div", {
       style: "background:rgba(255,255,255,0.015);border:1px dashed var(--g4);border-radius:var(--r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--ink-3);line-height:1.5"
     }, [
@@ -7200,10 +7200,10 @@
           target: "_blank",
           rel: "noreferrer",
           style: "margin:0;font-size:11px;white-space:nowrap",
-          text: "打开官网账单 ↗"
+          text: isIntl ? "免密进入官网账单 ↗" : "打开官网账单 ↗"
         })
       ]),
-      el("div", { text: "💡 提示：本客户端已通过本地专用 API 直接拉取您的积分与限免资产（无需网页登录即可在上方查看全部数据）。官方 Web 控制台使用独立的浏览器 Cookie，因此点击上方链接前往官网网页时，需在浏览器中进行一次官方验证码/扫码登录。" })
+      el("div", { text: isIntl ? "💡 提示：本客户端已支持官方免密单点登录（SSO）桥接。点击上方按钮将自动生成临时授权票据，在浏览器中一键免密进入官方 Web 账单控制台，无需再次登录。" : "💡 提示：本客户端已通过本地专用 API 直接拉取您的积分与限免资产（无需网页登录即可在上方查看全部数据）。若需前往国内端官网网页，需在浏览器中进行一次官方扫码/验证码登录。" })
     ]);
     body.appendChild(footNotice);
 

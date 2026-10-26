@@ -206,3 +206,19 @@ func TestExtractUIDFromJWT(t *testing.T) {
 	}
 }
 
+func TestGetWebClientLoginURL_Fallback(t *testing.T) {
+	// 空环境场景下的安全降级
+	p := newEnv(t)
+
+	urlIntl := GetWebClientLoginURL(p, variant.Intl, "/profile/usage")
+	if urlIntl != "https://www.codebuddy.ai/profile/usage" {
+		t.Errorf("expected fallback url, got %s", urlIntl)
+	}
+
+	urlCN := GetWebClientLoginURL(p, variant.CN, "/profile/plan")
+	if urlCN != "https://www.codebuddy.cn/profile/plan" {
+		t.Errorf("expected fallback url, got %s", urlCN)
+	}
+}
+
+

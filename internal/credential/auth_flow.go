@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -425,4 +426,84 @@ func extractUIDFromJWT(token string) string {
 	}
 	return payload.UserID
 }
+
+// GetWebClientLoginURL 为指定档位（CN/Intl）生成带有官方单点登录（SSO）一次性 deviceCode 桥接的直达链接。
+// 若无 RefreshToken 或换票失败，则安全降级回目标页面的普通绝对 URL。
+func GetWebClientLoginURL(p *variant.Probe, side variant.ID, target string) string {
+	if p == nil {
+		p = variant.DefaultProbe()
+	}
+	if target == "" {
+		if side == variant.CN {
+			target = "/profile/plan"
+		} else {
+			target = "/profile/usage"
+		}
+	}
+	if !strings.HasPrefix(target, "/") {
+		target = "/" + target
+	}
+
+	fallbackHost := "https://www.codebuddy.ai"
+	apiEndpoint := "https://www.workbuddy.ai"
+	if side == variant.CN {
+		fallbackHost = "https://www.codebuddy.cn"
+		apiEndpoint = "https://www.workbuddy.cn"
+	}
+
+	fallbackURL := fallbackHost + target
+
+	cred, err := Resolve(p, side)
+	if err != nil || cred.Token == "" || cred.RefreshToken == "" {
+		return fallbackURL
+	}
+
+	// 调用官方接口换取一次性 deviceCode（有效期 300 秒）
+	req, err := http.NewRequest(http.MethodPost, apiEndpoint+"/v2/plugin/device/auth/code", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return fallbackURL
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cred.Token)
+	req.Header.Set("X-User-Id", cred.UID)
+	req.Header.Set("X-Refresh-Token", cred.RefreshToken)
+	if cred.Domain != "" {
+		req.Header.Set("X-Domain", cred.Domain)
+	}
+
+	// 注入真实 UA 和通用头
+	for k, v := range telemetry.CommonHeaders(side, "", "") {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fallbackURL
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fallbackURL
+	}
+
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			DeviceCode string `json:"deviceCode"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Code != 0 || result.Data.DeviceCode == "" {
+		return fallbackURL
+	}
+
+	// 构建官方带 client-login 桥接的单点登录 URL：
+	// 浏览器访问该 URL 会被下发 session Cookie 并 302 重定向到 target
+	return fmt.Sprintf("%s/console/client-login?code=%s&target=%s",
+		fallbackHost,
+		url.QueryEscape(result.Data.DeviceCode),
+		url.QueryEscape(target),
+	)
+}
+
 

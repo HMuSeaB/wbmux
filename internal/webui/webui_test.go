@@ -600,6 +600,52 @@ func TestHandleAuthFlowAPI(t *testing.T) {
 	}
 }
 
+func TestHandleAuthWebLogin(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. POST 拒绝
+	rPost := e.do(t, "POST", "/api/auth/web-login", "", true)
+	if rPost.code != 405 {
+		t.Errorf("POST /api/auth/web-login 应返回 405，得到 %d", rPost.code)
+	}
+
+	// 2. GET 带 json=1 返回目标 URL
+	rJSON := e.do(t, "GET", "/api/auth/web-login?side=intl&target=/profile/usage&json=1", "", true)
+	if rJSON.code != 200 {
+		t.Errorf("GET /api/auth/web-login?json=1 应返回 200，得到 %d", rJSON.code)
+	}
+	var res struct {
+		OK  bool   `json:"ok"`
+		URL string `json:"url"`
+	}
+	rJSON.decode(t, &res)
+	if !res.OK || !strings.Contains(res.URL, "/profile/usage") {
+		t.Errorf("返回的 url 异常: %v", res)
+	}
+
+	// 3. 不跟随重定向，验证 302 临时跳转
+	req, _ := http.NewRequest("GET", "http://"+e.srv.Addr()+"/api/auth/web-login?side=intl&target=/profile/usage", nil)
+	req.Header.Set("X-Wbmux-Token", e.srv.token)
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirectClient.Do(req)
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("应返回 302 StatusFound，得到 %d", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if !strings.Contains(loc, "/profile/usage") {
+		t.Errorf("重定向 Location 异常: %s", loc)
+	}
+}
+
+
 func TestGrowthEndpoints(t *testing.T) {
 	e := newTestEnv(t, Options{})
 
