@@ -7106,6 +7106,27 @@
 
     // 账号概况条
     var accName = lv.nickname || (lv.uid ? lv.uid.slice(0, 16) + "…" : "未命名");
+    var refreshBtn = el("button", {
+      class: "ghost",
+      style: "font-size:11px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:var(--ink-2);border-radius:var(--r-sm)",
+      html: '<svg class="ico ico-xs"><use href="#i-reload"/></svg><span>即时同步</span>',
+      onclick: function () {
+        refreshBtn.classList.add("loading");
+        refreshBtn.disabled = true;
+        loadUsage(true, true).then(function (u) {
+          refreshBtn.classList.remove("loading");
+          refreshBtn.disabled = false;
+          var newLv = (u && u.Survey && u.Survey.live && u.Survey.live[side]) || lv;
+          toast("已从腾讯官方获取最新实时资产与到期时间", "ok");
+          showAssetDetailsModal(side, newLv);
+        }).catch(function (err) {
+          refreshBtn.classList.remove("loading");
+          refreshBtn.disabled = false;
+          toast("同步失败：" + (err.message || "网络异常"), "bad");
+        });
+      }
+    });
+
     var overviewRow = el("div", {
       style: "background:rgba(255,255,255,0.025);border:1px solid var(--g4);border-radius:var(--r-sm);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px"
     }, [
@@ -7116,8 +7137,11 @@
         el("span", { class: "pill " + (lv.ok ? "ok" : "ghost"), text: lv.ok ? "实时通路正常" : "未就绪" }),
         (isIntl && lv.ok && lv.hasRefreshToken) ? el("span", { class: "pill ok", style: "background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.38);color:#a5b4fc", text: "⚡ 自动无感保鲜" }) : null
       ]),
-      el("div", { style: "font-size:11.5px;color:var(--ink-3);font-family:var(--mono)" }, [
-        "UID: " + (lv.uid || "未知")
+      el("div", { style: "display:flex;align-items:center;gap:10px" }, [
+        el("div", { style: "font-size:11.5px;color:var(--ink-3);font-family:var(--mono)" }, [
+          "UID: " + (lv.uid || "未知")
+        ]),
+        refreshBtn
       ])
     ]);
     body.appendChild(overviewRow);
@@ -7139,6 +7163,31 @@
     } else {
       pkgs.forEach(function (p, idx) {
         var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
+        var expBadge = null;
+        if (p.expiresAtMs > 0) {
+          var leftMs = p.expiresAtMs - Date.now();
+          if (leftMs <= 0) {
+            expBadge = el("span", {
+              class: "pill",
+              style: "font-size:10px;padding:1px 6px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#f87171",
+              text: "已到期失效"
+            });
+          } else if (leftMs < 48 * 3600 * 1000) {
+            var leftH = Math.max(1, Math.round(leftMs / 3600000));
+            expBadge = el("span", {
+              class: "pill warn",
+              style: "font-size:10px;padding:1px 6px;background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.45);color:#fbbf24;font-weight:600",
+              text: "⏳ 剩 " + leftH + " 小时 (临期优先消耗)"
+            });
+          } else {
+            var leftD = Math.round(leftMs / 86400000);
+            expBadge = el("span", {
+              class: "pill",
+              style: "font-size:10px;padding:1px 5px;background:rgba(255,255,255,0.04);border:1px solid var(--g4);color:var(--ink-2)",
+              text: "⏳ 剩 " + leftD + " 天"
+            });
+          }
+        }
         var pCard = el("div", {
           style: "background:var(--g2);border:1px solid var(--g4);border-radius:var(--r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:6px"
         }, [
@@ -7148,7 +7197,8 @@
               el("span", { style: "font-family:var(--mono);color:var(--ink);font-weight:600", text: p.code }),
               p.name ? el("span", { class: "pill", style: "font-size:10px;background:rgba(255,255,255,0.05);border:1px solid var(--g4);color:var(--ink-2)", text: p.name }) : null,
               p.kindZh ? el("span", { class: "pill " + (p.kind === "subscription" ? "ok" : "warn"), style: "font-size:10px;padding:1px 6px", text: p.kindZh }) : null,
-              p.deductPriority === 1 ? el("span", { class: "pill", style: "background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;font-size:10px;padding:1px 5px", text: "优先消耗" }) : null
+              p.deductPriority === 1 ? el("span", { class: "pill", style: "background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;font-size:10px;padding:1px 5px", text: "优先消耗" }) : null,
+              expBadge
             ]),
             el("div", { style: "font-family:var(--mono);font-weight:600;color:var(--ink)" }, [
               formatCreditNum(p.remain) + " / " + formatCreditNum(p.total) + " " + (p.unit || "credits"),
@@ -7270,17 +7320,19 @@
         box.appendChild(el("div", { class: "hint", text: "正在读取双端资产与额度数据…" }));
       }
     }
-    return api("/api/usage").then(function (u) {
+    return api("/api/usage" + (force ? "?force=1" : "")).then(function (u) {
       usageData = u;
       if (u && Array.isArray(u.selectedIntlModels)) {
         selectedIntlModels = u.selectedIntlModels;
       }
       renderUsage();
+      return u;
     }).catch(function (e) {
       if (!silent && box) {
         clear(box);
         box.appendChild(el("div", { class: "note bad", text: "读取失败：" + e.message }));
       }
+      throw e;
     }).finally(function () {
       if (btn) btn.classList.remove("loading");
     });

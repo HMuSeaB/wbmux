@@ -16,6 +16,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/modelradar"
 	"github.com/HMuSeaB/wbmux/internal/usage"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // ---------- 代理亲眼见到的限流状态 ----------
@@ -575,6 +576,10 @@ type usageResponse struct {
 // ProxyQuota 是代理自己的观察，答的是"现在能不能用"。两块都在一个响应里
 // 是因为界面要一起渲染——但**结论以 ProxyQuota 为准**。
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("force") == "1" {
+		usage.InvalidateLiveCache(variant.Intl)
+		usage.InvalidateLiveCache(variant.CN)
+	}
 	cfg, err := config.Load()
 	var selected []string
 	if err == nil {
