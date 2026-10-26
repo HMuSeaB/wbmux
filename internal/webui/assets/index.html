@@ -7146,6 +7146,7 @@
             el("div", { style: "display:flex;align-items:center;gap:6px;flex-wrap:wrap" }, [
               el("span", { class: "pill", style: "font-size:10px;padding:0 5px", text: "#" + (idx + 1) }),
               el("span", { style: "font-family:var(--mono);color:var(--ink);font-weight:600", text: p.code }),
+              p.name ? el("span", { class: "pill", style: "font-size:10px;background:rgba(255,255,255,0.05);border:1px solid var(--g4);color:var(--ink-2)", text: p.name }) : null,
               p.kindZh ? el("span", { class: "pill " + (p.kind === "subscription" ? "ok" : "warn"), style: "font-size:10px;padding:1px 6px", text: p.kindZh }) : null,
               p.deductPriority === 1 ? el("span", { class: "pill", style: "background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;font-size:10px;padding:1px 5px", text: "优先消耗" }) : null
             ]),
@@ -7157,10 +7158,19 @@
           el("div", { class: "bar-track", style: "height:6px;margin:0" }, [
             el("span", { class: "bar-fill " + (isIntl ? "intl" : "cn"), style: "width:" + Math.max(1, pct) + "%" })
           ]),
-          p.expiryRuleZh ? el("div", { style: "font-size:11px;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;margin-top:2px" }, [
-            el("span", { text: "⏳ 有效期规则：" + p.expiryRuleZh }),
-            p.expiresAtMs ? el("span", { style: "font-family:var(--mono);color:var(--ink-2)", text: "预估到期/重置：" + shortDate(new Date(p.expiresAtMs).toISOString()) }) : null
-          ]) : null
+          (function () {
+            var timeTxt = "";
+            if (p.cycleEndTime) {
+              timeTxt = "官方到期时间：" + p.cycleEndTime;
+            } else if (p.expiresAtMs) {
+              timeTxt = "预估到期/重置：" + shortDate(new Date(p.expiresAtMs).toISOString());
+            }
+            if (!p.expiryRuleZh && !timeTxt) return null;
+            return el("div", { style: "font-size:11px;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;margin-top:2px" }, [
+              p.expiryRuleZh ? el("span", { text: "⏳ 有效期规则：" + p.expiryRuleZh }) : el("span"),
+              timeTxt ? el("span", { style: "font-family:var(--mono);color:var(--ink-2);font-weight:600", text: timeTxt }) : null
+            ]);
+          })()
         ]);
         pkgsSec.appendChild(pCard);
       });

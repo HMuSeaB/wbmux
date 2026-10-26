@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -72,6 +73,7 @@ type LivePromo struct {
 // LivePackage 是一个积分包的周期用量。
 type LivePackage struct {
 	Code           string  `json:"code"`
+	Name           string  `json:"name,omitempty"`           // 官方真实包名（如 Bonus Pack、Free Plan Subscription）
 	Unit           string  `json:"unit"`
 	Total          float64 `json:"total"`
 	Remain         float64 `json:"remain"`
@@ -81,6 +83,8 @@ type LivePackage struct {
 	ExpiryRuleZh   string  `json:"expiryRuleZh,omitempty"`   // 每月 1 日重置 | 发放起 30 天有效（到期清零）
 	DeductPriority int     `json:"deductPriority,omitempty"` // 扣减优先级：1 为最优先
 	ExpiresAtMs    int64   `json:"expiresAtMs,omitempty"`    // 失效/重置时刻时间戳（毫秒）
+	CycleStartTime string  `json:"cycleStartTime,omitempty"` // 官方周期开始时间（如 2026-09-27 03:33:48）
+	CycleEndTime   string  `json:"cycleEndTime,omitempty"`   // 官方绝对真实到期时间（如 2026-10-27 03:33:47）
 }
 
 // LiveAccount 是一侧的实时账号数据。OK 为 false 时 Err 说明原因
@@ -581,8 +585,74 @@ func sortLiveModels(models []LiveModel) {
 	sort.SliceStable(models, func(i, j int) bool { return models[i].Rate > models[j].Rate })
 }
 
-// fetchLivePackages 拉积分包余量。字段来自实测响应：
-// Packages[].Cycle{Total,Remain,Used,Frozen}Capacity + CapacityUnit。
+type packageDetailMeta struct {
+	Name           string
+	CycleStartTime string
+	CycleEndTime   string
+	ExpireMs       int64
+}
+
+func fetchPackageDetailsMap(endpoint string, cred credential.Credential, codes []string) map[string]packageDetailMeta {
+	if len(codes) == 0 {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"PageNumber":         1,
+		"PageSize":           50,
+		"Status":             []int{0, 3},
+		"PackageCodes":       codes,
+		"IsDisplayTotalInfo": true,
+	})
+
+	resMap := make(map[string]packageDetailMeta)
+	parseResp := func(raw []byte) {
+		var doc struct {
+			Accounts []struct {
+				PackageCode      string `json:"PackageCode"`
+				PackageName      string `json:"PackageName"`
+				CycleStartTime   string `json:"CycleStartTime"`
+				CycleEndTime     string `json:"CycleEndTime"`
+				DeductionEndTime int64  `json:"DeductionEndTime"`
+			} `json:"Accounts"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return
+		}
+		for _, acc := range doc.Accounts {
+			if acc.PackageCode == "" {
+				continue
+			}
+			meta := packageDetailMeta{
+				Name:           acc.PackageName,
+				CycleStartTime: acc.CycleStartTime,
+				CycleEndTime:   acc.CycleEndTime,
+			}
+			if acc.CycleEndTime != "" {
+				if t, err := time.Parse("2006-01-02 15:04:05", acc.CycleEndTime); err == nil {
+					meta.ExpireMs = t.UnixMilli()
+				}
+			}
+			if meta.ExpireMs == 0 && acc.DeductionEndTime > 0 {
+				meta.ExpireMs = acc.DeductionEndTime
+			}
+			resMap[acc.PackageCode] = meta
+		}
+	}
+
+	// 1. 查询免费/权益/赠送包（如 Bonus Pack、Free Subscription）
+	if rawFree, err := liveJSON(endpoint, "/billing/meter/get-user-resource-free-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
+		parseResp(rawFree)
+	}
+
+	// 2. 查询付费包
+	if rawPaid, err := liveJSON(endpoint, "/billing/meter/get-user-resource-paid-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
+		parseResp(rawPaid)
+	}
+
+	return resMap
+}
+
+// fetchLivePackages 拉积分包余量与官方精确到期时间。
 func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePackage, error) {
 	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-summary", "POST", cred.Token, cred.UID, strings.NewReader("{}"), nil)
 	if err != nil {
@@ -601,13 +671,34 @@ func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePacka
 		return nil, err
 	}
 	var out []LivePackage
+	var codes []string
 	for _, p := range doc.Packages {
 		lc := LivePackage{Code: p.PackageCode, Unit: p.CapacityUnit}
 		lc.Total, _ = p.Total.Float64()
 		lc.Remain, _ = p.Remain.Float64()
 		lc.Used, _ = p.Used.Float64()
 		out = append(out, lc)
+		if p.PackageCode != "" {
+			codes = append(codes, p.PackageCode)
+		}
 	}
+
+	// 查询官方绝对精确的到期明细与包名（分秒不差吻合官方控制台）
+	if details := fetchPackageDetailsMap(endpoint, cred, codes); len(details) > 0 {
+		for i := range out {
+			if d, ok := details[out[i].Code]; ok {
+				if d.Name != "" {
+					out[i].Name = d.Name
+				}
+				out[i].CycleStartTime = d.CycleStartTime
+				out[i].CycleEndTime = d.CycleEndTime
+				if d.ExpireMs > 0 {
+					out[i].ExpiresAtMs = d.ExpireMs
+				}
+			}
+		}
+	}
+
 	return EnhancePackagesWithMeta(out), nil
 }
 

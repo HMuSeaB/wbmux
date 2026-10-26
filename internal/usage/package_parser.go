@@ -37,9 +37,11 @@ func ParsePackageMeta(pkg *LivePackage, now time.Time) {
 	pkg.KindZh = "活动/赠送加量包"
 	pkg.ExpiryRuleZh = "发放起 30 天有效（到期清零）"
 	pkg.DeductPriority = 2
-	// 若无具体订单创建时间，以当月末/30天为保守预估窗口
-	thirtyDaysLater := now.Add(30 * 24 * time.Hour)
-	pkg.ExpiresAtMs = thirtyDaysLater.UnixMilli()
+	// 若无官方明细接口返回的真实到期时间，才以 30 天为保守预估窗口
+	if pkg.ExpiresAtMs == 0 {
+		thirtyDaysLater := now.Add(30 * 24 * time.Hour)
+		pkg.ExpiresAtMs = thirtyDaysLater.UnixMilli()
+	}
 }
 
 // EnhancePackagesWithMeta 遍历积分包列表并赋予元数据解析。

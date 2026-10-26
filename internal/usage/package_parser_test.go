@@ -41,4 +41,15 @@ func TestParsePackageMeta(t *testing.T) {
 	if bonusPkg.KindZh != "活动/赠送加量包" {
 		t.Errorf("unexpected KindZh: %q", bonusPkg.KindZh)
 	}
+
+	// 验证已有官方精确到期时间时不被覆盖
+	exactTimePkg := &LivePackage{
+		Code:        "TCACA_code_007_exact",
+		ExpiresAtMs: 1793043227000,
+	}
+	ParsePackageMeta(exactTimePkg, fixedTime)
+	if exactTimePkg.ExpiresAtMs != 1793043227000 {
+		t.Errorf("expected ExpiresAtMs to be preserved, got %d", exactTimePkg.ExpiresAtMs)
+	}
 }
+
