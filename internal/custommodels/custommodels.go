@@ -209,6 +209,12 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		var label string
 		if isFree {
 			label = fmt.Sprintf("%s（国际免费）", displayNameStr)
+		} else if m.Locked {
+			badge := m.TierBadge
+			if badge == "" {
+				badge = "需更高档位"
+			}
+			label = fmt.Sprintf("%s（国际 · %s）", displayNameStr, badge)
 		} else if m.Rate > 0 {
 			label = fmt.Sprintf("%s（国际 · %.2fx）", displayNameStr, m.Rate)
 		} else {

@@ -456,6 +456,16 @@
     background: color-mix(in srgb, var(--g4) 50%, transparent);
     border-color: transparent; color: var(--ink-3); cursor: default;
   }
+  /* 需要更高订阅档位的模型（官方 modelTiers 标注）：只展示，不给勾选。
+     这类模型点了也只会拿到 400「当前账号类型暂不支持该模型」。 */
+  .btn-m-action.locked {
+    background: transparent;
+    border-color: var(--g4);
+    border-style: dashed;
+    color: var(--ink-3);
+    cursor: not-allowed;
+    opacity: .75;
+  }
   .mfold-toolbar {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
     gap: 8px; margin: 8px 0 10px; padding: 8px 10px;
@@ -2002,7 +2012,7 @@
 </style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3s8 3 8 9c0 5.5-3.5 8.5-8 9.5C7.5 20.5 4 17.5 4 12c0-6 8-9 8-9Z"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol></defs></svg>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3s8 3 8 9c0 5.5-3.5 8.5-8 9.5C7.5 20.5 4 17.5 4 12c0-6 8-9 8-9Z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol></defs></svg>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
@@ -2889,6 +2899,11 @@
   var nativeMode = false;
   var busy = false;
   var selectedIntlModels = [];
+  // selectedFromState 标记"已选付费模型"是否已经由 /api/state 初始化过。
+  // /api/state 读本地配置、毫秒级返回；/api/usage 要拉双端账单，
+  // 实测能到 20s+。两者之间的空档里任何一次重画都会把勾选状态显示成 0，
+  // 所以一旦 state 回来，就不许慢接口再覆盖它（见 loadUsage）。
+  var selectedFromState = false;
 
   // ---------- 连通性雷达状态池 ----------
   var radarRecordsMap = {};
@@ -4644,7 +4659,11 @@
         renderAutoNote(data, atBoot);
         if (data.status) {
           renderCheckin(checkinLast);
-          if (usageData) renderUsage();
+          // 这里**不再**顺手 renderUsage()。签到回话只改了签到徽章，
+          // 与用量面板无关；而用量面板依赖 usageData，签到往往比
+          // /api/usage 先返回，此时重画只会把还没填好的面板刷成
+          // 「已自选付费 0 个」（2026-10-26 实测）。
+          // 面板该由 loadUsage 自己画，那是它唯一的数据来源。
         } else {
           clear(box);
           box.appendChild(el("div", { class: "note warn",
@@ -7322,7 +7341,14 @@
     }
     return api("/api/usage" + (force ? "?force=1" : "")).then(function (u) {
       usageData = u;
-      if (u && Array.isArray(u.selectedIntlModels)) {
+      // 国际侧付费模型的选择以 /api/state 为准：它是本地读配置，秒回；
+      // 而 /api/usage 要拉双端账单，实测能拖到 20s+。两者之间任何一次
+      // "顺手重画"（签到回话、测速回话）都会把界面刷回陈旧数据，
+      // 表现为「已自选付费 0 个」——2026-10-26 实测。
+      //
+      // 只有 state 还没回来（首屏竞态）时，才用 usage 里那份兜底；
+      // 而且只在它非空时覆盖，避免同一个空数组把 state 的正确值盖掉。
+      if (!selectedFromState && u && Array.isArray(u.selectedIntlModels) && u.selectedIntlModels.length) {
         selectedIntlModels = u.selectedIntlModels;
       }
       renderUsage();
@@ -7766,6 +7792,12 @@
       var cardKids = [
         el("div", { class: "mrow" }, [
           el("span", { class: "mname", title: (r.id || "") + " · " + (r.raw || ""), text: r.name || prettyModel(r.id) }),
+          r.locked ? el("span", {
+            class: "pill warn",
+            style: "font-size:10px;padding:1px 6px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.38);color:#fbbf24;cursor:help;font-weight:600;display:inline-flex;align-items:center;gap:3px",
+            title: (r.tierHint || "该模型官方标注需要更高订阅档位（如 Pro）。当前普通/Free账号直接调用可能受限，但您依然可以自选注入到国内客户端中试用。"),
+            html: '<svg class="ico ico-xs" style="width:11px;height:11px"><use href="#i-shield"/></svg><span>' + (r.tierBadge || "需更高档位") + '</span>'
+          }) : null,
           r.free ? el("span", { class: "fbadge", text: r.freeLabel || "限时免费" }) : null,
           el("span", { class: "mrate" + (r.free ? " free" : ""), text: (r.rate !== undefined ? r.rate.toFixed(2) : "0.00") + "x" })
         ]),
@@ -7781,6 +7813,14 @@
         if (r.tools) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "Agent工具" }));
         if (r.images) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "多模态" }));
         if (r.maxOutput) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "单次" + Math.round(r.maxOutput / 1000) + "K" }));
+        if (r.locked) {
+          capsWrap.appendChild(el("span", {
+            class: "mcard-cap-tag",
+            style: "color:#fbbf24;border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.08)",
+            text: r.tierBadge || "需更高档位",
+            title: r.tierHint || "该模型官方标注需更高订阅档位"
+          }));
+        }
         // 挂接单模型实时雷达测速胶囊
         capsWrap.appendChild(renderModelRadarPill(r.id));
         foot.appendChild(capsWrap);
@@ -7798,11 +7838,15 @@
               '<span class="act-remove">' + ICO("x", "ico-sm") + ' 移出国内端</span>'
             : ICO("plus", "ico-sm") + ' 加入国内端';
 
+          var btnTitle = isSel
+            ? "已加入国内客户端自定义模型（鼠标移上点击即可从国内端移出）"
+            : (r.locked ? "加入国内客户端自定义模型（官方标注 " + (r.tierBadge || "需更高档位") + "，调用时消耗国际账号积分）" : "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）");
+
           var actBtn = el("button", {
             type: "button",
             class: "btn-m-action" + (isSel ? " added" : ""),
             html: actBtnHtml,
-            title: isSel ? "已加入国内客户端自定义模型（鼠标移上点击即可从国内端移出）" : "点击一键加入国内客户端自定义模型（调用时消耗国际账号积分）"
+            title: btnTitle
           });
 
           (function (modelItem, buttonEl, cardEl) {
@@ -8243,7 +8287,31 @@
     intlCard.appendChild(promoSec);
 
     // 国际模型库概览折叠
-    var intlRawModels = (intlLv.ok && intlLv.models && intlLv.models.length) ? intlLv.models : (rates["intl"] || []);
+    //
+    // 这里必须把接口字段**映射**成渲染层用的名字：接口给的是 freeNow，
+    // 而卡片渲染读的是 r.free。直接传原始数组的话 r.free 恒为 undefined，
+    // 结果连限免模型都会显示成"未加入的付费模型"，计数与徽章全错。
+    var intlSrcModels = (intlLv.ok && intlLv.models && intlLv.models.length) ? intlLv.models : (rates["intl"] || []);
+    var intlRawModels = intlSrcModels.map(function (m) {
+      return {
+        id: m.id,
+        name: m.name,
+        rate: m.rate,
+        raw: m.rateRaw,
+        desc: m.desc,
+        ctx: m.ctx,
+        maxOutput: m.maxOutput,
+        tools: m.tools,
+        images: m.images,
+        free: !!m.freeNow,
+        freeLabel: m.freeLabel,
+        // 官方 modelTiers 标注的更高档位（Pro Only）：
+        // 当前账号调用会被 400 拒绝，界面上不该给勾选入口。
+        locked: !!m.locked,
+        tierBadge: m.tierBadge,
+        tierHint: m.tierHint
+      };
+    });
     if (intlRawModels.length) {
       var paidCount = (selectedIntlModels && selectedIntlModels.length) || 0;
       intlCard.appendChild(renderModelDetailsFold("intl", intlRawModels, "国际模型库与快捷注入（" + intlRawModels.length + " 个 · 已自选付费 " + paidCount + " 个）"));
@@ -8578,6 +8646,7 @@
   api("/api/state").then(function (st) {
     state = st;
     selectedIntlModels = (st && st.selectedIntlModels) || [];
+    selectedFromState = true;
     // 默认选另一套后端——这正是用户打开界面的原因。
     target = st.backends.filter(function (b) {
       return b.id !== st.hostId && st.canRun[b.id];

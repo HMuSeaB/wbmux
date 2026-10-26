@@ -598,3 +598,88 @@ func TestSyncAutoFreeModelInjection(t *testing.T) {
 }
 
 
+
+// locked 造一个"需要更高档位"的模型（官方 modelTiers 标了 Pro Only）。
+func locked(id string) usage.LiveModel {
+	return usage.LiveModel{
+		ID: id, Name: id, Rate: 1.33, Locked: true,
+		TierBadge: "Pro Only", TierHint: "模型仅面向 Pro 用户开放。",
+	}
+}
+
+// TestSyncAllowsTierLockedModelsWhenSelected 验证用户主动勾选的高档位模型（如 Pro Only）
+// 依然允许注入，且名称带上档位徽章；未勾选且非免费的锁定模型不自动注入。
+func TestSyncAllowsTierLockedModelsWhenSelected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	intl := []usage.LiveModel{
+		lm("deepseek-v4.1-flash", true),
+		locked("gpt-6.1-sol"),
+		locked("gpt-6-sol"),
+		lm("kimi-k3.1-pro", false), // 未锁定的付费模型
+	}
+	// 用户勾选了 gpt-6.1-sol 和 kimi-k3.1-pro，没勾选 gpt-6-sol
+	selected := []string{"gpt-6.1-sol", "kimi-k3.1-pro"}
+
+	added, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok", intl, nil, selected)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// 应注入 3 个：1 免费 (deepseek) + 1 自选 Pro (gpt-6.1-sol) + 1 自选普通付费 (kimi)
+	if added != 3 {
+		t.Fatalf("应注入 3 个，得到 %d", added)
+	}
+	raw, _ := os.ReadFile(path)
+	items := mustParse(t, raw)
+	names := map[string]string{}
+	for _, m := range items {
+		names[m["id"].(string)] = m["name"].(string)
+	}
+	if !strings.Contains(names[IDPrefix+"gpt-6.1-sol"], "Pro Only") {
+		t.Errorf("自选锁定模型的名称应包含 Pro Only 徽标提示，得到 %q", names[IDPrefix+"gpt-6.1-sol"])
+	}
+	if names[IDPrefix+"gpt-6-sol"] != "" {
+		t.Errorf("未勾选的锁定模型不应被自动注入")
+	}
+}
+
+// TestSyncLockedFreeModelStillInjected 官方若把 Pro Only 模型也送去限免，
+// 说明确实放开了——这时 Locked 默认自动注入。
+func TestSyncLockedFreeModelStillInjected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	m := locked("gpt-6.1-sol")
+	m.FreeNow = true
+
+	added, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok",
+		[]usage.LiveModel{m}, nil)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("限免放宽后应注入，得到 %d", added)
+	}
+}
+
+// TestSyncOnlyLockedDoesNotTouchFile 未勾选且全是锁定模型时，属于"没东西可注入"，
+// 一个字节都不该写——否则会清掉清单里已有的注入条目（2026-10-09 事故口径）。
+func TestSyncOnlyLockedDoesNotTouchFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	original := mustJSON([]map[string]any{
+		{"id": IDPrefix + "deepseek-v4.1-flash", "vendor": "Custom"},
+	})
+	_ = os.WriteFile(path, original, 0o644)
+	before, _ := os.ReadFile(path)
+
+	// 未勾选任何模型 (selected 为空)
+	added, err := Sync(path, "http://127.0.0.1:1/v1/chat/completions", "tok",
+		[]usage.LiveModel{locked("gpt-6-sol")}, nil, nil)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if added != 0 {
+		t.Errorf("未勾选时锁定的模型不该注入，得到 %d", added)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Error("没有可注入的东西时不该改动文件")
+	}
+}
