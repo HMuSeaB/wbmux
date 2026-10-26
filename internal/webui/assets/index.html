@@ -7090,7 +7090,7 @@
 
     var isIntl = side === "intl";
     var titleText = isIntl ? "国际端账户资产与积分明细 (WorkBuddy AI)" : "国内端账户资产与积分明细 (CodeBuddy)";
-    var officialUrl = "/api/auth/web-login?side=" + (isIntl ? "intl" : "cn") + "&target=" + encodeURIComponent(isIntl ? "/profile/usage" : "/profile/plan");
+    var officialUrl = "/api/auth/web-login?side=" + (isIntl ? "intl" : "cn") + "&target=" + encodeURIComponent(isIntl ? "/profile/usage" : "/profile/plan") + (TOKEN ? "&t=" + encodeURIComponent(TOKEN) : "");
 
     // Head
     var head = el("div", { class: "modal-head" }, [
@@ -7194,14 +7194,36 @@
     }, [
       el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:8px" }, [
         el("div", { style: "color:var(--ink-2);font-weight:600", text: "🔗 腾讯官方 Web 控制台（历史每笔对话消费账单）" }),
-        el("a", {
-          class: "chip",
-          href: officialUrl,
-          target: "_blank",
-          rel: "noreferrer",
-          style: "margin:0;font-size:11px;white-space:nowrap",
-          text: isIntl ? "免密进入官网账单 ↗" : "打开官网账单 ↗"
-        })
+        (function () {
+          var targetPath = isIntl ? "/profile/usage" : "/profile/plan";
+          var sideCode = isIntl ? "intl" : "cn";
+          var btn = el("a", {
+            class: "chip",
+            href: officialUrl,
+            target: "_blank",
+            rel: "noreferrer",
+            style: "margin:0;font-size:11px;white-space:nowrap;cursor:pointer",
+            text: isIntl ? "免密进入官网账单 ↗" : "打开官网账单 ↗",
+            onclick: function (e) {
+              e.preventDefault();
+              btn.classList.add("loading");
+              api("/api/auth/web-login?side=" + sideCode + "&target=" + encodeURIComponent(targetPath) + "&json=1")
+                .then(function (res) {
+                  btn.classList.remove("loading");
+                  if (res && res.url) {
+                    window.open(res.url, "_blank");
+                  } else {
+                    window.open(officialUrl, "_blank");
+                  }
+                })
+                .catch(function () {
+                  btn.classList.remove("loading");
+                  window.open(officialUrl, "_blank");
+                });
+            }
+          });
+          return btn;
+        })()
       ]),
       el("div", { text: isIntl ? "💡 提示：本客户端已支持官方免密单点登录（SSO）桥接。点击上方按钮将自动生成临时授权票据，在浏览器中一键免密进入官方 Web 账单控制台，无需再次登录。" : "💡 提示：本客户端已通过本地专用 API 直接拉取您的积分与限免资产（无需网页登录即可在上方查看全部数据）。若需前往国内端官网网页，需在浏览器中进行一次官方扫码/验证码登录。" })
     ]);
