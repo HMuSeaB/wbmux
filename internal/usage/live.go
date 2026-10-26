@@ -13,9 +13,18 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
+
+// netrouteClient 是访问官方接口用的客户端（10s 超时）。
+//
+// 单独包一层而不是每次 new：Transport 要复用连接池，否则面板每刷新一次
+// 都重新 TCP+TLS 握手；同时它能跟着 netroute 的探测结果自动换出口。
+func netrouteClient() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second, Transport: netroute.Transport()}
+}
 
 // ---------- 实时账号数据（官方接口，只读） ----------
 //
@@ -58,6 +67,19 @@ type LiveModel struct {
 	FreeNow bool `json:"freeNow"`
 	// FreeLabel 是活动徽章原文（"Free now" / "限时免费"），界面照抄不翻译。
 	FreeLabel string `json:"freeLabel,omitempty"`
+	// TierBadge 是官方给的档位徽章（如 "Pro Only"）。空表示不限档位。
+	//
+	// 官方在 /v3/config 的 modelTiers 里把"要更高订阅才能用"的模型单独列了出来，
+	// 并给了 requiredUserType + badge。**这些模型不能当普通付费模型注入**：
+	// 清单里有、倍率也正常，但真发请求会被上游以
+	// "当前账号类型暂不支持该模型"（HTTP 400）顶回来，用户只会看到一句
+	// 莫名其妙的失败（2026-10-26 实测：gpt-6.1-sol / gpt-6-sol）。
+	TierBadge string `json:"tierBadge,omitempty"`
+	// TierHint 是档位锁定时的原文说明（"模型仅面向 Pro 用户开放。"），
+	// 界面直接展示，别自己编理由。
+	TierHint string `json:"tierHint,omitempty"`
+	// Locked 表示该模型需要更高档位，当前账号不可调用。
+	Locked bool `json:"locked,omitempty"`
 }
 
 // LivePromo 是一条限时优惠活动。
@@ -374,8 +396,10 @@ func liveJSON(endpoint, path, method, token, uid string, body io.Reader, extra m
 	for k, v := range extra {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	// 走 netroute：环境变量/系统代理先探活，代理没在跑就直连。
+	// 以前这里用 http.Client 的默认 Transport，只认环境变量——
+	// 代理端口关着时整个面板的模型清单都拉不到（2026-10-26 实测）。
+	resp, err := netrouteClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -431,6 +455,9 @@ func fetchLiveModels(endpoint string, cred credential.Credential, id variant.ID)
 	var doc struct {
 		Models     []liveModelRaw `json:"models"`
 		Promotions []livePromoRaw `json:"modelPromotions"`
+		// ModelTiers 是官方的档位分层（目前只有一档 gpt-pro-only）。
+		// 不解析它的话，Pro Only 模型会和普通付费模型长得一模一样。
+		ModelTiers []liveTierRaw `json:"modelTiers"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, nil, err
@@ -485,8 +512,71 @@ func fetchLiveModels(endpoint string, cred credential.Credential, id variant.ID)
 		out = append(out, byID[id])
 	}
 	applyFreeNow(out, doc.Promotions)
+	applyTiers(out, doc.ModelTiers)
 	sortLiveModels(out)
 	return out, promosOf(doc.Promotions), nil
+}
+
+// liveTierRaw 对应 modelTiers 里一档的原文结构。
+//
+// 实测（2026-10-26，国际侧 /v3/config）：
+//
+//	{"id":"gpt-pro-only","badge":{"label":"Pro Only"},"enabled":true,
+//	 "tier":"standard","requiredUserType":"standard",
+//	 "modelIds":[gpt-6-astra, gpt-6.1-sol, gpt-6-sol, ... ]}
+//
+// 这些模型在 models 数组里的倍率是正常的（x1.33 之类），长得和普通付费
+// 模型一样；只有这里标了档位。所以"能不能用"必须查这张表，不能看倍率。
+type liveTierRaw struct {
+	ID               string   `json:"id"`
+	Enabled          bool     `json:"enabled"`
+	Tier             string   `json:"tier"`
+	RequiredUserType string   `json:"requiredUserType"`
+	ModelIDs         []string `json:"modelIds"`
+	Badge            struct {
+		Label string `json:"label"`
+	} `json:"badge"`
+	Hover struct {
+		TextZh string `json:"textZh"`
+		TextEn string `json:"textEn"`
+	} `json:"hover"`
+}
+
+// applyTiers 给需要更高档位的模型打上 Locked。
+//
+// 只认 enabled 的档位：官方把活动关掉（enabled=false）就等于放开，
+// 这时还拦着会误伤。徽章文字原样带出去，界面照抄，不替官方编理由。
+func applyTiers(models []LiveModel, tiers []liveTierRaw) {
+	if len(tiers) == 0 {
+		return
+	}
+	locked := map[string]liveTierRaw{}
+	for _, t := range tiers {
+		if !t.Enabled {
+			continue
+		}
+		for _, id := range t.ModelIDs {
+			locked[id] = t
+		}
+	}
+	if len(locked) == 0 {
+		return
+	}
+	for i := range models {
+		t, ok := locked[models[i].ID]
+		if !ok {
+			continue
+		}
+		models[i].Locked = true
+		models[i].TierBadge = t.Badge.Label
+		if models[i].TierBadge == "" {
+			models[i].TierBadge = "限量档位"
+		}
+		models[i].TierHint = t.Hover.TextZh
+		if models[i].TierHint == "" {
+			models[i].TierHint = t.Hover.TextEn
+		}
+	}
 }
 
 // liveModelRaw 是配置里一条模型的原文结构。
