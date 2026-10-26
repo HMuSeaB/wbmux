@@ -13,6 +13,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/autoupdate"
 	"github.com/HMuSeaB/wbmux/internal/browser"
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/console"
 	"github.com/HMuSeaB/wbmux/internal/instance"
 	"github.com/HMuSeaB/wbmux/internal/tray"
@@ -237,6 +238,10 @@ func cmdGUI(args []string) error {
 	}
 	defer srv.Shutdown()
 	guiLog("服务已启动 addr=%s", srv.Addr())
+
+	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，
+	// 第一眼看它是走代理还是直连、有没有跳过不可用的代理。
+	guiLog("网络出口：%s", netroute.Describe())
 
 	// 记下本次的地址与令牌，下次启动沿用它；
 	// 两者都稳定，注入到客户端的模型才能跨重启继续用。

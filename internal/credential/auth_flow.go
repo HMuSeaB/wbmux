@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -77,7 +78,10 @@ func GetDefaultFlowManager(probe *variant.Probe) *LoginFlowManager {
 // NewLoginFlowManager 创建新的拟真登录管理器
 func NewLoginFlowManager(probe *variant.Probe, client *http.Client) *LoginFlowManager {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		// 走 netroute：它会在环境变量代理与系统代理之间挑一个探得通的，
+		// 都探不通就直连。默认 Transport 只认环境变量，代理进程退出后
+		// 会一直卡在"连接被拒绝"上（2026-10-26 实测）。
+		client = &http.Client{Timeout: 10 * time.Second, Transport: netroute.Transport()}
 	}
 	return &LoginFlowManager{
 		flows:   make(map[string]*LoginFlow),
@@ -476,7 +480,7 @@ func GetWebClientLoginURL(p *variant.Probe, side variant.ID, target string) stri
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: netroute.Transport()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fallbackURL

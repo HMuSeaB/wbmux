@@ -8,6 +8,7 @@
 
 # 本地运行痕迹
 /.wbmux/
+/.workbuddy/
 *.log
 
 # 开发期临时目录

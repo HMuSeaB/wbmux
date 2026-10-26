@@ -28,9 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -38,6 +36,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 )
 
 const repo = "HMuSeaB/wbmux"
@@ -666,101 +665,11 @@ func displayVersion(v string) string {
 }
 
 // newUpdateHTTPClient 创建用于检查与下载更新的 HTTP Client。
-// 优先使用环境变量 (HTTP_PROXY / HTTPS_PROXY)；
-// 在 Windows 上若未设置环境变量代理，自动读取注册表 Internet Settings 中的 ProxyServer (如 127.0.0.1:7890)，
-// 确保开启了系统代理（如 Clash/v2rayN/Sing-box）的用户能够正常访问 GitHub。
+//
+// 代理策略统一交给 internal/netroute：环境变量 → 系统代理 → 直连，
+// 前两级都要先探活。原先这里是"有环境变量就用环境变量，否则读注册表"，
+// 不看端口死活——代理进程退出后就把更新检查卡在"连接被拒绝"上，
+// 而同一台机器直连 GitHub 其实是通的。
 func newUpdateHTTPClient(timeout time.Duration) *http.Client {
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-	}
-
-	if runtime.GOOS == "windows" && !hasProxyEnv() {
-		if proxyStr := detectWindowsSystemProxy(); proxyStr != "" {
-			if u, err := url.Parse(proxyStr); err == nil {
-				transport.Proxy = http.ProxyURL(u)
-			}
-		}
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
-	}
-}
-
-func hasProxyEnv() bool {
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
-		if os.Getenv(k) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// detectWindowsSystemProxy 从 Windows 注册表读取 Internet Settings 的系统代理配置。
-func detectWindowsSystemProxy() string {
-	if runtime.GOOS != "windows" {
-		return ""
-	}
-	// 查询 ProxyEnable 是否开启 (0x1)
-	out, err := exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, "/v", "ProxyEnable").Output()
-	if err != nil || !strings.Contains(string(out), "0x1") {
-		return ""
-	}
-
-	// 查询 ProxyServer
-	out, err = exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, "/v", "ProxyServer").Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "ProxyServer") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				raw := fields[len(fields)-1]
-				return parseProxyServerString(raw)
-			}
-		}
-	}
-	return ""
-}
-
-// parseProxyServerString 将 Windows 注册表里的 ProxyServer 转换为规范的 http(s) URL
-func parseProxyServerString(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	// 复合格式：http=127.0.0.1:7890;https=127.0.0.1:7890
-	if strings.Contains(raw, "=") {
-		parts := strings.Split(raw, ";")
-		var fallback string
-		for _, part := range parts {
-			kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
-			if len(kv) == 2 {
-				val := strings.TrimSpace(kv[1])
-				if kv[0] == "https" || kv[0] == "http" {
-					if !strings.HasPrefix(val, "http://") && !strings.HasPrefix(val, "https://") {
-						return "http://" + val
-					}
-					return val
-				}
-				fallback = val
-			}
-		}
-		if fallback != "" {
-			if !strings.HasPrefix(fallback, "http://") && !strings.HasPrefix(fallback, "https://") {
-				return "http://" + fallback
-			}
-			return fallback
-		}
-	}
-
-	// 单一格式：127.0.0.1:7890 或 http://127.0.0.1:7890
-	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
-		return "http://" + raw
-	}
-	return raw
+	return &http.Client{Timeout: timeout, Transport: netroute.Transport()}
 }

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -21,6 +20,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/modelradar"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
@@ -971,21 +971,18 @@ func evaluateContextScale(bytesLen int64) contextScale {
 // 2. 拨号与 TLS 握手设置合理超时（30s / 15s）；
 // 3. ResponseHeaderTimeout 设为 300s（允许模型首字思考排队最长 5 分钟），流开始后持续流式吞吐；
 // 4. 共享长连接池，复用 TLS 会话，避免每轮请求重复 TCP 三次握手。
-var chatHTTPClient = &http.Client{
-	Timeout: 0,
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 300 * time.Second,
-	},
+var chatHTTPClient = newChatHTTPClient()
+
+func newChatHTTPClient() *http.Client {
+	// 与清单、登录、更新检查共用同一套出口策略。转发不能再单独使用
+	// ProxyFromEnvironment：否则清单能拉取，真正聊天仍会被已失效的
+	// 代理配置卡住（2026-10-26 日志实测）。
+	transport := netroute.Transport()
+	transport.ResponseHeaderTimeout = 300 * time.Second
+	return &http.Client{
+		Timeout:   0,
+		Transport: transport,
+	}
 }
 
 func probeHTTPClient() *http.Client {
