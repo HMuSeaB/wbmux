@@ -182,29 +182,54 @@ func Enabled(appConfigPath string) (enabled bool, ok bool) {
 }
 
 // DefaultUpdatePaths 返回当前操作系统下客户端可能用于下载或暂存更新包的路径。
+// 同时覆盖国内版（WorkBuddy）与国际版（WorkBuddy AI）的更新器缓存目录。
 func DefaultUpdatePaths() []string {
 	var paths []string
 	if runtime.GOOS == "windows" {
 		temp := os.TempDir()
 		if temp != "" {
-			paths = append(paths, filepath.Join(temp, "workbuddy-update-x64"))
+			paths = append(paths,
+				filepath.Join(temp, "workbuddy-update-x64"),
+				filepath.Join(temp, "workbuddy-ai-update-x64"),
+				filepath.Join(temp, "workbuddyai-update-x64"),
+			)
 		}
 		localApp := os.Getenv("LOCALAPPDATA")
 		if localApp != "" {
-			paths = append(paths, filepath.Join(localApp, "@genieworkbuddy-desktop-updater"))
+			paths = append(paths,
+				filepath.Join(localApp, "@genieworkbuddy-desktop-updater"),
+				filepath.Join(localApp, "@genieworkbuddy-ai-desktop-updater"),
+				filepath.Join(localApp, "@genieworkbuddy-desktop-ai-updater"),
+			)
 		}
 	} else if runtime.GOOS == "darwin" {
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			paths = append(paths, filepath.Join(home, "Library", "Caches", "workbuddy-updater"))
+			paths = append(paths,
+				filepath.Join(home, "Library", "Caches", "workbuddy-updater"),
+				filepath.Join(home, "Library", "Caches", "workbuddy-ai-updater"),
+			)
 		}
 	} else {
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			paths = append(paths, filepath.Join(home, ".cache", "workbuddy-updater"))
+			paths = append(paths,
+				filepath.Join(home, ".cache", "workbuddy-updater"),
+				filepath.Join(home, ".cache", "workbuddy-ai-updater"),
+			)
 		}
 	}
-	return paths
+
+	seen := make(map[string]bool, len(paths))
+	var out []string
+	for _, p := range paths {
+		clean := filepath.Clean(p)
+		if !seen[clean] {
+			seen[clean] = true
+			out = append(out, clean)
+		}
+	}
+	return out
 }
 
 // LockDownloadPaths 针对指定的更新暂存路径部署只读物理占位锁：
