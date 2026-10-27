@@ -211,12 +211,12 @@ func TestGetWebClientLoginURL_Fallback(t *testing.T) {
 	p := newEnv(t)
 
 	urlIntl := GetWebClientLoginURL(p, variant.Intl, "/profile/usage")
-	if urlIntl != "https://www.codebuddy.ai/profile/usage" {
+	if urlIntl != "https://www.workbuddy.ai/profile/usage" {
 		t.Errorf("expected fallback url, got %s", urlIntl)
 	}
 
 	urlCN := GetWebClientLoginURL(p, variant.CN, "/profile/plan")
-	if urlCN != "https://www.codebuddy.cn/profile/plan" {
+	if urlCN != "https://www.workbuddy.cn/profile/plan" {
 		t.Errorf("expected fallback url, got %s", urlCN)
 	}
 }

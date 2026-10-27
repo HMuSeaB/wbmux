@@ -243,9 +243,10 @@ type helperRequest struct {
 }
 
 type helperResponse struct {
-	OK          bool   `json:"ok"`
-	Reason      string `json:"reason,omitempty"`
-	AccessToken string `json:"accessToken,omitempty"`
+	OK           bool   `json:"ok"`
+	Reason       string `json:"reason,omitempty"`
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // helperReasonText 把 helper 的机器码翻成人话。
@@ -362,11 +363,14 @@ func ResolveWith(p *variant.Probe, id variant.ID, exe string) (Credential, error
 		return hit, nil
 	}
 
-	token, usedExe, err := Unseal(p, id, path, exe)
+	token, refreshToken, usedExe, err := UnsealPair(p, id, path, exe)
 	if err != nil {
 		return c, err
 	}
 	c.Token = token
+	if refreshToken != "" {
+		c.RefreshToken = refreshToken
+	}
 	c.Unsealed = true
 	c.UnsealedBy = usedExe
 	cacheStore(id, fingerprint, c)
@@ -378,52 +382,72 @@ func ResolveWith(p *variant.Probe, id variant.ID, exe string) (Credential, error
 // 单独导出是为了让"诊断"类功能（doctor）能在不进入缓存的前提下试一次，
 // 从而把真实原因回给用户。
 func Unseal(p *variant.Probe, id variant.ID, path, exe string) (token, usedExe string, err error) {
+	tok, _, exeUsed, err := UnsealPair(p, id, path, exe)
+	return tok, exeUsed, err
+}
+
+// UnsealPair 借客户端运行时解开 path 里的 accessToken 与 refreshToken，
+// 一次性返回明文双令牌与被借用的主程序。
+func UnsealPair(p *variant.Probe, id variant.ID, path, exe string) (token, refreshToken, usedExe string, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("读取凭据文件失败: %w", err)
+		return "", "", "", fmt.Errorf("读取凭据文件失败: %w", err)
 	}
 	// 从原文里把信封对象原样抠出来交给 helper：不在 Go 里重建它，
 	// 免得漏字段（信封结构属于客户端内部实现，会变）。
 	var d doc
 	if err := json.Unmarshal(raw, &d); err != nil {
-		return "", "", fmt.Errorf("凭据文件不是合法 JSON: %w", err)
+		return "", "", "", fmt.Errorf("凭据文件不是合法 JSON: %w", err)
 	}
 	if len(d.Auth.AccessToken) == 0 {
-		return "", "", fmt.Errorf("凭据文件里没有 accessToken")
+		return "", "", "", fmt.Errorf("凭据文件里没有 accessToken")
 	}
 
 	usedExe, err = findExe(p, id, exe)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+
+	type pairReq struct {
+		AccessToken  json.RawMessage `json:"accessToken"`
+		RefreshToken json.RawMessage `json:"refreshToken,omitempty"`
+	}
+	valBytes, err := json.Marshal(pairReq{
+		AccessToken:  d.Auth.AccessToken,
+		RefreshToken: d.Auth.RefreshToken,
+	})
+	if err != nil {
+		return "", "", "", fmt.Errorf("准备解密请求失败: %w", err)
 	}
 
 	payload, err := json.Marshal(helperRequest{
 		Version:   1,
 		Operation: "decrypt",
-		Value:     d.Auth.AccessToken,
+		Value:     valBytes,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("准备解密请求失败: %w", err)
+		return "", "", "", fmt.Errorf("准备解密请求失败: %w", err)
 	}
 
 	out, err := execHelper(usedExe, payload)
 	if err != nil {
-		return "", usedExe, fmt.Errorf("借客户端运行时解密失败: %w", err)
+		return "", "", usedExe, fmt.Errorf("借客户端运行时解密失败: %w", err)
 	}
 
 	var resp helperResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
 		// 不回显 out：那是客户端进程的原始输出，可能包含敏感内容。
-		return "", usedExe, fmt.Errorf("无法解析客户端运行时的回话: %w", err)
+		return "", "", usedExe, fmt.Errorf("无法解析客户端运行时的回话: %w", err)
 	}
 	if !resp.OK {
-		return "", usedExe, errors.New(helperReason(resp.Reason))
+		return "", "", usedExe, errors.New(helperReason(resp.Reason))
 	}
 	token = strings.TrimSpace(resp.AccessToken)
 	if token == "" {
-		return "", usedExe, fmt.Errorf("客户端运行时回报成功但没给出令牌")
+		return "", "", usedExe, fmt.Errorf("客户端运行时回报成功但没给出令牌")
 	}
-	return token, usedExe, nil
+	refreshToken = strings.TrimSpace(resp.RefreshToken)
+	return token, refreshToken, usedExe, nil
 }
 
 // execHelperReal 启动客户端主程序，以 Node 模式执行 helper JS。

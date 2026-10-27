@@ -8469,17 +8469,37 @@
   if (btnBuddyTravel) btnBuddyTravel.addEventListener("click", function () { travelBuddyAction("auto"); });
 
   function openWorkBuddyWeb() {
-    var officialURL = "https://www.workbuddy.cn/profile/growth-center";
-    api("/api/open-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: officialURL })
-    }).then(function () {
-      toast("已在系统默认浏览器中打开官方成长计划页面", "ok");
-    }).catch(function () {
-      window.open(officialURL, "_blank");
-      toast("已尝试在浏览器窗口中打开官方主页", "ok");
-    });
+    var defaultURL = "https://www.workbuddy.cn/profile/growth-center";
+    var btn = document.getElementById("btn-growth-open-web");
+    var headerBtn = document.getElementById("btn-growth-header-web");
+    if (btn) btn.classList.add("loading");
+    if (headerBtn) headerBtn.classList.add("loading");
+
+    api("/api/auth/web-login?side=cn&target=" + encodeURIComponent("/profile/growth-center") + "&json=1")
+      .then(function (res) {
+        var jumpUrl = (res && res.url) ? res.url : defaultURL;
+        return api("/api/open-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: jumpUrl })
+        }).catch(function () {
+          window.open(jumpUrl, "_blank");
+        });
+      })
+      .catch(function () {
+        return api("/api/open-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: defaultURL })
+        }).catch(function () {
+          window.open(defaultURL, "_blank");
+        });
+      })
+      .finally(function () {
+        if (btn) btn.classList.remove("loading");
+        if (headerBtn) headerBtn.classList.remove("loading");
+        toast("已免密直达官方成长计划与个人主页", "ok");
+      });
   }
   var btnGrowthOpenWeb = document.getElementById("btn-growth-open-web");
   if (btnGrowthOpenWeb) btnGrowthOpenWeb.addEventListener("click", openWorkBuddyWeb);

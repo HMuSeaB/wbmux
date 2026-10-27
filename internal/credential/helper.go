@@ -167,7 +167,20 @@ process.stdin.on('end', () => {
     if (!object(req) || req.version !== 1 || req.operation !== 'decrypt' || !('value' in req)) {
       failure('HELPER_PROTOCOL');
     }
-    reply({ ok: true, accessToken: decrypt(decodeEnvelope(req.value)) });
+    if (req.value && req.value.$wbEncrypted) {
+      reply({ ok: true, accessToken: decrypt(decodeEnvelope(req.value)) });
+      return;
+    }
+    const res = { ok: true };
+    if (req.value && req.value.accessToken) {
+      res.accessToken = decrypt(decodeEnvelope(req.value.accessToken));
+    }
+    if (req.value && req.value.refreshToken) {
+      try {
+        res.refreshToken = decrypt(decodeEnvelope(req.value.refreshToken));
+      } catch (_) {}
+    }
+    reply(res);
   } catch (e) {
     reply({ ok: false, reason: (e && e.reason) ? e.reason : 'HELPER_PROTOCOL' });
   }

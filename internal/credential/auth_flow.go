@@ -448,10 +448,10 @@ func GetWebClientLoginURL(p *variant.Probe, side variant.ID, target string) stri
 		target = "/" + target
 	}
 
-	fallbackHost := "https://www.codebuddy.ai"
+	fallbackHost := "https://www.workbuddy.ai"
 	apiEndpoint := "https://www.workbuddy.ai"
 	if side == variant.CN {
-		fallbackHost = "https://www.codebuddy.cn"
+		fallbackHost = "https://www.workbuddy.cn"
 		apiEndpoint = "https://www.workbuddy.cn"
 	}
 
