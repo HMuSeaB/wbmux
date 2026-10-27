@@ -3,6 +3,7 @@
 package netroute
 
 import (
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -36,16 +37,16 @@ func systemProxy() (string, string) {
 	// ProxyServer 可能是 httptest 那样"直接一个地址"，也可能是
 	// "http=host:port;https=host:port"。取 https，没有就取 http，再没有
 	// 取第一个非空项。
-	if idx := indexByte(server, '='); idx >= 0 {
-		parts := splitSemicolon(server)
+	if idx := strings.IndexByte(server, '='); idx >= 0 {
+		parts := strings.Split(server, ";")
 		var httpV, anyV string
 		for _, p := range parts {
-			i := indexByte(p, '=')
+			i := strings.IndexByte(p, '=')
 			if i < 0 {
 				continue
 			}
-			name := lowerTrim(p[:i])
-			val := trimSpace(p[i+1:])
+			name := strings.ToLower(strings.TrimSpace(p[:i]))
+			val := strings.TrimSpace(p[i+1:])
 			if val == "" {
 				continue
 			}
@@ -63,7 +64,7 @@ func systemProxy() (string, string) {
 		}
 	}
 
-	return normalizeProxyAddr(trimSpace(server)), override
+	return normalizeProxyAddr(strings.TrimSpace(server)), override
 }
 
 func regOpenKey(path string) (syscall.Handle, error) {
@@ -117,7 +118,8 @@ func normalizeProxyAddr(v string) string {
 	if v == "" {
 		return ""
 	}
-	if hasPrefixFold(v, "http://") || hasPrefixFold(v, "https://") || hasPrefixFold(v, "socks5://") {
+	lower := strings.ToLower(v)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "socks5://") {
 		return v
 	}
 	return "http://" + v
