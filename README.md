@@ -160,11 +160,43 @@ wbmux shortcut
 
 由于内置调试代理完全兼容标准 OpenAI 协议规范，您可以直接将三方开发工具指向本地回路：
 
+> **端口说明**：wbmux 的监听端口**不固定**（首次启动随机分配，之后复用已保存的值）。
+> 以界面「本地 OpenAI 兼容代理接口」卡片里显示的 `Base URL` 为准，
+> 或直接打开界面地址 `http://127.0.0.1:<端口>/?t=<令牌>` 获取。
+> 下文统一写作 `http://127.0.0.1:<端口>`。
+
 | 客户端 | 接口地址 (Base URL) | API Key | 推荐模型名 |
 |---|---|---|---|
-| **Cherry Studio** | `http://127.0.0.1:8000/v1` | 界面右上角生成的安全 Token | `deepseek-chat` / `auto` |
-| **NextChat** | `http://127.0.0.1:8000` | 界面右上角生成的安全 Token | `deepseek-chat` |
-| **Cursor / Continue** | `http://127.0.0.1:8000/v1` | 界面右上角生成的安全 Token | `auto` |
+| **Cherry Studio** | `http://127.0.0.1:<端口>/v1` | 界面上的安全 Token | `deepseek-v4.1-flash` / `auto` |
+| **NextChat** | `http://127.0.0.1:<端口>` | 界面上的安全 Token | `deepseek-v4.1-flash` |
+| **Cursor / Continue** | `http://127.0.0.1:<端口>/v1` | 界面上的安全 Token | `auto` |
+
+### 🌐 全网实时联网搜索开发代理 (Web Search Proxy)
+
+`wbmux` 内置了官方标准全网实时联网搜索反代端点，无需额外申请第三方搜索引擎 Key，直接借用客户端已登录的会话额度，为现代 AI 工具链提供零成本的联网检索能力：
+
+| 端点类型 | 接口路径 | 支持协议 | 适用客户端 / 场景 |
+|---|---|---|---|
+| **Agent 工具调用端点** | `POST /v1/search/messages` | Anthropic Messages 协议（兼容 `web_search` 工具协议） | **ZCode**、**Claude Code**、**Cline** 等支持工具调用的 AI 编程助手 |
+| **极简 JSON 搜索端点** | `GET /v1/search?q=<关键词>&n=<条数>` | 原生结构化 JSON | Python / Node.js 脚本、Raycast、Alfred 插件及自定义扩展 |
+
+**认证说明**：
+
+- 凭据放在 `x-api-key: <Token>` 或 `Authorization: Bearer <Token>` 均可，两者都认；
+- 来自本机回环地址（`127.0.0.1` / `::1`）的请求**完全免密**，连认证头都不必带
+  ——所以对接不支持填 Key 的客户端时，直接留空即可；
+- 非回环来源（局域网访问）必须携带正确 Token，否则 403。
+
+**为什么搜索不受"限时免费"影响**：
+
+搜索走的是上游 `/agenttool/v1/search`，与对话的 `/v2/chat/completions` 是
+**两条独立链路**，只借用账号的登录凭据（Token + UID），不经过任何模型。
+所以：
+
+- 与 `deepseek-v4.1-flash` 是否在限免期**无关**，也不消耗该模型的额度；
+- 与 `GPT-6.x / Pro Only` 的档位限制也无关；
+- 账号积分耗尽时，搜索通常仍可用（它不计入对话 credits）。
+
 
 ---
 

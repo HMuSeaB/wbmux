@@ -171,11 +171,32 @@ wbmux shortcut
 
 Because the built-in debug proxy strictly conforms to the OpenAI specification, you can connect any third-party development tool directly to local loopback:
 
+> **Port Note**: `wbmux` binds to a dynamic local loopback port (assigned randomly on first run, then reused across restarts).
+> Always refer to the `Base URL` displayed on the WebUI home card, or view `http://127.0.0.1:<Port>/?t=<Token>`.
+> The examples below use `http://127.0.0.1:<Port>`.
+
 | Client / Tool | Base URL | API Key | Recommended Model Identifier |
 |---|---|---|---|
-| **Cherry Studio** | `http://127.0.0.1:8000/v1` | Ephemeral Security Token from WebUI top-right | `deepseek-chat` / `auto` |
-| **NextChat** | `http://127.0.0.1:8000` | Ephemeral Security Token from WebUI top-right | `deepseek-chat` |
-| **Cursor / Continue** | `http://127.0.0.1:8000/v1` | Ephemeral Security Token from WebUI top-right | `auto` |
+| **Cherry Studio** | `http://127.0.0.1:<Port>/v1` | Security Token from WebUI | `deepseek-v4.1-flash` / `auto` |
+| **NextChat** | `http://127.0.0.1:<Port>` | Security Token from WebUI | `deepseek-v4.1-flash` |
+| **Cursor / Continue** | `http://127.0.0.1:<Port>/v1` | Security Token from WebUI | `auto` |
+
+### 🌐 Real-Time Web Search Proxy
+
+`wbmux` features a built-in reverse proxy for real-time web search. Without needing API keys from paid search providers, it bridges search traffic using your active WorkBuddy session:
+
+| Endpoint Type | Path | Protocol | Compatible Clients / Scenarios |
+|---|---|---|---|
+| **Agent Tool Endpoint** | `POST /v1/search/messages` | Anthropic Messages (with `web_search` tool) | **ZCode**, **Claude Code**, **Cline**, and modern AI agents |
+| **Structured JSON Endpoint** | `GET /v1/search?q=<query>&n=<count>` | Native structured JSON | Python / Node.js scripts, Raycast, Alfred workflows, custom extensions |
+
+**Authentication**:
+- Accepts credentials in either `x-api-key: <Token>` or `Authorization: Bearer <Token>`;
+- Local loopback requests (`127.0.0.1` / `::1`) are **completely passwordless** (no auth headers required), allowing instant plug-and-play for external tools without key inputs;
+- Non-loopback requests (e.g. LAN) strictly require a valid Token.
+
+**Why search is independent of model tier / free trials**:
+Search routes through `/agenttool/v1/search`, which is completely separate from chat completions (`/v2/chat/completions`). It uses account credentials (Token + UID) directly without invoking or billing against LLM credits. Even when `deepseek-v4.1-flash` free quotas end or chat points are exhausted, search remains operational.
 
 ---
 
