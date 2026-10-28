@@ -2053,6 +2053,7 @@
         <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到<span class="nav-badge" id="nav-checkin-badge">自动</span></div>
         <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
         <div class="nav-item" data-page="recycle"><svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>回收站清理</div>
+        <div class="nav-item" data-page="websearch"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>全网联网搜索</div>
       </div>
     </nav>
     <div class="sidebar-foot">
@@ -2372,6 +2373,35 @@
         <button id="btn-prov-save">保存并注入</button>
         <button class="ghost" id="btn-prov-reset">清空表单</button>
         <span class="hint" id="prov-note" style="margin:0"></span>
+      </div>
+    </div>
+
+    <!-- 大模型出站代理策略（防断连直连 / 设置代理端口） -->
+    <div class="card" style="margin-top:14px;padding:16px 20px">
+      <div class="card-head" style="margin-bottom:10px">
+        <span class="card-title" style="display:flex;align-items:center;gap:6px">
+          <svg class="ico-sm" style="color:var(--brand)" aria-hidden="true"><use href="#i-shield"/></svg>
+          大模型出站代理设置
+        </span>
+        <span id="chat-proxy-status-badge" class="growth-task-tag" style="background:rgba(34,197,94,0.15);color:#22c55e;font-size:12px;font-weight:600">
+          ⚡ 纯直连防断连模式 (推荐)
+        </span>
+      </div>
+      <p class="sub" style="margin:0 0 10px 0;font-size:11.5px;color:var(--ink-2);line-height:1.6">
+        大模型长会话（如 1MB+ 复杂上下文、长推理）易受本地代理闪退或假死影响导致中途 <code>EOF</code> 与 <code>proxyconnect refused</code>。<strong>留空端口即为纯直连（推荐防断连）</strong>；若必须走代理，可填入本地代理端口（如 7890、7897、10809）。
+      </p>
+
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <label for="ipt-chat-proxy-port" style="font-size:12px;color:var(--ink-1);font-weight:600;min-width:65px">代理端口：</label>
+        <input type="text" id="ipt-chat-proxy-port" placeholder="留空为纯直连（推荐）；或填入端口如 7890" style="flex:1;min-width:220px;padding:6px 10px;font-size:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.25);color:var(--ink-1)">
+        <button type="button" id="btn-save-chat-proxy" class="primary" style="padding:6px 14px;font-size:12px">保存并应用</button>
+        <button type="button" id="btn-fill-sys-proxy" class="ghost" style="padding:6px 12px;font-size:12px;display:none">填入系统代理</button>
+        <button type="button" id="btn-reset-chat-proxy" class="ghost" style="padding:6px 12px;font-size:12px">恢复纯直连</button>
+      </div>
+
+      <div style="font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px">
+        <span>当前生效出口：</span>
+        <code id="chat-proxy-describe" style="color:var(--ink-1);background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:4px">纯直连</code>
       </div>
     </div>
   </section>
@@ -2879,8 +2909,86 @@
       </span>
     </label>
   </section>
+</div>
 
+<div data-page="websearch" hidden>
+  <section>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-search"/></svg>全网实时联网搜索服务 (Web Search Proxy)</h2>
+    <p class="sub">
+      wbmux 内置了官方标准全网联网搜索反代端点，通过复用已登录的客户端凭据，
+      为第三方开发工具（如 <strong>ZCode、Claude Code、Cline、Cherry Studio</strong> 等）提供<strong>零成本、免复杂配置、高时效性的全网实时检索</strong>。
+    </p>
+
+    <!-- 协议与端点配置指引卡片 -->
+    <div class="card" style="margin-top:14px;padding:16px 20px">
+      <div class="card-head" style="margin-bottom:10px">
+        <span class="card-title" style="display:flex;align-items:center;gap:6px">
+          <svg class="ico-sm" style="color:var(--brand)" aria-hidden="true"><use href="#i-server"/></svg>
+          外部客户端接入协议与端点
+        </span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:12.5px;font-weight:600;color:var(--ink-1)">1. Anthropic Messages 协议端点（推荐：ZCode / Claude Code / Cline）</span>
+            <span class="growth-task-tag" style="background:rgba(59,130,246,0.15);color:#3b82f6;font-size:11px">支持 web_search 工具协议</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <code id="txt-search-endpoint-messages" style="flex:1;background:rgba(255,255,255,0.05);padding:6px 10px;border-radius:6px;font-size:12px;color:var(--brand)">http://127.0.0.1:18789/v1/search/messages</code>
+            <button type="button" class="ghost" id="btn-copy-search-messages" style="font-size:11px;padding:4px 10px">复制端点</button>
+          </div>
+          <p class="hint" style="margin:0;font-size:11.5px;color:var(--ink-2)">
+            在客户端中声明 <code>web_search</code> 工具即可自动调用。认证头支持 <code>x-api-key: &lt;当前Token&gt;</code> 或 <code>Authorization: Bearer &lt;当前Token&gt;</code>；<b>本机回环（127.0.0.1 / ::1）完全免密，认证头可留空</b>——对接不支持填 Key 的客户端时直接留空即可。
+          </p>
+        </div>
+
+        <div style="background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:12.5px;font-weight:600;color:var(--ink-1)">2. 极简结构化 JSON 搜索端点（脚本 / 浏览器插件 / 自定义扩展）</span>
+            <span class="growth-task-tag" style="background:rgba(168,85,247,0.15);color:#a855f7;font-size:11px">GET / POST JSON</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <code id="txt-search-endpoint-native" style="flex:1;background:rgba(255,255,255,0.05);padding:6px 10px;border-radius:6px;font-size:12px;color:var(--brand)">http://127.0.0.1:18789/v1/search?q=关键词&amp;n=5</code>
+            <button type="button" class="ghost" id="btn-copy-search-native" style="font-size:11px;padding:4px 10px">复制端点</button>
+          </div>
+          <p class="hint" style="margin:0;font-size:11.5px;color:var(--ink-2)">
+            直接通过 GET/POST 查询，响应为包含 <code>title</code>、<code>url</code>、<code>snippet</code>、<code>response_time_ms</code> 的原生标准 JSON。
+          </p>
+        </div>
+      </div>
     </div>
+
+    <!-- 在线即时搜索测试台 -->
+    <div class="card" style="margin-top:14px;padding:16px 20px">
+      <div class="card-head" style="margin-bottom:12px">
+        <span class="card-title" style="display:flex;align-items:center;gap:6px">
+          <svg class="ico-sm" style="color:var(--brand)" aria-hidden="true"><use href="#i-scan"/></svg>
+          全网实时搜索在线测试台
+        </span>
+      </div>
+
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+        <input type="text" id="ipt-search-query" placeholder="输入搜索词（例如：Go 1.24 新特性重大变更）..." style="flex:1;padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.25);color:var(--ink-0)">
+        <select id="sel-search-limit" style="width:110px;padding:8px;font-size:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.25);color:var(--ink-1)">
+          <option value="3">获取 3 条</option>
+          <option value="5" selected>获取 5 条</option>
+          <option value="10">获取 10 条</option>
+        </select>
+        <button type="button" id="btn-run-search" class="primary" style="padding:8px 18px;font-size:13px">
+          <svg class="ico-sm" aria-hidden="true"><use href="#i-search"/></svg>立即检索
+        </button>
+      </div>
+
+      <div id="search-status-bar" style="display:none;margin-bottom:12px;font-size:12px;color:var(--ink-2)"></div>
+      <div id="search-results-list" style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:12px;color:var(--ink-3);padding:16px 0;text-align:center">
+          输入搜索词并点击「立即检索」，即可验证全网实时搜索与摘要提取效果。
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
   </main>
 </div>
 
@@ -4360,6 +4468,7 @@
     if (page === "compact") loadCompact();
     if (page === "gateway") loadGatewayAudit(true);
     if (page === "zcode") loadZCode(false);
+    if (page === "websearch") loadWebSearch();
     if (page === "sessions") {
       var fr = document.getElementById("sessions-frame");
       if (fr && !fr.src) fr.src = "/sessions?t=" + encodeURIComponent(TOKEN);
@@ -8678,6 +8787,7 @@
     renderInstalls();
     renderBackends();
     renderBanner();
+    renderChatProxy(st);
     if (target) loadPreview();
 
     // 搬运的默认方向是"从另一侧搬向宿主档位"：两台都装着时，用户想要的
@@ -9688,6 +9798,199 @@
   setInterval(updateTelemetryBadge, 60000);
   // 静默初始化成长任务中心状态与侧边栏徽章
   loadDomesticGrowth(true);
+
+  // ---------- 大模型出站代理策略交互 ----------
+  function renderChatProxy(st) {
+    var ipt = document.getElementById("ipt-chat-proxy-port");
+    var badge = document.getElementById("chat-proxy-status-badge");
+    var descEl = document.getElementById("chat-proxy-describe");
+    var btnFillSys = document.getElementById("btn-fill-sys-proxy");
+    if (!ipt) return;
+    var settings = (st && st.settings) || {};
+    var addr = settings.chatProxyAddr || "";
+    var desc = settings.proxyDescribe || "纯直连";
+    var sysProxy = settings.detectedProxyAddr || "";
+    ipt.value = addr;
+    if (descEl) descEl.textContent = desc;
+
+    if (addr) {
+      if (badge) {
+        badge.textContent = "🌐 代理模式已启用 (" + addr + ")";
+        badge.style.background = "rgba(59,130,246,0.15)";
+        badge.style.color = "#3b82f6";
+      }
+    } else {
+      if (badge) {
+        badge.textContent = "⚡ 纯直连防断连模式 (推荐)";
+        badge.style.background = "rgba(34,197,94,0.15)";
+        badge.style.color = "#22c55e";
+      }
+    }
+
+    if (btnFillSys) {
+      if (sysProxy && sysProxy !== addr) {
+        btnFillSys.style.display = "inline-flex";
+        btnFillSys.textContent = "填入系统代理 (" + sysProxy + ")";
+        btnFillSys.onclick = function () {
+          saveChatProxy(sysProxy);
+        };
+      } else {
+        btnFillSys.style.display = "none";
+      }
+    }
+  }
+
+  function saveChatProxy(addr) {
+    api("/api/chat-proxy-toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ addr: addr })
+    }).then(function (res) {
+      toast(addr ? ("已设置大模型代理出口: " + addr) : "已恢复大模型纯直连防断连模式", "ok");
+      if (state && state.settings) {
+        state.settings.chatProxyAddr = addr;
+        state.settings.proxyChatRequests = !!addr;
+        if (res && res.describe) state.settings.proxyDescribe = res.describe;
+        if (res && res.detectedProxyAddr) state.settings.detectedProxyAddr = res.detectedProxyAddr;
+      }
+      renderChatProxy(state);
+    }).catch(function (err) {
+      toast("保存代理设置失败: " + err, "bad");
+    });
+  }
+
+  var btnSaveChatProxy = document.getElementById("btn-save-chat-proxy");
+  var btnResetChatProxy = document.getElementById("btn-reset-chat-proxy");
+  var iptChatProxyPort = document.getElementById("ipt-chat-proxy-port");
+
+  if (btnSaveChatProxy && iptChatProxyPort) {
+    btnSaveChatProxy.addEventListener("click", function () {
+      saveChatProxy(iptChatProxyPort.value.trim());
+    });
+    iptChatProxyPort.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        saveChatProxy(iptChatProxyPort.value.trim());
+      }
+    });
+  }
+  if (btnResetChatProxy) {
+    btnResetChatProxy.addEventListener("click", function () {
+      saveChatProxy("");
+    });
+  }
+
+  // ---------- 全网实时联网搜索交互 ----------
+  function loadWebSearch() {
+    var origin = window.location.origin;
+    var elMsg = document.getElementById("txt-search-endpoint-messages");
+    var elNative = document.getElementById("txt-search-endpoint-native");
+    if (elMsg) elMsg.textContent = origin + "/v1/search/messages";
+    if (elNative) elNative.textContent = origin + "/v1/search?q=关键词&n=5";
+    var ipt = document.getElementById("ipt-search-query");
+    if (ipt && !ipt.value) setTimeout(function () { ipt.focus(); }, 100);
+  }
+
+  var btnRunSearch = document.getElementById("btn-run-search");
+  var iptSearchQuery = document.getElementById("ipt-search-query");
+  var selSearchLimit = document.getElementById("sel-search-limit");
+  var searchResultsList = document.getElementById("search-results-list");
+  var searchStatusBar = document.getElementById("search-status-bar");
+
+  function bindSearchCopyBtn(btnId, targetId) {
+    var b = document.getElementById(btnId);
+    if (b) {
+      b.addEventListener("click", function () {
+        var el = document.getElementById(targetId);
+        if (el) {
+          navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+            toast("端点地址已复制到剪贴板", "ok");
+          });
+        }
+      });
+    }
+  }
+  bindSearchCopyBtn("btn-copy-search-messages", "txt-search-endpoint-messages");
+  bindSearchCopyBtn("btn-copy-search-native", "txt-search-endpoint-native");
+
+  if (btnRunSearch && iptSearchQuery) {
+    btnRunSearch.addEventListener("click", function () {
+      var q = iptSearchQuery.value.trim();
+      if (!q || q.length < 2) {
+        toast("请输入至少 2 个字符的搜索词", "warn");
+        return;
+      }
+      var limit = parseInt(selSearchLimit ? selSearchLimit.value : "5", 10) || 5;
+      btnRunSearch.classList.add("loading");
+      btnRunSearch.disabled = true;
+      if (searchStatusBar) {
+        searchStatusBar.style.display = "block";
+        searchStatusBar.textContent = "正在调用官方上游检索并提炼全网内容…";
+      }
+
+      api("/api/search/debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, max_results: limit })
+      }).then(function (res) {
+        btnRunSearch.classList.remove("loading");
+        btnRunSearch.disabled = false;
+        if (!res || !res.ok) {
+          if (searchStatusBar) searchStatusBar.textContent = "搜索未能返回有效结果。";
+          return;
+        }
+        if (searchStatusBar) {
+          searchStatusBar.textContent = "全网检索成功 · 耗时 " + (res.response_time_ms || 0) + "ms · 命中 " + (res.results ? res.results.length : 0) + " 条";
+        }
+        if (!searchResultsList) return;
+        searchResultsList.innerHTML = "";
+        if (!res.results || res.results.length === 0) {
+          searchResultsList.innerHTML = '<div style="font-size:12px;color:var(--ink-3);padding:14px 0;text-align:center">未找到相关结果。</div>';
+          return;
+        }
+        res.results.forEach(function (item, idx) {
+          var card = el("div", {
+            style: "background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 14px"
+          });
+          var head = el("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px" });
+          var title = el("a", {
+            href: item.url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            style: "font-size:13px;font-weight:600;color:var(--brand);text-decoration:none",
+            text: (idx + 1) + ". " + (item.title || item.url)
+          });
+          head.appendChild(title);
+          card.appendChild(head);
+          if (item.snippet) {
+            var snip = el("p", {
+              style: "font-size:12px;color:var(--ink-1);line-height:1.6;margin:0 0 6px 0",
+              text: item.snippet
+            });
+            card.appendChild(snip);
+          }
+          var link = el("div", {
+            style: "font-size:11px;color:var(--ink-3);word-break:break-all",
+            text: item.url
+          });
+          card.appendChild(link);
+          searchResultsList.appendChild(card);
+        });
+      }).catch(function (err) {
+        btnRunSearch.classList.remove("loading");
+        btnRunSearch.disabled = false;
+        if (searchStatusBar) searchStatusBar.textContent = "搜索失败: " + err;
+        toast("联网搜索失败: " + err, "bad");
+      });
+    });
+
+    iptSearchQuery.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        btnRunSearch.click();
+      }
+    });
+  }
 
   // 兜底启动：若 500ms 内 state 仍未完成加载，自动补充拉取一次
   setTimeout(function () {

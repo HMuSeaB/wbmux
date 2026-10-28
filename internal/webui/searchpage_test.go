@@ -210,3 +210,63 @@ func TestSearchMessagesEndpointIntegration(t *testing.T) {
 		t.Errorf("GET /v1/search 响应不符: %+v", resMap)
 	}
 }
+
+// TestSearchLoopbackAuthMatrix 钉住"一键接入各客户端"的鉴权边界。
+//
+// 2026-10-28 的教训：各客户端带凭据的方式五花八门——有的发
+// Authorization、有的发 x-api-key、有的只带一个 sk-xxx 占位、还有的
+// 压根不发认证头。原先要求"回环 + 携带任意非空 Key"，结果不发头的客户端
+// 直接 403，用户只看到"令牌无效"，根本猜不到是自己没填 Key。
+//
+// 规矩定成两条：
+//   - 回环（本机）：怎么带都行，包括不带 —— 只读搜索，越权面仅限本机
+//   - 远端：必须持有正确 token
+func TestSearchLoopbackAuthMatrix(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"query":"x","results":[{"title":"t","url":"https://e.com"}],"total_results":1}`))
+	}))
+	defer fake.Close()
+
+	srv, err := New(Options{Token: "secret_tok"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv.upstreamBaseFn = func() string { return fake.URL }
+	srv.intlCredFn = func(p *variant.Probe) (usage.ProxyCredentials, error) {
+		return usage.ProxyCredentials{Token: "intl", UID: "uid"}, nil
+	}
+	mux := http.NewServeMux()
+	srv.registerOpenAI(mux)
+
+	cases := []struct {
+		name    string
+		remote  string
+		headers map[string]string
+		want    int
+	}{
+		{"回环+无任何认证头", "127.0.0.1:5555", nil, http.StatusOK},
+		{"回环+占位Key", "127.0.0.1:5555", map[string]string{"Authorization": "Bearer sk-xxx"}, http.StatusOK},
+		{"回环+x-api-key占位", "127.0.0.1:5555", map[string]string{"x-api-key": "anything"}, http.StatusOK},
+		{"回环+IPv6", "[::1]:5555", nil, http.StatusOK},
+		{"远端+无Key", "203.0.113.9:1234", nil, http.StatusForbidden},
+		{"远端+错误Key", "203.0.113.9:1234", map[string]string{"Authorization": "Bearer nope"}, http.StatusForbidden},
+		{"远端+正确Key", "203.0.113.9:1234", map[string]string{"Authorization": "Bearer secret_tok"}, http.StatusOK},
+		{"远端+x-api-key正确", "203.0.113.9:1234", map[string]string{"x-api-key": "secret_tok"}, http.StatusOK},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/search?q=hello", nil)
+			req.RemoteAddr = c.remote
+			for k, v := range c.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != c.want {
+				t.Errorf("期望 %d，得到 %d：%s", c.want, w.Code, w.Body.String())
+			}
+		})
+	}
+}

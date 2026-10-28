@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
 	"github.com/HMuSeaB/wbmux/internal/growth"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/runner"
 	"github.com/HMuSeaB/wbmux/internal/telemetry"
 	"github.com/HMuSeaB/wbmux/internal/usage"
@@ -311,6 +313,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/checkin/auto", s.guard(s.handleCheckinAuto))
 	mux.HandleFunc("/api/checkin/auto-toggle", s.guard(s.handleAutoCheckinToggle))
 	mux.HandleFunc("/api/client-update", s.guard(s.handleClientUpdatePolicy))
+	mux.HandleFunc("/api/chat-proxy-toggle", s.guard(s.handleChatProxyToggle))
+	mux.HandleFunc("/api/search/debug", s.guard(s.handleSearchDebug))
 	mux.HandleFunc("/api/workspace", s.guard(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
@@ -579,10 +583,14 @@ type BackendView struct {
 
 // SettingsView 是设置文件的摘要。
 type SettingsView struct {
-	Path           string   `json:"path"`
-	HostVariant    string   `json:"hostVariant"`
-	HostExe        string   `json:"hostExe"`
-	ExtraEndpoints []string `json:"extraEndpoints"`
+	Path              string   `json:"path"`
+	HostVariant       string   `json:"hostVariant"`
+	HostExe           string   `json:"hostExe"`
+	ExtraEndpoints    []string `json:"extraEndpoints"`
+	ProxyChatRequests bool   `json:"proxyChatRequests"`
+	ChatProxyAddr     string `json:"chatProxyAddr"`
+	ProxyDescribe     string `json:"proxyDescribe"`
+	DetectedProxyAddr string `json:"detectedProxyAddr"`
 }
 
 // State 是界面首屏所需的全部数据。
@@ -669,10 +677,13 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		CanRun:  map[string]bool{},
 		Quota:   s.quotaSnapshot(),
 		Settings: SettingsView{
-			Path:           cfgPath,
-			HostVariant:    cfg.HostVariant,
-			HostExe:        cfg.HostExe,
-			ExtraEndpoints: cfg.ExtraEndpoints,
+			Path:              cfgPath,
+			HostVariant:       cfg.HostVariant,
+			HostExe:           cfg.HostExe,
+			ProxyChatRequests: config.ProxyChatRequestsOn(cfg),
+			ChatProxyAddr:     cfg.ChatProxyAddr,
+			ProxyDescribe:     netroute.Describe(),
+			DetectedProxyAddr: netroute.DetectedProxy(),
 		},
 		SelectedIntlModels: cfg.SelectedIntlModels,
 	}
@@ -1081,4 +1092,62 @@ func (s *Server) handleCredentialImport(w http.ResponseWriter, r *http.Request) 
 // 国际端成长中心连续活跃打卡与阶梯积分兑换
 // （handleGrowthStreak, handleGrowthRedeem）
 // 已解耦迁移至 growthpage.go。
+
+// handleChatProxyToggle 处理大模型转发代理策略更新（支持端口设置与开关）。
+func (s *Server) handleChatProxyToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Enabled *bool   `json:"enabled"`
+		Addr    *string `json:"addr"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求解析失败")
+		return
+	}
+
+	var newAddr string
+	var newOn bool
+
+	if err := s.updateConfig(func(c *config.Config) error {
+		if req.Addr != nil {
+			trimmed := strings.TrimSpace(*req.Addr)
+			if trimmed != "" {
+				if _, err := config.NormalizeProxyURL(trimmed); err != nil {
+					return err
+				}
+				c.ChatProxyAddr = trimmed
+				on := true
+				c.ProxyChatRequests = &on
+			} else {
+				c.ChatProxyAddr = ""
+				off := false
+				c.ProxyChatRequests = &off
+			}
+		} else if req.Enabled != nil {
+			c.ProxyChatRequests = req.Enabled
+			if !*req.Enabled {
+				c.ChatProxyAddr = ""
+			}
+		}
+		newAddr = c.ChatProxyAddr
+		newOn = config.ProxyChatRequestsOn(*c)
+		return nil
+	}); err != nil {
+		writeErr(w, http.StatusBadRequest, "保存代理设置失败: "+err.Error())
+		return
+	}
+
+	s.logf("大模型出站代理策略已更新：走代理=%v, 地址=%s", newOn, newAddr)
+	writeJSON(w, map[string]any{
+		"ok":                true,
+		"proxyChatRequests": newOn,
+		"chatProxyAddr":     newAddr,
+		"describe":          netroute.Describe(),
+		"detectedProxyAddr": netroute.DetectedProxy(),
+	})
+}
+
 

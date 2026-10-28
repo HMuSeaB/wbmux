@@ -852,6 +852,66 @@ func TestHandleUpdateApplyStreamValidation(t *testing.T) {
 	}
 }
 
+// TestChatProxyToggleAPI 验证大模型转发代理策略读取与开关切换
+func TestChatProxyToggleAPI(t *testing.T) {
+	e := newTestEnv(t, Options{})
+
+	// 1. 默认状态：proxyChatRequests 必须为 false
+	var st State
+	e.do(t, http.MethodGet, "/api/state", "", true).decode(t, &st)
+	if st.Settings.ProxyChatRequests {
+		t.Errorf("默认设置下 proxyChatRequests 应为 false，得到 %v", st.Settings.ProxyChatRequests)
+	}
+
+	// 2. 切换为开启
+	resOn := e.do(t, http.MethodPost, "/api/chat-proxy-toggle", `{"enabled":true}`, true)
+	if resOn.code != http.StatusOK {
+		t.Fatalf("开启应返回 200，得到 %d: %s", resOn.code, string(resOn.body))
+	}
+	var resOnBody map[string]any
+	resOn.decode(t, &resOnBody)
+	if resOnBody["proxyChatRequests"] != true {
+		t.Errorf("响应中的 proxyChatRequests 应为 true")
+	}
+
+	// 再次查 state 确认持久化
+	e.do(t, http.MethodGet, "/api/state", "", true).decode(t, &st)
+	if !st.Settings.ProxyChatRequests {
+		t.Errorf("持久化后 proxyChatRequests 应为 true")
+	}
+
+	// 3. 切换回关闭
+	resOff := e.do(t, http.MethodPost, "/api/chat-proxy-toggle", `{"enabled":false}`, true)
+	if resOff.code != http.StatusOK {
+		t.Fatalf("关闭应返回 200，得到 %d", resOff.code)
+	}
+	e.do(t, http.MethodGet, "/api/state", "", true).decode(t, &st)
+	if st.Settings.ProxyChatRequests {
+		t.Errorf("关闭后持久化值应为 false")
+	}
+
+	// 4. 设置自定义代理端口 "7890"
+	resPort := e.do(t, http.MethodPost, "/api/chat-proxy-toggle", `{"addr":"7890"}`, true)
+	if resPort.code != http.StatusOK {
+		t.Fatalf("设置代理端口应返回 200，得到 %d: %s", resPort.code, string(resPort.body))
+	}
+	e.do(t, http.MethodGet, "/api/state", "", true).decode(t, &st)
+	if st.Settings.ChatProxyAddr != "7890" || !st.Settings.ProxyChatRequests {
+		t.Errorf("期望 ChatProxyAddr=7890 且 ProxyChatRequests=true，实际得到 %+v", st.Settings)
+	}
+
+	// 5. 清空端口恢复纯直连
+	resClear := e.do(t, http.MethodPost, "/api/chat-proxy-toggle", `{"addr":""}`, true)
+	if resClear.code != http.StatusOK {
+		t.Fatalf("清空代理端口应返回 200，得到 %d", resClear.code)
+	}
+	e.do(t, http.MethodGet, "/api/state", "", true).decode(t, &st)
+	if st.Settings.ChatProxyAddr != "" || st.Settings.ProxyChatRequests {
+		t.Errorf("清空后应恢复纯直连，实际得到 %+v", st.Settings)
+	}
+}
+
+
 
 
 

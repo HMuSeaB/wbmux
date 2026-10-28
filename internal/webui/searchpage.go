@@ -15,9 +15,15 @@ import (
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/search"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
+
+var searchHTTPClient = &http.Client{
+	Timeout:   search.DefaultTimeout,
+	Transport: netroute.Transport(),
+}
 
 const (
 	// messagesBodyLimit 限制 Messages 请求体为 1MB。
@@ -30,12 +36,19 @@ const (
 var msgIDSeq uint64
 
 // searchAuthGuard 保护对外搜索端点：
-// 支持标准 Authorization Bearer、X-Wbmux-Token、URL 参数 t；
+// 支持标准 Authorization Bearer、Anthropic 的 x-api-key、X-Wbmux-Token、URL 参数 t；
 // 同时也对本机 127.0.0.1 回环环境提供友好的开发放行。
 func (s *Server) searchAuthGuard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.touch()
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got == "" {
+			// Anthropic 协议（/v1/search/messages 就是照它做的）默认用
+			// x-api-key 带凭据，不是 Authorization。少了这一条，凡是按
+			// Anthropic 规范配置的客户端（ZCode 的「Headers Auth」、
+			// Claude Code 之类）都会被判"令牌无效"——实测 2026-10-28。
+			got = strings.TrimSpace(r.Header.Get("x-api-key"))
+		}
 		if got == "" {
 			got = r.Header.Get("X-Wbmux-Token")
 		}
@@ -49,15 +62,28 @@ func (s *Server) searchAuthGuard(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// 零配置生态兼容：如果请求来自本机回环地址（127.0.0.1 / ::1），且客户端已携带任意 Bearer Key
-		// （例如 DSH/第三方插件默认填写的占位符 "sk-xxx"），允许直接透传调用，消除繁琐的手动配置摩擦
-		if isLoopbackRequest(r) && got != "" {
+		// 回环免密：本机 127.0.0.1 的请求直接放行，**不要求带任何 Key**。
+		//
+		// 为什么放宽到"不带 Key 也放行"（2026-10-28）：
+		// 搜索端点要"一键接入各客户端"，而这些客户端的配置项千差万别——
+		// 有的强制填 API Key（填 sk-xxx 占位），有的根本不允许留空认证头，
+		// 有的发 x-api-key、有的发 Authorization、有的什么都不发。原先要求
+		// "携带任意非空 Key"，结果 Qoder 这类不发认证头的客户端直接 403，
+		// 用户只看到一句"令牌无效"，完全猜不到原因。
+		//
+		// 安全性：这个服务本来就只监听 127.0.0.1（非回环地址在启动时即被拒绝），
+		// 能连上端口的进程已经是本机进程；搜索是**只读**操作，不写文件、不启动
+		// 进程、不改账号状态，泄露面仅限于"本机程序能借用搜索额度"。
+		// 需要严格鉴权的远程场景仍然走 token 比对那条路。
+		if isLoopbackRequest(r) {
 			next(w, r)
 			return
 		}
 
+		// 远端请求：必须持有正确 token（上面的比对已经覆盖）。
+		// 走到这里说明既不是回环、token 也不对。
 		// 否则若 token 未提供或不匹配
-		writeMessagesError(w, http.StatusForbidden, "authentication_error", "令牌无效：请把 WebUI 界面地址中 t= 的值作为 API Key 传入")
+		writeMessagesError(w, http.StatusForbidden, "authentication_error", "令牌无效：请把 WebUI 界面地址中 t= 的值作为 API Key 传入（支持 Authorization: Bearer 与 x-api-key）")
 	}
 }
 
@@ -307,7 +333,7 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := search.DoSearch(r.Context(), nil, endpoint, token, uid, query, search.DefaultMaxResults)
+	out, err := search.DoSearch(r.Context(), searchHTTPClient, endpoint, token, uid, query, search.DefaultMaxResults)
 	duration := time.Since(start)
 
 	// 纳入网关调用审计
@@ -396,7 +422,7 @@ func (s *Server) handleSearchNative(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	out, err := search.DoSearch(r.Context(), nil, endpoint, token, uid, query, maxResults)
+	out, err := search.DoSearch(r.Context(), searchHTTPClient, endpoint, token, uid, query, maxResults)
 	duration := time.Since(start)
 
 	record := gatewayaudit.Record{
@@ -463,7 +489,7 @@ func (s *Server) handleSearchDebug(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	out, err := search.DoSearch(r.Context(), nil, endpoint, token, uid, q, req.MaxResults)
+	out, err := search.DoSearch(r.Context(), searchHTTPClient, endpoint, token, uid, q, req.MaxResults)
 	duration := time.Since(start)
 
 	if err != nil {
