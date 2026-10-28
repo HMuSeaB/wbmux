@@ -290,8 +290,14 @@ func (s *Server) openaiGuard(next http.HandlerFunc) http.HandlerFunc {
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
 			// 这条也要记：令牌过期（重启后端口与令牌都变）在客户端那边
 			// 同样只是一句报错，不记就完全看不出是"地址还是旧的"。
-			s.note(ProxyLogEntry{Level: "bad",
-				Text: fmt.Sprintf("拒绝 %s %s：令牌无效（客户端可能还拿着上一次启动的地址）", r.Method, r.URL.Path)})
+			text := fmt.Sprintf("拒绝 %s %s：令牌无效（客户端可能还拿着上一次启动的地址）", r.Method, r.URL.Path)
+			if authDiagEnabled() {
+				// 只加"形态"与指纹，绝不写原文——日志会被贴进公开 issue。
+				// 指纹能直接回答"客户端发的和 wbmux 当前用的是不是同一个"。
+				text += "｜客户端=" + describeAuthHeader(r.Header.Get("Authorization"), r.Header.Get("x-api-key")) +
+					"｜期望指纹=" + tokenFingerprint(s.token)
+			}
+			s.note(ProxyLogEntry{Level: "bad", Text: text})
 			writeOpenAIError(w, http.StatusForbidden, "令牌无效：请把界面地址里 t= 的值当 API Key 用")
 			return
 		}

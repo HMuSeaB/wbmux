@@ -391,11 +391,14 @@ func (p *chatPipeline) execute() {
 	if resp.StatusCode >= 500 {
 		level, verdict = "warn", "上游故障"
 	}
+	// 上游报错偶尔会把 Authorization 原样回显（"invalid token: eyJ..."）。
+	// 日志是要贴进公开 issue 的，这里必须过一遍脱敏再落。
+	safeMsg := redactSecretText(cutStr(compactError(msg), 300))
 	p.s.note(ProxyLogEntry{
 		Level: level, Model: p.route.Model, Tools: p.up.Tools,
 		MS: time.Since(p.started).Milliseconds(),
 		Text: fmt.Sprintf("被%s%s model=%s 上游 HTTP %d: %s",
-			p.route.Label, verdict, p.route.Model, resp.StatusCode, cutStr(compactError(msg), 300)),
+			p.route.Label, verdict, p.route.Model, resp.StatusCode, safeMsg),
 	})
 	p.recordAudit(resp.StatusCode, chatMetrics{}, false, msg)
 	writeOpenAIError(p.w, resp.StatusCode, fmt.Sprintf("上游 HTTP %d: %s", resp.StatusCode, msg))
