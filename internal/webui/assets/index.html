@@ -4737,6 +4737,7 @@
   //
   // atBoot 为 true 表示是**打开界面时**自动跑的（不是用户切到这一页）。
   // updateCheckinBadge 同步更新侧边栏上的签到徽章状态
+  // updateCheckinBadge 同步更新侧边栏上的签到徽章状态
   function updateCheckinBadge(data) {
     var b = document.getElementById("nav-checkin-badge");
     if (!b) return;
@@ -4746,7 +4747,7 @@
       return;
     }
     var st = data.status || {};
-    if (st.todayCheckedIn || (data.skipped && /今日已签|已领过|已签/.test(data.note || ""))) {
+    if (st.todayCheckedIn || (data.skipped && /already|今日已签|已领过|已签/.test(data.skipped + (data.note || "")))) {
       b.textContent = "已签";
       b.className = "nav-badge ok";
     } else if (st.active === false) {
@@ -4758,16 +4759,59 @@
     }
   }
 
+  // updateUsageCheckinWidget 精准局部更新【概览与额度】卡片上的打卡状态，避免触发全量重绘竞态
+  function updateUsageCheckinWidget() {
+    var ckSt = (checkinLast && checkinLast.status) || {};
+    var isSigned = !!(ckSt.todayCheckedIn || (checkinLast && checkinLast.skipped && /already|已签|已领/.test(checkinLast.skipped + (checkinLast.note || ""))));
+    var streak = ckSt.streakDays || 1;
+
+    // 1. 更新顶层 KPI 栏
+    var kpiFoot = document.getElementById("kpi-cn-checkin");
+    if (kpiFoot) {
+      clear(kpiFoot);
+      kpiFoot.appendChild(el("span", {
+        text: isSigned ? ("✅ 今日已签 · 连签 " + streak + " 天") : "⚠️ 今日未打卡 (可领积分)"
+      }));
+    }
+
+    // 2. 更新国内端卡片挂件文字
+    var cardText = document.getElementById("card-cn-checkin-text");
+    if (cardText) {
+      clear(cardText);
+      cardText.appendChild(el("svg", { class: "ico ico-sm", html: '<use href="#i-calendar"/>' }));
+      cardText.appendChild(el("span", {
+        text: isSigned ? ("今日已签 · 连签 " + streak + " 天") : "每日签到：顺手打卡领积分"
+      }));
+    }
+
+    // 3. 更新国内端卡片挂件按钮
+    var btnAction = document.getElementById("btn-cn-checkin-action");
+    if (btnAction) {
+      btnAction.className = isSigned ? "ghost" : "btn-hero";
+      btnAction.textContent = isSigned ? "查看明细" : "一键打卡";
+      btnAction.onclick = function () {
+        if (isSigned) {
+          showPage("checkin");
+        } else {
+          btnAction.textContent = "打卡中…";
+          api("/api/checkin/claim", { method: "POST" }).then(function (r) {
+            toast("签到成功 +" + (r.credit || 10) + " 积分", "ok");
+            loadUsage(true, true);
+            loadCheckin(false);
+          }).catch(function (e) {
+            toast(e.message, "bad");
+            showPage("checkin");
+          });
+        }
+      };
+    }
+  }
+
   // 两种情况都照常签，区别只在提示语：打开界面时用户可能压根没在看这一页，
   // 得在页面上留一句"刚才是自动签的"，免得他以为要手动补一次。
   function loadCheckin(atBoot) {
     var box = document.getElementById("checkin-body");
     if (!box) return;
-    // 已经问过服务端了就别再问。
-    //
-    // 守卫必须是个**独立的布尔**，不能拿 checkinLast 当判据：请求失败时
-    // checkinLast 会被置成 null，那样切回这一页又会重发一次写请求——
-    // "试过了但没成"和"还没试过"是两回事，得分开记。
     if (checkinAsked) return;
     checkinAsked = true;
     loadAutoCheckinToggle();
@@ -4778,29 +4822,31 @@
 
     api("/api/checkin/auto", { method: "POST" })
       .then(function (data) {
-        // 自动签到的回话形状与 /api/checkin 一致（都带 status/label），
-        // 额外多了 skipped / note 说明"这次做了什么"。
-        checkinLast = { side: data.side, label: data.label, status: data.status };
+        var st = data.status || {};
+        if (data.skipped && /already|已签|已领/.test(data.skipped + (data.note || ""))) {
+          st.todayCheckedIn = true;
+        }
+        if (data.result && (data.result.alreadyCheckedIn || data.result.credit > 0)) {
+          st.todayCheckedIn = true;
+          if (data.result.streakDays > 0) st.streakDays = data.result.streakDays;
+        }
+        checkinLast = { side: data.side, label: data.label, status: st, skipped: data.skipped, note: data.note, result: data.result };
         updateCheckinBadge(data);
         renderAutoNote(data, atBoot);
+        updateUsageCheckinWidget();
         if (data.status) {
           renderCheckin(checkinLast);
-          // 这里**不再**顺手 renderUsage()。签到回话只改了签到徽章，
-          // 与用量面板无关；而用量面板依赖 usageData，签到往往比
-          // /api/usage 先返回，此时重画只会把还没填好的面板刷成
-          // 「已自选付费 0 个」（2026-10-26 实测）。
-          // 面板该由 loadUsage 自己画，那是它唯一的数据来源。
         } else {
           clear(box);
           box.appendChild(el("div", { class: "note warn",
             text: data.note || "没读到签到状态。" }));
-          checkinLast = null;
           refreshCheckinButtons();
         }
       })
       .catch(function (e) {
         checkinLast = null;
         updateCheckinBadge(null);
+        updateUsageCheckinWidget();
         clear(box);
         box.appendChild(el("div", { class: "note bad", text: "自动签到失败：" + e.message }));
       })
@@ -8109,8 +8155,9 @@
       el("span", { class: "kpi-num", text: cnTotalSum > 0 ? cnRemainSum.toLocaleString() : (cnLv.ok ? "包月尊享" : "未登录") }),
       el("span", { class: "kpi-unit", text: cnTotalSum > 0 ? "积分" : "无限使用" })
     ]);
-    var cnKpiFoot = el("div", { class: "kpi-foot" }, [
-      el("span", { text: ckSt.todayCheckedIn ? ("✅ 今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "⚠️ 今日未打卡 (可领积分)" })
+    var isSigned = !!(ckSt.todayCheckedIn || (checkinLast && checkinLast.skipped && /already|已签|已领/.test(checkinLast.skipped + (checkinLast.note || ""))));
+    var cnKpiFoot = el("div", { class: "kpi-foot", id: "kpi-cn-checkin" }, [
+      el("span", { text: isSigned ? ("✅ 今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "⚠️ 今日未打卡 (可领积分)" })
     ]);
     kpiBar.appendChild(el("div", { class: "kpi-card" }, [cnKpiTitle, cnKpiVal, cnKpiFoot]));
 
@@ -8199,14 +8246,15 @@
 
     // 国内每日签到状态挂件（带就地打卡）
     var cnCheckinSec = el("div", {
+      id: "card-cn-checkin",
       style: "background:rgba(255,255,255,0.02);border:1px solid var(--g4);border-radius:var(--r-sm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between;"
     });
-    var isSigned = ckSt.todayCheckedIn;
-    cnCheckinSec.appendChild(el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)" }, [
+    cnCheckinSec.appendChild(el("div", { id: "card-cn-checkin-text", style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)" }, [
       el("svg", { class: "ico ico-sm", html: '<use href="#i-calendar"/>' }),
       el("span", { text: isSigned ? ("今日已签 · 连签 " + (ckSt.streakDays || 1) + " 天") : "每日签到：顺手打卡领积分" })
     ]));
     var btnCheckinAction = el("button", {
+      id: "btn-cn-checkin-action",
       class: isSigned ? "ghost" : "btn-hero",
       style: "padding:3px 10px;font-size:11px;height:auto",
       text: isSigned ? "查看明细" : "一键打卡"

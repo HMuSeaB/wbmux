@@ -304,6 +304,10 @@ func AutoClaim(d Deps, id variant.ID) (AutoResult, error) {
 		return AutoResult{Status: &st}, err
 	}
 	res.Result = &claimed
+	st.TodayCheckedIn = true
+	if claimed.Status != nil {
+		st = *claimed.Status
+	}
 	if claimed.AlreadyCheckedIn {
 		// 查的时候还没签、领的时候已经签了：说明这一刻有人（或另一个页面）
 		// 先领了。结果是对的，只是要如实说清没多领。
