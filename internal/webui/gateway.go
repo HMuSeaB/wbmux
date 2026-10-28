@@ -177,22 +177,34 @@ func (s *Server) forwardGatewayChat(w http.ResponseWriter, r *http.Request, body
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
-	if flusher, ok := w.(http.Flusher); ok && strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
-		buf := make([]byte, 4096)
+	// SSE 转发：与 streamChatThrough 同一套打法——先甩响应头（否则调用方
+	// 要等上游第一个 token 才知道请求被接受，推理模型 TTFT 可达数秒），
+	// 禁用中间层缓冲，再逐块 flush，杜绝 32KB 缓冲滞后。
+	if strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(resp.StatusCode)
+		flusher, canFlush := w.(http.Flusher)
+		if canFlush {
+			flusher.Flush()
+		}
+		buf := make([]byte, 32*1024)
 		for {
-			n, errRead := resp.Body.Read(buf)
+			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
-				_, _ = w.Write(buf[:n])
-				flusher.Flush()
+				if _, err := w.Write(buf[:n]); err != nil {
+					return // 调用方断开，上游留给 defer 关
+				}
+				if canFlush {
+					flusher.Flush()
+				}
 			}
-			if errRead != nil {
-				break
+			if readErr != nil {
+				return // io.EOF 或上游中断，流到此结束
 			}
 		}
-	} else {
-		_, _ = io.Copy(w, resp.Body)
 	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // handleGatewayCountTokens 转发 /v1/messages/count_tokens 到上游；

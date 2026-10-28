@@ -3,12 +3,14 @@ package webui
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -215,5 +217,78 @@ func TestLiveSearchMessagesNoToolRejected(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestLiveGatewayStreamingIncrementalFlush 钉住聊天透传的流式语义：
+// 上游发出第一个 SSE 事件后阻塞，客户端必须在放行之前就收到它。
+//
+// 没有即时 flush 时这个用例会死锁——客户端等响应头/首事件，上游等
+// release，5 秒超时即失败。它同时验证「先 flush 响应头」：推理模型
+// TTFT 数秒，客户端要立刻知道请求已被接受。
+func TestLiveGatewayStreamingIncrementalFlush(t *testing.T) {
+	release := make(chan struct{})
+	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
+		w.(http.Flusher).Flush()
+		<-release // 阻塞：客户端拿不到后续事件，除非网关在逐块 flush
+		fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer chat.Close()
+	search := liveSearchUpstream(t)
+	defer search.Close()
+
+	srv := newLiveGatewayServer(t, search.URL, chat.URL)
+	base := startGateway(t, srv)
+
+	resp, err := http.Post(base+"/v1/messages", "application/json",
+		strings.NewReader(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "event-stream") {
+		t.Fatalf("content-type = %q, want event-stream", ct)
+	}
+
+	// 第一个事件必须在上游放行之前到达。
+	firstLine := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		if scanner.Scan() {
+			firstLine <- scanner.Text()
+		}
+	}()
+	select {
+	case line := <-firstLine:
+		if !strings.Contains(line, "message_start") {
+			t.Errorf("首事件 = %q, want message_start", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("首事件未在放行前到达：网关缺少即时 flush，流式已退化为缓冲后一次性返回")
+	}
+
+	// 放行上游，第二个事件随后到达。
+	close(release)
+	secondLine := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.Contains(scanner.Text(), "message_stop") {
+				secondLine <- scanner.Text()
+				return
+			}
+		}
+	}()
+	select {
+	case line := <-secondLine:
+		if !strings.Contains(line, "message_stop") {
+			t.Errorf("次事件 = %q, want message_stop", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("放行后第二个事件未到达")
 	}
 }
