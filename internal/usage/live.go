@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/telemetry"
@@ -201,23 +204,102 @@ var liveCache = struct {
 	at   map[variant.ID]time.Time
 }{data: map[variant.ID]*LiveAccount{}, at: map[variant.ID]time.Time{}}
 
-// LiveAccounts 拉取两侧实时账号数据（带缓存）。
-// 一侧失败不影响另一侧：失败信息放在该侧的 Err 里，界面照常渲染。
+const liveAccountsFileName = "live_accounts.json"
+
+var (
+	liveCacheInited sync.Once
+	liveFetching    sync.Map // 防并发重复后台拉取
+)
+
+func loadLiveCacheDisk() {
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	f, err := os.Open(filepath.Join(dir, liveAccountsFileName))
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	var diskData map[string]*LiveAccount
+	if err := json.NewDecoder(f).Decode(&diskData); err == nil {
+		for k, v := range diskData {
+			id := variant.ID(k)
+			if id == variant.CN || id == variant.Intl {
+				liveCache.data[id] = v
+			}
+		}
+	}
+}
+
+func saveLiveCacheDisk() {
+	if config.InTestBinary() {
+		return
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(dir, 0700)
+	targetPath := filepath.Join(dir, liveAccountsFileName)
+	config.GuardRealWrite(targetPath)
+
+	raw, err := json.Marshal(liveCache.data)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(targetPath, raw, 0600)
+}
+
+// LiveAccounts 拉取两侧实时账号数据（带磁盘快照与 SWR 缓存）。
+//
+// 核心原则：用户首屏绝对不能被海外网络 I/O 阻塞。
+// 只要内存或磁盘有快照数据（哪怕过期），立即 0 毫秒秒回已有数据；
+// 若缓存已过期，在后台异步静默刷新并更新磁盘，彻底消除白屏与等待感。
 func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
+	liveCacheInited.Do(func() {
+		liveCache.Lock()
+		loadLiveCacheDisk()
+		liveCache.Unlock()
+	})
+
 	out := map[string]*LiveAccount{}
-	var toFetch []variant.ID
+	var needSyncFetch []variant.ID
+	var needAsyncFetch []variant.ID
 
 	liveCache.Lock()
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
-		if at, ok := liveCache.at[id]; ok && time.Since(at) < liveCacheTTL {
-			out[string(id)] = liveCache.data[id]
+		acc, hasData := liveCache.data[id]
+		at, hasAt := liveCache.at[id]
+		if hasData && acc != nil {
+			out[string(id)] = acc
+			if !hasAt || time.Since(at) >= liveCacheTTL {
+				needAsyncFetch = append(needAsyncFetch, id)
+			}
 		} else {
-			toFetch = append(toFetch, id)
+			needSyncFetch = append(needSyncFetch, id)
 		}
 	}
 	liveCache.Unlock()
 
-	if len(toFetch) == 0 {
+	// 1. 已有快照但过期的部分：后台异步静默刷新，不卡住当前返回
+	for _, id := range needAsyncFetch {
+		if _, loading := liveFetching.LoadOrStore(id, true); !loading {
+			go func(targetID variant.ID) {
+				defer liveFetching.Delete(targetID)
+				acc := fetchLiveAccount(probe, targetID)
+				liveCache.Lock()
+				liveCache.data[targetID] = acc
+				liveCache.at[targetID] = time.Now()
+				saveLiveCacheDisk()
+				liveCache.Unlock()
+			}(id)
+		}
+	}
+
+	// 2. 彻底没有快照的冷启动档位：才进行同步拉取
+	if len(needSyncFetch) == 0 {
 		return out
 	}
 
@@ -225,10 +307,10 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 		id  variant.ID
 		acc *LiveAccount
 	}
-	resChan := make(chan fetchResult, len(toFetch))
+	resChan := make(chan fetchResult, len(needSyncFetch))
 	var wg sync.WaitGroup
 
-	for _, id := range toFetch {
+	for _, id := range needSyncFetch {
 		wg.Add(1)
 		go func(targetID variant.ID) {
 			defer wg.Done()
@@ -247,6 +329,7 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 		liveCache.at[r.id] = now
 		out[string(r.id)] = r.acc
 	}
+	saveLiveCacheDisk()
 	liveCache.Unlock()
 
 	return out
@@ -784,7 +867,7 @@ func fetchPackageDetailsMap(endpoint string, cred credential.Credential, codes [
 	return resMap
 }
 
-// fetchLivePackages 拉积分包余量与官方精确到期时间。
+// fetchLivePackages 拉积分包余量（轻量首屏快速接口，不发额外深层明细查询）。
 func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePackage, error) {
 	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-summary", "POST", cred.Token, cred.UID, strings.NewReader("{}"), nil)
 	if err != nil {
@@ -803,32 +886,12 @@ func fetchLivePackages(endpoint string, cred credential.Credential) ([]LivePacka
 		return nil, err
 	}
 	var out []LivePackage
-	var codes []string
 	for _, p := range doc.Packages {
 		lc := LivePackage{Code: p.PackageCode, Unit: p.CapacityUnit}
 		lc.Total, _ = p.Total.Float64()
 		lc.Remain, _ = p.Remain.Float64()
 		lc.Used, _ = p.Used.Float64()
 		out = append(out, lc)
-		if p.PackageCode != "" {
-			codes = append(codes, p.PackageCode)
-		}
-	}
-
-	// 查询官方绝对精确的到期明细与包名（分秒不差吻合官方控制台）
-	if details := fetchPackageDetailsMap(endpoint, cred, codes); len(details) > 0 {
-		for i := range out {
-			if d, ok := details[out[i].Code]; ok {
-				if d.Name != "" {
-					out[i].Name = d.Name
-				}
-				out[i].CycleStartTime = d.CycleStartTime
-				out[i].CycleEndTime = d.CycleEndTime
-				if d.ExpireMs > 0 {
-					out[i].ExpiresAtMs = d.ExpireMs
-				}
-			}
-		}
 	}
 
 	return EnhancePackagesWithMeta(out), nil

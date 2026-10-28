@@ -8598,7 +8598,9 @@
   // ---------- 启动 ----------
 
   document.getElementById("btn-doctor").addEventListener("click", runDoctor);
-  document.getElementById("btn-usage-scan").addEventListener("click", loadUsage);
+  document.getElementById("btn-usage-scan").addEventListener("click", function () {
+    loadUsage(false, true);
+  });
   var btnExportCred = document.getElementById("btn-export-cred");
   if (btnExportCred) {
     btnExportCred.addEventListener("click", function () {
@@ -8873,8 +8875,8 @@
     migFrom = other ? other.id : null;
     document.getElementById("mig-direction").textContent = migFrom ? migTitle() : "";
 
-    // 状态拉取成功后，强制无阻塞拉取双端资产与额度，确保 selectedIntlModels 完美应用到卡片渲染中
-    loadUsage(true, true);
+    // 状态拉取成功后，使用安全快照缓存秒级加载双端资产与额度（不强制穿透缓存）
+    loadUsage(true, false);
     // 异步拉取模型连通性雷达快照
     loadModelRadar(true);
 
@@ -10080,7 +10082,7 @@
 
   // 兜底启动：若 500ms 内 state 仍未完成加载，自动补充拉取一次
   setTimeout(function () {
-    if (!usageData) loadUsage(true, true);
+    if (!usageData) loadUsage(true, false);
   }, 500);
 })();
 </script>
