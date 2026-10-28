@@ -85,3 +85,57 @@ func TestTransportUsesResolvedProxy(t *testing.T) {
 		t.Fatalf("Proxy 回调出错：%v", err)
 	}
 }
+
+// TestTransportProxyIsReevaluated 钉住 2026-10-28 的回归：
+// Transport 的 Proxy 必须每次请求重新求值，不能在建 Transport 时固化。
+//
+// 原实现写的是 `Proxy: Resolve().Proxy`——一次性求值。而 chatHTTPClient
+// 是包级变量，进程启动时就把当时的代理决定焊死了。之后代理进程退出，
+// 它仍然拿着那个坏代理去连，日志里表现为连续一批
+// "proxyconnect tcp: dial tcp 127.0.0.1:7890: actively refused it"，
+// 而其实直连是通的。
+func TestTransportProxyIsReevaluated(t *testing.T) {
+	// 拿两个都活着的端口：一个给"旧代理"，一个给"新代理"。
+	oldPx, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("起不了本地监听：", err)
+	}
+	defer oldPx.Close()
+	newPx, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("起不了本地监听：", err)
+	}
+	defer newPx.Close()
+
+	t.Setenv("HTTPS_PROXY", "http://"+oldPx.Addr().String())
+	t.Setenv("HTTP_PROXY", "http://"+oldPx.Addr().String())
+	Invalidate()
+	defer Invalidate()
+
+	tr := Transport()
+	req, _ := http.NewRequest("GET", "https://www.workbuddy.ai/v3/config", nil)
+	u, err := tr.Proxy(req)
+	if err != nil || u == nil {
+		t.Fatalf("活端口应被选为代理，得到 %v / %v", u, err)
+	}
+	if u.Host != oldPx.Addr().String() {
+		t.Fatalf("应走环境变量代理 %s，得到 %s", oldPx.Addr(), u.Host)
+	}
+
+	// 关键断言：换成新端口后，**同一个 Transport** 必须跟着变。
+	// 若 Proxy 被固化成一次性求值，这里仍会返回旧端口，测试失败。
+	t.Setenv("HTTPS_PROXY", "http://"+newPx.Addr().String())
+	t.Setenv("HTTP_PROXY", "http://"+newPx.Addr().String())
+	Invalidate()
+
+	u2, err := tr.Proxy(req)
+	if err != nil {
+		t.Fatalf("Proxy 求值出错：%v", err)
+	}
+	if u2 == nil {
+		t.Fatal("代理变了，同一个 Transport 却返回直连")
+	}
+	if u2.Host != newPx.Addr().String() {
+		t.Errorf("应切到新代理 %s，仍停在 %s——Proxy 被固化了", newPx.Addr(), u2.Host)
+	}
+}

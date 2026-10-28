@@ -28,8 +28,13 @@ import (
 )
 
 const (
-	probeTimeout   = 300 * time.Millisecond
-	probeCacheTTL  = 5 * time.Second
+	probeTimeout = 300 * time.Millisecond
+	// probeCacheTTL 是"探测结论"的保鲜期。
+	//
+	// 别设长：代理进程的生死是按秒变的（Clash 切换节点、重启内核都会短暂
+	// 断开）。缓存的唯一目的是避免同一轮里多次拨号，2 秒足够覆盖一批并发
+	// 请求，又不会让"代理刚死"这件事被瞒太久。
+	probeCacheTTL  = 2 * time.Second
 	defaultDialTTL = 30 * time.Second
 )
 
@@ -210,7 +215,13 @@ func matchesAny(host string, patterns []string) bool {
 // 那种"配置在、进程不在"的场景翻车的地方。
 func Transport() *http.Transport {
 	t := &http.Transport{
-		Proxy:                 Resolve().Proxy,
+		// Proxy 必须是个**每次都重新求值**的函数，不能写成 Resolve().Proxy。
+		//
+		// 写成 Resolve().Proxy 的后果（2026-10-28 实测）：那是一次性求值，
+		// 而 chatHTTPClient 是包级变量，进程启动时就固化了。此后代理进程
+		// 退出、或启动瞬间代理还没起来，这个 Transport 会一直拿着坏代理
+		// 直到重启——日志里那批 "proxyconnect ... 7890 refused" 就是这么来的。
+		Proxy:                 proxyOf,
 		DialContext:           (&net.Dialer{Timeout: defaultDialTTL, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
@@ -220,6 +231,16 @@ func Transport() *http.Transport {
 		ExpectContinueTimeout: time.Second,
 	}
 	return t
+}
+
+// Resolve().Proxy 为 nil 时（直连）要能安全解引用，所以包一层：
+// 直接调用 Choice.Proxy 会 panic。
+func proxyOf(r *http.Request) (*url.URL, error) {
+	c := Resolve()
+	if c.Proxy == nil {
+		return nil, nil
+	}
+	return c.Proxy(r)
 }
 
 // Describe 给界面/日志用的一句话：走哪条路，有没有降级。
@@ -235,4 +256,15 @@ func Describe() string {
 		return "直连（已跳过不可用的代理：" + c.Reason + "）"
 	}
 	return "直连"
+}
+
+// DetectedProxy 返回系统或环境变量中检测到的代理原始地址，未配置时返回空。
+func DetectedProxy() string {
+	if raw := envProxy(); raw != "" {
+		return raw
+	}
+	if raw, _ := systemProxy(); raw != "" {
+		return raw
+	}
+	return ""
 }
