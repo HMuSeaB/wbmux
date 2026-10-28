@@ -150,6 +150,12 @@ type Server struct {
 	// 没有这个接缝，唯一能验证这条链路的办法就是拿**真账号去签一次**——
 	// 那是个写操作，不能出现在测试里。
 	checkinDepsFn func() checkin.Deps
+
+	// 网关模式（POST /v1/messages）的三个测试接缝：零值走环境变量
+	// WBMUX_GATEWAY_UPSTREAM / WBMUX_GATEWAY_API_KEY / WBMUX_GATEWAY_BEARER。
+	gatewayUpstreamFn func() string
+	gatewayAPIKeyFn  func() string
+	gatewayBearerFn  func() bool
 }
 
 // upstreamBase 返回国际后端地址。测试要能指到本地假上游，

@@ -198,6 +198,36 @@ Because the built-in debug proxy strictly conforms to the OpenAI specification, 
 **Why search is independent of model tier / free trials**:
 Search routes through `/agenttool/v1/search`, which is completely separate from chat completions (`/v2/chat/completions`). It uses account credentials (Token + UID) directly without invoking or billing against LLM credits. Even when `deepseek-v4.1-flash` free quotas end or chat points are exhausted, search remains operational.
 
+### 🔌 Anthropic Messages Gateway Mode (use wbmux as your main endpoint)
+
+The search endpoint above handles **search requests only** — plain chat requests are rejected with 400. But clients like ZCode / Claude Code / Cline only accept a single endpoint (`ANTHROPIC_BASE_URL` / custom model Base URL) and send both chat and the web-search side request there.
+
+Gateway mode closes that gap with a new `POST /v1/messages` route that branches by content:
+
+```text
+POST /v1/messages
+   ├─ tools declare web_search  → wbmux free web search (reuses logged-in credentials)
+   └─ everything else           → byte-level passthrough to WBMUX_GATEWAY_UPSTREAM
+```
+
+The upstream is expected to be an **Anthropic Messages-compatible endpoint** (StepFun / GLM / DeepSeek / Anthropic official all qualify), so passthrough needs no protocol translation — streaming responses are forwarded as-is, and client-supplied auth headers are replaced with your configured upstream key. Any custom model thus gets native `web_search` at zero cost, with plain chat completely unaffected.
+
+**Configuration (environment variables, set alongside wbmux)**:
+
+| Variable | Description |
+|---|---|
+| `WBMUX_GATEWAY_UPSTREAM` | Chat upstream base URL, e.g. `https://api.stepfun.com/step_plan` |
+| `WBMUX_GATEWAY_API_KEY` | Upstream API key (sent as `x-api-key` by default) |
+| `WBMUX_GATEWAY_BEARER` | Set to `1` to send the upstream key as `Authorization: Bearer` |
+
+When no upstream is configured, non-search requests return 503 with setup instructions; search is unaffected.
+
+**Protocol fidelity** (aligned with real Anthropic behavior, 2026-10-28):
+
+- `stream: true` synthesizes the standard SSE event sequence (`ping` → `message_start` → `server_tool_use` → `web_search_tool_result` → `message_delta` → `message_stop`) so streaming clients can consume it directly;
+- responses include the `server_tool_use` block (carrying the query) and the `usage.server_tool_use.web_search_requests` billing field;
+- honors `max_uses` (result count) and `allowed_domains` / `blocked_domains` (domain filtering, blocked wins) from the `web_search` tool declaration.
+
 ---
 
 ## 🤝 Contributing & Feedback

@@ -197,6 +197,53 @@ wbmux shortcut
 - 与 `GPT-6.x / Pro Only` 的档位限制也无关；
 - 账号积分耗尽时，搜索通常仍可用（它不计入对话 credits）。
 
+### 🔌 Anthropic Messages 网关模式（把 wbmux 当主端点用）
+
+上面的搜索端点**只处理搜索请求**——普通聊天打到它上面会被 400 拒绝。
+而 ZCode / Claude Code / Cline 这类客户端只认一个端点（`ANTHROPIC_BASE_URL` /
+自定义模型 Base URL），聊天和联网搜索的旁路请求发往同一地址。
+
+网关模式把这个 Gap 补上：新增 `POST /v1/messages`，按请求内容分流——
+
+```text
+POST /v1/messages
+   ├─ tools 声明 web_search  → wbmux 免费联网搜索（复用已登录凭据）
+   └─ 其余                   → 字节级透传到 WBMUX_GATEWAY_UPSTREAM 配置的上游
+```
+
+上游预期为 **Anthropic Messages 兼容端点**（StepFun / GLM / DeepSeek /
+Anthropic 官方均是），透传不做协议转换，流式响应原样转发，客户端自带的
+认证头替换为配置的上游 Key。这样任意自定义模型都能零成本获得原生
+`web_search`，普通对话完全不受影响。
+
+**配置（环境变量，随 wbmux 一起启动）**：
+
+| 变量 | 说明 |
+|---|---|
+| `WBMUX_GATEWAY_UPSTREAM` | 聊天上游 Base URL，如 `https://api.stepfun.com/step_plan` |
+| `WBMUX_GATEWAY_API_KEY` | 上游 API Key（默认以 `x-api-key` 发送） |
+| `WBMUX_GATEWAY_BEARER` | 设为 `1` 时上游 Key 改以 `Authorization: Bearer` 发送 |
+
+未配置上游时，非搜索请求返回 503 并附带配置说明，搜索功能不受影响。
+
+**客户端接入**（以 ZCode 自定义模型为例）：
+
+| 配置项 | 值 |
+|---|---|
+| API 地址 | `http://127.0.0.1:<端口>` |
+| API Key | 任意占位值（会被替换为 `WBMUX_GATEWAY_API_KEY`） |
+| 模型能力 → 原生联网搜索 | **开启** |
+
+**协议完备性**（2026-10-28 对齐 Anthropic 真实行为）：
+
+- `stream: true` 时合成标准 SSE 事件序列（`ping` → `message_start` →
+  `server_tool_use` → `web_search_tool_result` → `message_delta` →
+  `message_stop`），按流式解析的客户端可直接消费；
+- 响应含 `server_tool_use` 块（携带搜索词）与
+  `usage.server_tool_use.web_search_requests` 计费字段；
+- 尊重 `web_search` 工具声明里的 `max_uses`（结果条数）与
+  `allowed_domains` / `blocked_domains`（域名过滤，blocked 优先）。
+
 
 ---
 

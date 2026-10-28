@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -100,13 +101,76 @@ func isLoopbackRequest(r *http.Request) bool {
 
 type messagesRequest struct {
 	Model    string             `json:"model"`
+	Stream   bool               `json:"stream"`
 	Tools    []messagesTool     `json:"tools"`
 	Messages []messagesTurnItem `json:"messages"`
 }
 
 type messagesTool struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
+	Type           string   `json:"type"`
+	Name           string   `json:"name"`
+	MaxUses        int      `json:"max_uses"`
+	AllowedDomains []string `json:"allowed_domains"`
+	BlockedDomains []string `json:"blocked_domains"`
+}
+
+// webSearchToolSpec 从请求的 tools 里提取 web_search 服务端工具的声明参数。
+// 找不到时返回 nil。
+func webSearchToolSpec(tools []messagesTool) *messagesTool {
+	for i := range tools {
+		t := tools[i]
+		if strings.HasPrefix(t.Type, "web_search") || t.Name == "web_search" {
+			return &tools[i]
+		}
+	}
+	return nil
+}
+
+// domainAllowed 按 Anthropic web_search 的域名过滤语义判断单条结果：
+// blocked_domains 优先（命中即排除），allowed_domains 非空时要求命中其一。
+// 域名匹配为后缀匹配，"go.dev" 同时命中 "go.dev" 与 "www.go.dev"。
+func domainAllowed(rawURL string, allowed, blocked []string) bool {
+	host := urlHost(rawURL)
+	if host == "" {
+		return true // 拿不到主机名时不拦，避免误杀
+	}
+	for _, b := range blocked {
+		if host == b || strings.HasSuffix(host, "."+b) {
+			return false
+		}
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, a := range allowed {
+		if host == a || strings.HasSuffix(host, "."+a) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterResultsByDomain 按 allowed/blocked 过滤搜索结果，保持原顺序。
+func filterResultsByDomain(results []search.SearchResult, allowed, blocked []string) []search.SearchResult {
+	if len(allowed) == 0 && len(blocked) == 0 {
+		return results
+	}
+	out := make([]search.SearchResult, 0, len(results))
+	for _, r := range results {
+		if domainAllowed(r.URL, allowed, blocked) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// urlHost 提取 URL 的小写主机名（尽力而为，失败返回空串）。
+func urlHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 type messagesTurnItem struct {
@@ -191,6 +255,23 @@ type messagesTextBlock struct {
 type messagesUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// ServerToolUse 对齐 Anthropic 的服务端工具计费字段。ZCode 等客户端
+	// 的用量 schema 里有 web_search_requests，缺失时按 0 处理；显式给出
+	// 1 可以让调用方在界面上正确显示"发生了一次联网搜索"。
+	ServerToolUse struct {
+		WebSearchRequests int `json:"web_search_requests"`
+	} `json:"server_tool_use,omitempty"`
+}
+
+// messagesServerToolUseBlock 是 Anthropic 真实流式/非流式响应里
+// web_search_tool_result 之前的 server_tool_use 块，携带搜索调用本身。
+type messagesServerToolUseBlock struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Input struct {
+		Query string `json:"query"`
+	} `json:"input"`
 }
 
 type messagesResponse struct {
@@ -249,11 +330,21 @@ func buildMessagesSearchResponse(query, model string, out *search.SearchOutcome)
 		model = "workbuddy-web-search"
 	}
 	callID := randomHexID(16)
-	content := []any{messagesToolResultBlock{
+	content := []any{}
+	// server_tool_use 块：与 Anthropic 真实响应形态一致，客户端可据此
+	// 关联 tool_use_id 并在界面上展示"发起了一次搜索"。
+	serverUse := messagesServerToolUseBlock{
+		Type: "server_tool_use",
+		ID:   "srvtoolu_" + callID,
+		Name: "web_search",
+	}
+	serverUse.Input.Query = query
+	content = append(content, serverUse)
+	content = append(content, messagesToolResultBlock{
 		Type:      "web_search_tool_result",
 		ToolUseID: "srvtoolu_" + callID,
 		Content:   items,
-	}}
+	})
 	if len(citations) > 0 {
 		content = append(content, messagesTextBlock{
 			Type:      "text",
@@ -261,7 +352,7 @@ func buildMessagesSearchResponse(query, model string, out *search.SearchOutcome)
 			Citations: citations,
 		})
 	}
-	return messagesResponse{
+	resp := messagesResponse{
 		ID:           "msg_wbmux_" + callID,
 		Type:         "message",
 		Role:         "assistant",
@@ -269,8 +360,129 @@ func buildMessagesSearchResponse(query, model string, out *search.SearchOutcome)
 		Content:      content,
 		StopReason:   "end_turn",
 		StopSequence: nil,
-		Usage:        messagesUsage{InputTokens: 0, OutputTokens: 0},
 	}
+	resp.Usage.ServerToolUse.WebSearchRequests = 1
+	return resp
+}
+
+// ---------------- SSE 流式合成 ----------------
+
+// writeMessagesSearchSSE 把完整的搜索响应合成为 Anthropic Messages SSE
+// 事件序列，使按流式解析的客户端（ZCode / Claude Code，transport=sse）
+// 能直接消费。wbmux 自身不生成模型文本，因此文本块只携带 citations。
+//
+// 事件序列（对齐 Anthropic 真实流）：
+//
+//	ping → message_start → server_tool_use(start/delta/stop)
+//	      → web_search_tool_result(start/stop)
+//	      → text(start/delta/stop，如有 citations)
+//	      → message_delta → message_stop
+func writeMessagesSearchSSE(w http.ResponseWriter, resp *messagesResponse) {
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	emit := func(event string, payload any) {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	emit("ping", map[string]string{"type": "ping"})
+	emit("message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":            resp.ID,
+			"type":          "message",
+			"role":          "assistant",
+			"model":         resp.Model,
+			"content":       []any{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage": map[string]any{
+				"input_tokens":    resp.Usage.InputTokens,
+				"output_tokens":   0,
+				"server_tool_use": map[string]any{"web_search_requests": 0},
+			},
+		},
+	})
+
+	index := 0
+	for _, block := range resp.Content {
+		switch b := block.(type) {
+		case messagesServerToolUseBlock:
+			emit("content_block_start", map[string]any{
+				"type":  "content_block_start",
+				"index": index,
+				"content_block": map[string]any{
+					"type":  "server_tool_use",
+					"id":    b.ID,
+					"name":  b.Name,
+					"input": map[string]any{},
+				},
+			})
+			queryJSON, _ := json.Marshal(b.Input.Query)
+			emit("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": index,
+				"delta": map[string]any{"type": "input_json_delta", "partial_json": string(queryJSON)},
+			})
+			emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+			index++
+		case messagesToolResultBlock:
+			emit("content_block_start", map[string]any{
+				"type":  "content_block_start",
+				"index": index,
+				"content_block": map[string]any{
+					"type":        "web_search_tool_result",
+					"tool_use_id": b.ToolUseID,
+					"content":     b.Content,
+				},
+			})
+			emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+			index++
+		case messagesTextBlock:
+			emit("content_block_start", map[string]any{
+				"type":          "content_block_start",
+				"index":         index,
+				"content_block": map[string]any{"type": "text", "text": ""},
+			})
+			if b.Text != "" {
+				emit("content_block_delta", map[string]any{
+					"type":  "content_block_delta",
+					"index": index,
+					"delta": map[string]any{"type": "text_delta", "text": b.Text},
+				})
+			}
+			for _, c := range b.Citations {
+				emit("content_block_delta", map[string]any{
+					"type":  "content_block_delta",
+					"index": index,
+					"delta": map[string]any{"type": "citations_delta", "citation": c},
+				})
+			}
+			emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+			index++
+		}
+	}
+
+	emit("message_delta", map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": resp.StopReason, "stop_sequence": nil},
+		"usage": map[string]any{
+			"output_tokens":   resp.Usage.OutputTokens,
+			"server_tool_use": map[string]any{"web_search_requests": resp.Usage.ServerToolUse.WebSearchRequests},
+		},
+	})
+	emit("message_stop", map[string]any{"type": "message_stop"})
 }
 
 // ---------------- 凭据与上游基础调度 ----------------
@@ -320,11 +532,29 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.runWebSearch(w, r, &req, start)
+}
+
+// runWebSearch 执行一次联网搜索并写出响应。请求体由调用方读取并解析——
+// 网关模式（/v1/messages）分流进来时复用同一段逻辑，避免重复消费 Body。
+func (s *Server) runWebSearch(w http.ResponseWriter, r *http.Request, req *messagesRequest, start time.Time) {
 	query := extractMessagesQuery(req.Messages)
 	if len(query) < search.MinQueryLen {
 		writeMessagesError(w, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("搜索词长度至少需要 %d 个字符", search.MinQueryLen))
 		return
+	}
+
+	// web_search 工具声明参数：max_uses 决定结果条数，域名过滤按
+	// Anthropic 语义（blocked 优先，allowed 非空时要求命中）。
+	spec := webSearchToolSpec(req.Tools)
+	maxResults := search.DefaultMaxResults
+	var allowed, blocked []string
+	if spec != nil {
+		if spec.MaxUses > 0 {
+			maxResults = search.ClampSearchMaxResults(spec.MaxUses)
+		}
+		allowed, blocked = spec.AllowedDomains, spec.BlockedDomains
 	}
 
 	endpoint, token, uid, err := s.resolveSearchCredentials()
@@ -333,7 +563,7 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := search.DoSearch(r.Context(), searchHTTPClient, endpoint, token, uid, query, search.DefaultMaxResults)
+	out, err := search.DoSearch(r.Context(), searchHTTPClient, endpoint, token, uid, query, maxResults)
 	duration := time.Since(start)
 
 	// 纳入网关调用审计
@@ -343,7 +573,7 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		ModelMapped:      "WorkBuddy联网搜索",
 		AccountID:        uid,
 		AccountMask:      maskUID(uid),
-		IsStream:         false,
+		IsStream:         req.Stream,
 		StatusCode:       http.StatusOK,
 		DurationMs:       duration.Milliseconds(),
 		TTFTMs:           duration.Milliseconds(),
@@ -360,6 +590,11 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if dropped := len(out.Results) - len(filterResultsByDomain(out.Results, allowed, blocked)); dropped > 0 {
+		out.Results = filterResultsByDomain(out.Results, allowed, blocked)
+		out.TotalResults = len(out.Results)
+	}
+
 	record.CompletionTokens = len(out.Results) * 60
 	record.TotalTokens = record.PromptTokens + record.CompletionTokens
 	gatewayaudit.Default().RecordRequest(record)
@@ -371,6 +606,11 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 	})
 
 	resp := buildMessagesSearchResponse(query, req.Model, out)
+	if req.Stream {
+		// 流式：合成 Anthropic SSE 事件序列（ZCode/Claude Code 按 sse 解析）。
+		writeMessagesSearchSSE(w, &resp)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
 }

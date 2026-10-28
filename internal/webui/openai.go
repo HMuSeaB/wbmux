@@ -313,6 +313,10 @@ func (s *Server) registerOpenAI(mux *http.ServeMux) {
 	// 官方全网联网搜索：Anthropic Messages 兼容形态与原生极简形态
 	mux.HandleFunc("/v1/search/messages", s.searchAuthGuard(s.handleSearchMessages))
 	mux.HandleFunc("/v1/search", s.searchAuthGuard(s.handleSearchNative))
+	// Anthropic Messages 网关模式：带 web_search 工具走免费搜索，
+	// 其余透传到 WBMUX_GATEWAY_UPSTREAM 配置的上游模型端点。
+	mux.HandleFunc("/v1/messages", s.searchAuthGuard(s.handleGatewayMessages))
+	mux.HandleFunc("/v1/messages/count_tokens", s.searchAuthGuard(s.handleGatewayCountTokens))
 }
 
 // handleOpenAIModels 返回国际侧实时模型清单（OpenAI 格式）。

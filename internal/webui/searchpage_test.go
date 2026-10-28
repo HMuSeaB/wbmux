@@ -100,11 +100,11 @@ func TestBuildMessagesSearchResponse(t *testing.T) {
 	if resp.Role != "assistant" || resp.Model != "claude-3-5-sonnet" {
 		t.Errorf("Role 或 Model 不符: %+v", resp)
 	}
-	if len(resp.Content) != 2 {
-		t.Fatalf("content blocks 应为 2（结果块 + 文本引用块），得到 %d", len(resp.Content))
+	if len(resp.Content) != 3 {
+		t.Fatalf("content blocks 应为 3（server_tool_use + 结果块 + 文本引用块），得到 %d", len(resp.Content))
 	}
 
-	toolResult, ok := resp.Content[0].(messagesToolResultBlock)
+	toolResult, ok := resp.Content[1].(messagesToolResultBlock)
 	if !ok || toolResult.Type != "web_search_tool_result" {
 		t.Errorf("第一个 block 应为 web_search_tool_result")
 	}
@@ -112,7 +112,7 @@ func TestBuildMessagesSearchResponse(t *testing.T) {
 		t.Errorf("web_search_tool_result content 不符: %+v", toolResult.Content)
 	}
 
-	textBlock, ok := resp.Content[1].(messagesTextBlock)
+	textBlock, ok := resp.Content[2].(messagesTextBlock)
 	if !ok || textBlock.Type != "text" {
 		t.Errorf("第二个 block 应为 text")
 	}
@@ -191,8 +191,8 @@ func TestSearchMessagesEndpointIntegration(t *testing.T) {
 	if err := json.Unmarshal(w2.Body.Bytes(), &parsedResp); err != nil {
 		t.Fatalf("响应反序列化失败: %v", err)
 	}
-	if len(parsedResp.Content) != 2 {
-		t.Errorf("响应 content blocks 长度应为 2，得到 %d", len(parsedResp.Content))
+	if len(parsedResp.Content) != 3 {
+		t.Errorf("响应 content blocks 长度应为 3，得到 %d", len(parsedResp.Content))
 	}
 
 	// 3. 极简结构化搜索 GET /v1/search?q=Golang
