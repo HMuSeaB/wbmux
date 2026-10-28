@@ -586,9 +586,14 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		selected = cfg.SelectedIntlModels
 	}
 	writeJSON(w, usageResponse{
-		Survey:             usage.Build(s.probe()),
+		Survey:             usage.BuildFast(s.probe()),
 		ProxyQuota:         s.quotaSnapshot(),
 		ProxyOK:            s.quotaOKSnapshot(),
 		SelectedIntlModels: selected,
 	})
+}
+
+// handleUsageHistory 异步按需拉取历史限流记录与会话消耗榜。
+func (s *Server) handleUsageHistory(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, usage.BuildHistory(s.probe()))
 }

@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/migrate"
@@ -163,6 +164,30 @@ func Build(probe *variant.Probe) Survey {
 	s.Costs = costs
 	s.Rates = SurveyRates(probe)
 	s.Live = LiveAccounts(probe)
+	s.Warnings = append(s.Warnings, warns...)
+	return s
+}
+
+// BuildFast 仅汇总模型费率与实时账号数据，完全跳过昂贵的全盘历史会话递归扫描。
+// 首屏秒开专用，历史限流与消耗记录通过 BuildHistory 按需懒加载。
+func BuildFast(probe *variant.Probe, liveAccounts ...map[string]*LiveAccount) Survey {
+	var live map[string]*LiveAccount
+	if len(liveAccounts) > 0 && liveAccounts[0] != nil {
+		live = liveAccounts[0]
+	} else {
+		live = LiveAccounts(probe)
+	}
+	return Survey{
+		Rates: SurveyRates(probe),
+		Live:  live,
+	}
+}
+
+// BuildHistory 专供按需懒加载历史排障信息（最近限流与会话消耗榜）。
+func BuildHistory(probe *variant.Probe) Survey {
+	s := SurveyLimits(probe)
+	costs, warns := SurveyCosts(probe)
+	s.Costs = costs
 	s.Warnings = append(s.Warnings, warns...)
 	return s
 }
@@ -414,11 +439,29 @@ const costQuery = `select u.session_id as session_id, u.used as used, ` +
 	`left join sessions s on s.id = u.session_id ` +
 	`order by u.updated_at desc limit 300`
 
+var (
+	surveyCostsMu    sync.Mutex
+	surveyCostsCache []SessionCost
+	surveyCostsWarns []string
+	surveyCostsAt    time.Time
+)
+
+const surveyCostsTTL = 60 * time.Second
+
 // SurveyCosts 读出两侧每条会话的额度消耗，并从会话日志补上用过的模型。
 //
 // 数据库一律以 immutable 方式打开（不碰 -wal/-shm），客户端在跑也照样能读。
 // 读不到就记一条警告，而不是让整栏消失——限流那部分仍然有用。
 func SurveyCosts(probe *variant.Probe) ([]SessionCost, []string) {
+	surveyCostsMu.Lock()
+	if time.Since(surveyCostsAt) < surveyCostsTTL && surveyCostsCache != nil {
+		cachedOut := append([]SessionCost(nil), surveyCostsCache...)
+		cachedWarns := append([]string(nil), surveyCostsWarns...)
+		surveyCostsMu.Unlock()
+		return cachedOut, cachedWarns
+	}
+	surveyCostsMu.Unlock()
+
 	var out []SessionCost
 	var warns []string
 
@@ -448,6 +491,13 @@ func SurveyCosts(probe *variant.Probe) ([]SessionCost, []string) {
 		}
 		return out[i].UpdatedAt > out[j].UpdatedAt
 	})
+
+	surveyCostsMu.Lock()
+	surveyCostsCache = append([]SessionCost(nil), out...)
+	surveyCostsWarns = append([]string(nil), warns...)
+	surveyCostsAt = time.Now()
+	surveyCostsMu.Unlock()
+
 	return out, warns
 }
 

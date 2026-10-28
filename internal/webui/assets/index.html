@@ -6385,6 +6385,14 @@
   // ---------- 额度与计费 ----------
 
   var usageData = null;
+  var usageHistoryData = null;
+  var usageHistoryLoading = false;
+  try {
+    var rawUsageCache = localStorage.getItem("wbmux_usage_cache");
+    if (rawUsageCache) {
+      usageData = JSON.parse(rawUsageCache);
+    }
+  } catch (e) {}
 
   // showTokenImportModal 弹出免装国际客户端录入凭据的模态窗口（支持官方拟真一键登录与手动导入）。
   function showTokenImportModal(side) {
@@ -7465,8 +7473,14 @@
         box.appendChild(el("div", { class: "hint", text: "正在读取双端资产与额度数据…" }));
       }
     }
+    if (force) {
+      usageHistoryData = null;
+    }
     return api("/api/usage" + (force ? "?force=1" : "")).then(function (u) {
       usageData = u;
+      try {
+        localStorage.setItem("wbmux_usage_cache", JSON.stringify(u));
+      } catch (e) {}
       // 国际侧付费模型的选择以 /api/state 为准：它是本地读配置，秒回；
       // 而 /api/usage 要拉双端账单，实测能拖到 20s+。两者之间任何一次
       // "顺手重画"（签到回话、测速回话）都会把界面刷回陈旧数据，
@@ -8037,12 +8051,16 @@
     clear(box);
     if (!usageData) return;
 
-    var limits = usageData.limits || [];
-    var costs = usageData.costs || [];
     var live = usageData.live || {};
     var rates = usageData.rates || {};
-    note.textContent = "限流记录 " + limits.length + " · 会话消耗 " + costs.length +
-      (costs.length >= 300 ? "（取前 300）" : "");
+    if (usageHistoryData) {
+      var hLimits = usageHistoryData.limits || [];
+      var hCosts = usageHistoryData.costs || [];
+      note.textContent = "限流记录 " + hLimits.length + " · 会话消耗 " + hCosts.length +
+        (hCosts.length >= 300 ? "（取前 300）" : "");
+    } else {
+      note.textContent = "实时双端资产与模型就绪 · 历史记录按需展开";
+    }
 
     var cnLv = live["cn"] || {};
     var intlLv = live["intl"] || {};
@@ -8466,72 +8484,113 @@
       text: "仅转发国际侧模型；限时免费：DeepSeek-V4.1-Flash / Step-5-Preview / Hy3，零成本直接接入任意 AI 客户端。" }));
     box.appendChild(apiCard);
 
-    // ④ 排障参考与历史记录：收进底部折叠
+    // ④ 排障参考与历史记录：收进底部折叠（按需异步懒加载，彻底消除首屏扫盘等待）
     var histBody = el("div", { style: "margin-top:10px" });
+    var histSummaryText = usageHistoryData
+      ? ("排障参考：历史限流记录与会话消耗（" + (usageHistoryData.limits || []).length + " 条限流 · " + (usageHistoryData.costs || []).length + " 条消耗）")
+      : "排障参考：历史限流记录与会话消耗（点击展开分析）";
+    var histSummary = el("summary", { text: histSummaryText });
     var histDetails = el("details", { class: "fold", style: "margin-top:16px" }, [
-      el("summary", { text: "排障参考：历史限流记录与会话消耗（" + limits.length + " 条限流 · " + costs.length + " 条消耗）" }),
+      histSummary,
       histBody
     ]);
 
-    // 历史瓷砖与模型记录
-    var histTiles = el("div", { class: "tiles" });
-    (state ? state.backends : []).forEach(function (b) {
-      var sum = 0, n = 0;
-      costs.forEach(function (c) {
-        if (c.side === b.id) { sum += (c.credits || 0); n++; }
-      });
-      var mine = (usageData.byModel || []).filter(function (x) { return x.side === b.id; });
-      var rows = mine.slice(0, 6).map(function (x) {
-        var cls, icon, txt;
-        if (x.kind === "exhausted") {
-          cls = "bad"; icon = "cross";
-          txt = prettyModel(x.model) + "：额度用尽，需充值";
-        } else if (x.resetMs && x.resetMs < Date.now()) {
-          cls = "ok"; icon = "check";
-          txt = prettyModel(x.model) + "：上次限流已过期";
-        } else {
-          cls = "warn"; icon = "clock";
-          txt = prettyModel(x.model) + "：" + countdown(x.resetMs) + "后到期";
-        }
-        return el("div", { class: "q-hist", title: x.resetAt || "" }, [
-          el("span", { class: "q-ico " + cls, html: ICO(icon, "ico-sm") }),
-          el("span", { text: txt })
-        ]);
-      });
-      histTiles.appendChild(el("div", { class: "tile" }, [
-        el("div", { class: "desc", text: sideLabel(b.id) + " 历史统计" }),
-        el("div", { class: "big " + (!mine.length ? "ok" : "warn"),
-          text: !mine.length ? "近 7 天无限流记录" : "近 7 天 " + mine.length + " 个模型被限过" }),
-        !mine.length ? el("div", { class: "desc", text: "其间一直可用。" }) : rows,
-        el("div", { class: "desc", text: "期间消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条会话）" })
-      ]));
-    });
-    histBody.appendChild(histTiles);
+    function fillHistoryContent(target, h) {
+      clear(target);
+      var limits = h.limits || [];
+      var costs = h.costs || [];
+      var byModel = h.byModel || [];
 
-    // 消耗榜
-    if (costs.length) {
-      histBody.appendChild(el("div", { class: "hint", style: "margin:10px 0 4px", text: "消耗榜 · 前 10（积分，蓝=国内 绿=国际）" }));
-      var maxCost = 0;
-      costs.forEach(function (c) { if ((c.credits || 0) > maxCost) maxCost = c.credits; });
-      costs.slice(0, 10).forEach(function (c) {
-        var title = c.title || "会话 " + String(c.sessionId || "").slice(0, 8);
-        var w = maxCost > 0 ? Math.max(1.5, (c.credits || 0) / maxCost * 100) : 0;
-        histBody.appendChild(el("div", { class: "bar-row" }, [
-          el("span", { class: "bar-name", title: title, text: title }),
-          el("span", { class: "bar-track" }, [
-            el("span", { class: "bar-fill " + c.side, style: "width:" + w + "%" })
-          ]),
-          el("span", { class: "bar-num", text: (c.credits || 0).toFixed(2) })
+      // 历史瓷砖与模型记录
+      var histTiles = el("div", { class: "tiles" });
+      (state ? state.backends : []).forEach(function (b) {
+        var sum = 0, n = 0;
+        costs.forEach(function (c) {
+          if (c.side === b.id) { sum += (c.credits || 0); n++; }
+        });
+        var mine = byModel.filter(function (x) { return x.side === b.id; });
+        var rows = mine.slice(0, 6).map(function (x) {
+          var cls, icon, txt;
+          if (x.kind === "exhausted") {
+            cls = "bad"; icon = "cross";
+            txt = prettyModel(x.model) + "：额度用尽，需充值";
+          } else if (x.resetMs && x.resetMs < Date.now()) {
+            cls = "ok"; icon = "check";
+            txt = prettyModel(x.model) + "：上次限流已过期";
+          } else {
+            cls = "warn"; icon = "clock";
+            txt = prettyModel(x.model) + "：" + countdown(x.resetMs) + "后到期";
+          }
+          return el("div", { class: "q-hist", title: x.resetAt || "" }, [
+            el("span", { class: "q-ico " + cls, html: ICO(icon, "ico-sm") }),
+            el("span", { text: txt })
+          ]);
+        });
+        histTiles.appendChild(el("div", { class: "tile" }, [
+          el("div", { class: "desc", text: sideLabel(b.id) + " 历史统计" }),
+          el("div", { class: "big " + (!mine.length ? "ok" : "warn"),
+            text: !mine.length ? "近 7 天无限流记录" : "近 7 天 " + mine.length + " 个模型被限过" }),
+          !mine.length ? el("div", { class: "desc", text: "其间一直可用。" }) : rows,
+          el("div", { class: "desc", text: "期间消耗合计 " + sum.toFixed(2) + " 积分（" + n + " 条会话）" })
         ]));
       });
+      target.appendChild(histTiles);
+
+      // 消耗榜
+      if (costs.length) {
+        target.appendChild(el("div", { class: "hint", style: "margin:10px 0 4px", text: "消耗榜 · 前 10（积分，蓝=国内 绿=国际）" }));
+        var maxCost = 0;
+        costs.forEach(function (c) { if ((c.credits || 0) > maxCost) maxCost = c.credits; });
+        costs.slice(0, 10).forEach(function (c) {
+          var title = c.title || "会话 " + String(c.sessionId || "").slice(0, 8);
+          var w = maxCost > 0 ? Math.max(1.5, (c.credits || 0) / maxCost * 100) : 0;
+          target.appendChild(el("div", { class: "bar-row" }, [
+            el("span", { class: "bar-name", title: title, text: title }),
+            el("span", { class: "bar-track" }, [
+              el("span", { class: "bar-fill " + c.side, style: "width:" + w + "%" })
+            ]),
+            el("span", { class: "bar-num", text: (c.credits || 0).toFixed(2) })
+          ]));
+        });
+      }
+
+      // 历史警告信息
+      (h.warnings || []).forEach(function (w) {
+        target.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+      });
+      target.appendChild(el("div", { class: "hint", style: "margin-top:8px",
+        text: "数据来自客户端本地记录，升级后可能失效；credit 不是钱。" }));
     }
 
-    // 历史警告信息
-    (usageData.warnings || []).forEach(function (w) {
-      histBody.appendChild(el("div", { class: "note warn", style: "margin-top:10px", text: w }));
+    if (usageHistoryData) {
+      fillHistoryContent(histBody, usageHistoryData);
+    } else {
+      histBody.appendChild(el("div", { class: "hint", style: "padding:10px 0", text: "点击展开后将后台异步读取历史限流与会话消耗记录…" }));
+    }
+
+    histDetails.addEventListener("toggle", function () {
+      if (!histDetails.open) return;
+      if (usageHistoryData || usageHistoryLoading) return;
+      usageHistoryLoading = true;
+      clear(histBody);
+      histBody.appendChild(el("div", { class: "hint", style: "padding:10px 0", text: "正在深入分析历史会话记录…" }));
+      api("/api/usage/history").then(function (h) {
+        usageHistoryData = h;
+        usageHistoryLoading = false;
+        var hLimits = h.limits || [];
+        var hCosts = h.costs || [];
+        histSummary.textContent = "排障参考：历史限流记录与会话消耗（" + hLimits.length + " 条限流 · " + hCosts.length + " 条消耗）";
+        fillHistoryContent(histBody, h);
+        if (note) {
+          note.textContent = "限流记录 " + hLimits.length + " · 会话消耗 " + hCosts.length +
+            (hCosts.length >= 300 ? "（取前 300）" : "");
+        }
+      }).catch(function (e) {
+        usageHistoryLoading = false;
+        clear(histBody);
+        histBody.appendChild(el("div", { class: "note bad", text: "读取历史会话记录失败：" + e.message }));
+      });
     });
-    histBody.appendChild(el("div", { class: "hint", style: "margin-top:8px",
-      text: "数据来自客户端本地记录，升级后可能失效；credit 不是钱。" }));
 
     box.appendChild(histDetails);
   }
@@ -10010,6 +10069,13 @@
         btnRunSearch.click();
       }
     });
+  }
+
+  // SWR 立即首屏呈现：若已存在本地快照，首帧直接上屏渲染，彻底消除白屏与等待感
+  if (usageData) {
+    try {
+      renderUsage();
+    } catch (e) {}
   }
 
   // 兜底启动：若 500ms 内 state 仍未完成加载，自动补充拉取一次

@@ -1,7 +1,9 @@
 package webui
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,5 +467,43 @@ func TestQuotaWarnTextSeparatesUpstreamFault(t *testing.T) {
 	}
 	if !strings.Contains(both, "付费模型") {
 		t.Errorf("限流那段仍要说清故障转移到付费模型的风险：%s", both)
+	}
+}
+
+// TestUsageEndpointsFastAndHistory 验证 /api/usage（瘦身后首屏）与 /api/usage/history（按需历史）接口
+func TestUsageEndpointsFastAndHistory(t *testing.T) {
+	s := newQuotaTestServer(t)
+
+	// 1. /api/usage 应该返回 JSON，且 Costs 默认不查（nil 或空）
+	reqFast := httptest.NewRequest(http.MethodGet, "/api/usage", nil)
+	recFast := httptest.NewRecorder()
+	s.handleUsage(recFast, reqFast)
+
+	if recFast.Code != http.StatusOK {
+		t.Fatalf("handleUsage 应返回 200，得到 %d", recFast.Code)
+	}
+	var fastResp usageResponse
+	if err := json.Unmarshal(recFast.Body.Bytes(), &fastResp); err != nil {
+		t.Fatalf("handleUsage 响应无法反序列化为 usageResponse: %v", err)
+	}
+	if len(fastResp.Costs) != 0 {
+		t.Errorf("首屏轻量 handleUsage 不应扫描 Costs 会话，得到 %d 条", len(fastResp.Costs))
+	}
+
+	// 2. /api/usage/history 应该返回完整的历史分析（即便本地无会话也应正常返回 200 JSON）
+	reqHist := httptest.NewRequest(http.MethodGet, "/api/usage/history", nil)
+	recHist := httptest.NewRecorder()
+	s.handleUsageHistory(recHist, reqHist)
+
+	if recHist.Code != http.StatusOK {
+		t.Fatalf("handleUsageHistory 应返回 200，得到 %d", recHist.Code)
+	}
+	var histResp struct {
+		Limits   any `json:"limits"`
+		Costs    any `json:"costs"`
+		Warnings any `json:"warnings"`
+	}
+	if err := json.Unmarshal(recHist.Body.Bytes(), &histResp); err != nil {
+		t.Fatalf("handleUsageHistory 响应无法解析: %v", err)
 	}
 }

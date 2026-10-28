@@ -204,19 +204,51 @@ var liveCache = struct {
 // LiveAccounts 拉取两侧实时账号数据（带缓存）。
 // 一侧失败不影响另一侧：失败信息放在该侧的 Err 里，界面照常渲染。
 func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
-	liveCache.Lock()
-	defer liveCache.Unlock()
 	out := map[string]*LiveAccount{}
+	var toFetch []variant.ID
+
+	liveCache.Lock()
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
 		if at, ok := liveCache.at[id]; ok && time.Since(at) < liveCacheTTL {
 			out[string(id)] = liveCache.data[id]
-			continue
+		} else {
+			toFetch = append(toFetch, id)
 		}
-		acc := fetchLiveAccount(probe, id)
-		liveCache.data[id] = acc
-		liveCache.at[id] = time.Now()
-		out[string(id)] = acc
 	}
+	liveCache.Unlock()
+
+	if len(toFetch) == 0 {
+		return out
+	}
+
+	type fetchResult struct {
+		id  variant.ID
+		acc *LiveAccount
+	}
+	resChan := make(chan fetchResult, len(toFetch))
+	var wg sync.WaitGroup
+
+	for _, id := range toFetch {
+		wg.Add(1)
+		go func(targetID variant.ID) {
+			defer wg.Done()
+			acc := fetchLiveAccount(probe, targetID)
+			resChan <- fetchResult{id: targetID, acc: acc}
+		}(id)
+	}
+
+	wg.Wait()
+	close(resChan)
+
+	liveCache.Lock()
+	now := time.Now()
+	for r := range resChan {
+		liveCache.data[r.id] = r.acc
+		liveCache.at[r.id] = now
+		out[string(r.id)] = r.acc
+	}
+	liveCache.Unlock()
+
 	return out
 }
 
@@ -695,6 +727,7 @@ func fetchPackageDetailsMap(endpoint string, cred credential.Credential, codes [
 	})
 
 	resMap := make(map[string]packageDetailMeta)
+	var mu sync.Mutex
 	parseResp := func(raw []byte) {
 		var doc struct {
 			Accounts []struct {
@@ -708,6 +741,8 @@ func fetchPackageDetailsMap(endpoint string, cred credential.Credential, codes [
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			return
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		for _, acc := range doc.Accounts {
 			if acc.PackageCode == "" {
 				continue
@@ -729,15 +764,22 @@ func fetchPackageDetailsMap(endpoint string, cred credential.Credential, codes [
 		}
 	}
 
-	// 1. 查询免费/权益/赠送包（如 Bonus Pack、Free Subscription）
-	if rawFree, err := liveJSON(endpoint, "/billing/meter/get-user-resource-free-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
-		parseResp(rawFree)
-	}
-
-	// 2. 查询付费包
-	if rawPaid, err := liveJSON(endpoint, "/billing/meter/get-user-resource-paid-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
-		parseResp(rawPaid)
-	}
+	// 免费/权益/赠送包 与 付费包 并行查询，减少往返握手耗时
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if rawFree, err := liveJSON(endpoint, "/billing/meter/get-user-resource-free-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
+			parseResp(rawFree)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if rawPaid, err := liveJSON(endpoint, "/billing/meter/get-user-resource-paid-packages", "POST", cred.Token, cred.UID, bytes.NewReader(payload), nil); err == nil {
+			parseResp(rawPaid)
+		}
+	}()
+	wg.Wait()
 
 	return resMap
 }
