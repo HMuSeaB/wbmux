@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 )
 
 // PingOptions 包含探针调用的拟真客户端参数（账号 UID、通用桌面端 Header 等）。
@@ -93,10 +95,17 @@ var (
 )
 
 // Default 返回全局单例 Radar。
+//
+// client 必须带 netroute.Transport：裸 &http.Client{} 会落到默认 Transport，
+// 那是 ProxyFromEnvironment——只认环境变量、且不探活。代理进程没在跑时，
+// 测速会连到一个没人监听的端口，或者被别的进程回的 401 顶回来，
+// 而界面上只会显示"401 异常"，看起来像账号或 token 的问题
+// （2026-10-28 issue #3 就是这个假象）。
 func Default() *Radar {
 	radarOnce.Do(func() {
 		defaultRadar = NewRadar(&http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: netroute.Transport(),
 		})
 	})
 	return defaultRadar
@@ -105,7 +114,7 @@ func Default() *Radar {
 // NewRadar 创建一个指定 HTTP Client 的独立 Radar 实例（便于单测与定制）。
 func NewRadar(client *http.Client) *Radar {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Timeout: 10 * time.Second, Transport: netroute.Transport()}
 	}
 	return &Radar{
 		records: make(map[string]ProbeRecord),
