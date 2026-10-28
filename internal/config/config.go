@@ -94,6 +94,13 @@ type Config struct {
 	// 用户在 WebUI 中快捷勾选某些付费高级模型（如 gpt-5.6, grok-4.7, kimi-k3 等）后，
 	// 其 ID 会持久化在此列表中，并由 custommodels.Sync 注入到国内客户端 models.json。
 	SelectedIntlModels []string `json:"selectedIntlModels,omitempty"`
+
+	// ProxyChatRequests 控制大模型聊天请求转发是否使用系统代理（兼容旧开关）。
+	ProxyChatRequests *bool `json:"proxyChatRequests,omitempty"`
+
+	// ChatProxyAddr 允许用户自定义指定大模型转发专用的代理端口或地址（例如 7890、127.0.0.1:7890、http://127.0.0.1:7890）。
+	// 留空或未配置时默认纯直连（推荐防断连模式）。
+	ChatProxyAddr string `json:"chatProxyAddr,omitempty"`
 }
 
 // ProviderIDPrefix 是注入条目 id 里"自备提供方"那一段的前缀。
@@ -349,3 +356,55 @@ func Save(c Config) error {
 func DisableAutoUpdateOn(cfg Config) bool {
 	return cfg.DisableAutoUpdate != nil && *cfg.DisableAutoUpdate
 }
+
+// ProxyChatRequestsOn 报告"大模型转发是否使用系统代理"。
+//
+// 遵循防断连原则：未设置（nil）且未配置 ChatProxyAddr 时默认返回 false（直连）。
+func ProxyChatRequestsOn(cfg Config) bool {
+	if strings.TrimSpace(cfg.ChatProxyAddr) != "" {
+		return true
+	}
+	return cfg.ProxyChatRequests != nil && *cfg.ProxyChatRequests
+}
+
+// NormalizeProxyURL 规范化代理地址或端口。
+// 支持以下格式：
+// - "7890" -> http://127.0.0.1:7890
+// - "127.0.0.1:7890" -> http://127.0.0.1:7890
+// - "http://127.0.0.1:7890" -> http://127.0.0.1:7890
+// - "socks5://127.0.0.1:10808" -> socks5://127.0.0.1:10808
+func NormalizeProxyURL(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	allDigits := true
+	for _, c := range raw {
+		if c < '0' || c > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		raw = "http://127.0.0.1:" + raw
+	} else if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("代理地址格式无效: %w", err)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("代理地址缺少主机或端口")
+	}
+	return u, nil
+}
+
+// ChatProxyURL 返回大模型转发当前生效的代理 URL。
+func (c Config) ChatProxyURL() (*url.URL, error) {
+	if strings.TrimSpace(c.ChatProxyAddr) != "" {
+		return NormalizeProxyURL(c.ChatProxyAddr)
+	}
+	return nil, nil
+}
+

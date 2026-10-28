@@ -907,4 +907,71 @@ func TestEvaluateContextScale(t *testing.T) {
 	}
 }
 
+// TestProbeHTTPClientProxyDispatch 验证模型转发客户端分流逻辑：
+// 默认必须采用纯直连（Proxy == nil），只有显式开启 ProxyChatRequests 时才使用系统代理。
+func TestProbeHTTPClientProxyDispatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+
+	// 1. 默认未配置时：必须返回 directChatClient，其 Transport.Proxy 必须为 nil（纯直连）
+	clientDefault := probeHTTPClient()
+	trDefault, ok := clientDefault.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("期望 *http.Transport，得到 %T", clientDefault.Transport)
+	}
+	if trDefault.Proxy != nil {
+		t.Errorf("默认情况下大模型转发必须纯直连（Proxy==nil），实际检测到代理函数被配置")
+	}
+
+	// 2. 显式开启 ProxyChatRequests = true 时：必须返回 proxiedChatClient
+	on := true
+	if err := config.Save(config.Config{ProxyChatRequests: &on}); err != nil {
+		t.Fatalf("保存配置失败: %v", err)
+	}
+
+	clientProxied := probeHTTPClient()
+	trProxied, ok := clientProxied.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("期望 *http.Transport，得到 %T", clientProxied.Transport)
+	}
+	if trProxied.Proxy == nil {
+		t.Errorf("显式开启后应使用自适应代理 Transport，Proxy 不应为 nil")
+	}
+
+	// 3. 显式关闭 ProxyChatRequests = false 时：切回纯直连
+	off := false
+	if err := config.Save(config.Config{ProxyChatRequests: &off}); err != nil {
+		t.Fatalf("保存配置失败: %v", err)
+	}
+
+	clientDirect := probeHTTPClient()
+	trDirect, ok := clientDirect.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("期望 *http.Transport，得到 %T", clientDirect.Transport)
+	}
+	if trDirect.Proxy != nil {
+		t.Errorf("关闭后必须恢复纯直连（Proxy==nil）")
+	}
+
+	// 4. 配置自定义代理端口（如 "7890"）时：必须使用绑定该端口的 Proxy
+	if err := config.Save(config.Config{ChatProxyAddr: "7890"}); err != nil {
+		t.Fatalf("保存配置失败: %v", err)
+	}
+	clientCustom := probeHTTPClient()
+	trCustom, ok := clientCustom.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("期望 *http.Transport，得到 %T", clientCustom.Transport)
+	}
+	if trCustom.Proxy == nil {
+		t.Fatalf("配置了自定义代理端口后 Proxy 不应为 nil")
+	}
+	req, _ := http.NewRequest("GET", "https://api.example.com", nil)
+	proxyURL, err := trCustom.Proxy(req)
+	if err != nil || proxyURL == nil || proxyURL.Host != "127.0.0.1:7890" {
+		t.Errorf("期望代理到 127.0.0.1:7890，得到 %v (err=%v)", proxyURL, err)
+	}
+}
+
+
 

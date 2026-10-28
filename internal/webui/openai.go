@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
@@ -958,35 +961,92 @@ func evaluateContextScale(bytesLen int64) contextScale {
 	}
 }
 
-// chatHTTPClient 是转发长会话与大模型补全专用的 HTTP 客户端。
+// directChatClient 与 proxiedChatClient 是转发长会话与大模型补全专用的 HTTP 客户端。
 //
-// ⚠️ 极其关键的技术决策（解决长思考中断问题）：
-// 原先此处写死 Client{Timeout: 120 * time.Second}，在 Go net/http 中，Client.Timeout
-// 会对从拨号到整个 Response Body 完全读取并关闭施加整体硬性超时。
-// 当长会话遇到 Step-5 或 DeepSeek 进行长深度思考或超长生成时，刚好在 120.001 秒被底层强制关闭连接，
-// 导致客户端界面显示中断报错！
-//
-// 正确设计：
-// 1. Client.Timeout 设为 0（无整体硬截断），生命周期由客户端请求的 req.Context() 控制；
-// 2. 拨号与 TLS 握手设置合理超时（30s / 15s）；
-// 3. ResponseHeaderTimeout 设为 300s（允许模型首字思考排队最长 5 分钟），流开始后持续流式吞吐；
-// 4. 共享长连接池，复用 TLS 会话，避免每轮请求重复 TCP 三次握手。
-var chatHTTPClient = newChatHTTPClient()
+// ⚠️ 极其关键的技术决策（解决长请求断连与代理干扰）：
+// 1. 大模型会话数据量大（动辄 1MB+ 上下文）、持续时间长（首字思考 + SSE 持续吐字可达数分钟）；
+// 2. 默认直连（directChatClient）：显式设置 Proxy: nil，彻底避开本地代理工具（如 Clash 7890 端口）
+//    意外退出、重启或规则错误引发的 "proxyconnect refused" 与中途 "EOF" 假死报错；
+// 3. 可选系统代理（proxiedChatClient）：仅当用户在设置中显式开启 ProxyChatRequests 时才走系统代理，
+//    并享受 netroute 的动态自适应探活保护；
+// 4. Client.Timeout 设为 0（无整体硬截断），生命周期完全由 req.Context() 控制；
+// 5. ResponseHeaderTimeout 设为 300s（允许长深度思考），并共享 KeepAlive 长连接池。
+var (
+	directChatClient  = newDirectChatClient()
+	proxiedChatClient = newProxiedChatClient()
+	customChatMu      sync.Mutex
+	customChatURL     string
+	customChatClient  *http.Client
+)
 
-func newChatHTTPClient() *http.Client {
-	// 与清单、登录、更新检查共用同一套出口策略。转发不能再单独使用
-	// ProxyFromEnvironment：否则清单能拉取，真正聊天仍会被已失效的
-	// 代理配置卡住（2026-10-26 日志实测）。
-	transport := netroute.Transport()
-	transport.ResponseHeaderTimeout = 300 * time.Second
+func newDirectChatClient() *http.Client {
+	t := &http.Transport{
+		Proxy:                 nil, // 显式直连，绝不走任何环境变量或系统代理
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
+	}
 	return &http.Client{
 		Timeout:   0,
-		Transport: transport,
+		Transport: t,
 	}
 }
 
+func newProxiedChatClient() *http.Client {
+	t := netroute.Transport()
+	t.ResponseHeaderTimeout = 300 * time.Second
+	return &http.Client{
+		Timeout:   0,
+		Transport: t,
+	}
+}
+
+func getCustomChatClient(u *url.URL) *http.Client {
+	customChatMu.Lock()
+	defer customChatMu.Unlock()
+	str := u.String()
+	if customChatClient != nil && customChatURL == str {
+		return customChatClient
+	}
+	t := &http.Transport{
+		Proxy:                 http.ProxyURL(u),
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
+	}
+	customChatURL = str
+	customChatClient = &http.Client{
+		Timeout:   0,
+		Transport: t,
+	}
+	return customChatClient
+}
+
+// probeHTTPClient 返回大模型转发专用的 HTTP 客户端。
+//
+// 1. 用户自定义了代理端口/地址时（ChatProxyAddr 非空），返回绑定该端口的专用客户端；
+// 2. 用户开启了系统代理（ProxyChatRequestsOn 为真），返回走 netroute 自适应探活的系统代理客户端；
+// 3. 默认返回纯直连客户端（directChatClient，Proxy == nil，极速且杜绝断连）。
 func probeHTTPClient() *http.Client {
-	return chatHTTPClient
+	if cfg, err := config.Load(); err == nil {
+		if u, err := cfg.ChatProxyURL(); err == nil && u != nil {
+			return getCustomChatClient(u)
+		}
+		if config.ProxyChatRequestsOn(cfg) {
+			return proxiedChatClient
+		}
+	}
+	return directChatClient
 }
 
 
