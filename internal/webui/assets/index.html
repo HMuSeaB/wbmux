@@ -2579,7 +2579,13 @@
       <div class="client-path-group" style="padding:4px 8px 4px 12px">
         <span style="font-size:12px;font-weight:600;color:var(--ok);flex:none;margin-right:4px">到</span>
         <svg class="ico-sm" style="color:var(--ink-3);flex:none;opacity:0.75" aria-hidden="true"><use href="#i-folder"/></svg>
-        <input type="text" id="ws-to" placeholder="新目录路径（目标目录必须不存在或为空）" autocomplete="off" spellcheck="false">
+        <input type="text" id="ws-to" placeholder="新目录路径（可手动输入，或在下方直接点选）" autocomplete="off" spellcheck="false">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+        <span style="font-size:11.5px;color:var(--ink-2);flex:none">⚡ 快速选择已有目标：</span>
+        <select id="ws-to-select" style="flex:1;height:30px;font-size:12px;padding:2px 8px;border-radius:6px;background:var(--g1);border:1px solid var(--border);color:var(--ink)">
+          <option value="">-- 选择已有目标工作区 (免手动输入) --</option>
+        </select>
       </div>
     </div>
     <div class="row" style="margin-top:12px">
@@ -5874,11 +5880,122 @@
     box.appendChild(el("div", { class: "note " + (running ? "warn" : "ok") }, [
       el("b", { text: running ? "客户端正在运行" : "客户端未运行" }),
       el("div", { text: running
-        ? "改数据库会被它回写覆盖，所以下面的「确认执行」暂时不可用。先完全退出客户端，再点「刷新现状」。"
-        : "现在可以安全地改工作区。" })
+        ? "改数据库会被它回写覆盖，所以相关归类与迁移按钮暂时锁定。请先完全退出客户端，再点「刷新现状」。"
+        : "现在可以安全地归类会话或迁移工作区。" })
     ]));
 
-    // 现状表
+    // 1. 散落会话智能收纳抽屉 (未指定工作区的临时时间戳任务)
+    var looseSessions = data.looseSessions || [];
+    if (looseSessions.length) {
+      var looseCard = el("div", {
+        style: "margin:14px 0;padding:12px 14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.25);border-radius:10px"
+      });
+
+      var looseHeader = el("div", {
+        style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px"
+      }, [
+        el("div", { style: "display:flex;align-items:center;gap:6px" }, [
+          el("span", { style: "font-size:16px" }, ["💡"]),
+          el("span", { style: "font-weight:600;font-size:13px;color:var(--ink)" }, [
+            "未指定空间的散落任务 (" + looseSessions.length + " 个)"
+          ]),
+          pill("快捷收纳", "ok")
+        ]),
+        el("span", { style: "font-size:11.5px;color:var(--ink-2)" }, [
+          "右侧选定目标空间即可一键归入（免手动输入路径）"
+        ])
+      ]);
+      looseCard.appendChild(looseHeader);
+
+      var looseList = el("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      looseSessions.forEach(function (sess) {
+        var sessRow = el("div", {
+          style: "display:flex;padding:9px 12px;background:var(--g1);border:1px solid var(--border);border-radius:8px;align-items:center;gap:12px;flex-wrap:wrap"
+        });
+
+        var titleBox = el("div", { style: "flex:1;min-width:200px" }, [
+          el("div", { style: "font-weight:600;font-size:13px;color:var(--ink);display:flex;align-items:center;gap:6px" }, [
+            el("span", { style: "color:var(--brand)" }, ["📌"]),
+            sess.displayTitle
+          ]),
+          el("div", { class: "path", style: "font-size:11px;color:var(--ink-3);margin-top:2px" }, [
+            (sess.timeStr ? sess.timeStr + " · " : "") + sess.cwd
+          ])
+        ]);
+
+        var selectTarget = el("select", {
+          style: "height:30px;font-size:12px;padding:2px 8px;border-radius:6px;background:var(--g0);border:1px solid var(--border);color:var(--ink);max-width:260px"
+        });
+        selectTarget.appendChild(el("option", { value: "", text: "-- 选择目标空间 (如 SlateTerm) --" }));
+        (data.knownTargets || []).forEach(function (tgt) {
+          var opt = el("option", { value: tgt.path, text: tgt.name + " (" + tgt.sessions + " 会话)" });
+          if (tgt.name.toLowerCase() === "slateterm") {
+            opt.selected = true;
+          }
+          selectTarget.appendChild(opt);
+        });
+
+        var btnMove = el("button", {
+          class: "primary",
+          style: "height:30px;padding:0 12px;font-size:12px;white-space:nowrap",
+          disabled: running
+        }, [el("span", { text: "归入此空间" })]);
+
+        btnMove.addEventListener("click", function () {
+          var targetCwd = selectTarget.value;
+          if (!targetCwd) {
+            toast("请先选择目标空间（如 SlateTerm）", "warn");
+            return;
+          }
+          if (running) {
+            toast("客户端正在运行，请先完全退出客户端再归类", "bad");
+            return;
+          }
+          btnMove.disabled = true;
+          btnMove.textContent = "正在归档…";
+          api("/api/workspace/move-session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId: sess.id, targetCwd: targetCwd })
+          }).then(function () {
+            var targetName = selectTarget.options[selectTarget.selectedIndex].text.split(" ")[0];
+            toast("已成功将「" + sess.displayTitle + "」归入 " + targetName + " 空间！", "ok");
+            loadWorkspace();
+          }).catch(function (err) {
+            toast("归档失败：" + err.message, "bad");
+            btnMove.disabled = false;
+            btnMove.textContent = "归入此空间";
+          });
+        });
+
+        sessRow.appendChild(titleBox);
+        sessRow.appendChild(selectTarget);
+        sessRow.appendChild(btnMove);
+        looseList.appendChild(sessRow);
+      });
+
+      looseCard.appendChild(looseList);
+      box.appendChild(looseCard);
+    }
+
+    // 2. 联动更新下方"迁移到别处"的目标下拉框
+    var selTo = document.getElementById("ws-to-select");
+    if (selTo) {
+      clear(selTo);
+      selTo.appendChild(el("option", { value: "", text: "-- 选择已有目标工作区 (免手动输入) --" }));
+      (data.knownTargets || []).forEach(function (tgt) {
+        selTo.appendChild(el("option", { value: tgt.path, text: tgt.name + " (" + tgt.path + ")" }));
+      });
+      selTo.onchange = function () {
+        if (selTo.value) {
+          document.getElementById("ws-to").value = selTo.value;
+          wsPlanOk = false;
+          clear(document.getElementById("ws-plan"));
+        }
+      };
+    }
+
+    // 3. 现状表
     var rows = ov.spaces || [];
     if (!rows.length) {
       box.appendChild(el("div", { class: "hint", style: "margin-top:10px",
@@ -5891,23 +6008,38 @@
 
     rows.forEach(function (sp) {
       var tags = [];
+      var isLoose = sp.path.indexOf("WorkBuddy\\202") > -1 || sp.path.indexOf("WorkBuddy/202") > -1;
+      if (isLoose) tags.push(pill("临时时间戳目录", "warn"));
       if (!sp.exists) tags.push(pill("目录不存在", "bad"));
       if (!sp.inList) tags.push(pill("不在清单里", "ghost"));
       if ((sp.variants || []).length > 1) {
         tags.push(pill(sp.variants.length + " 种写法", "warn"));
       }
-      var row = el("div", { class: "row", style: "margin:2px 0;align-items:flex-start" }, [
+
+      var btnSetDst = el("button", {
+        style: "height:22px;padding:0 8px;font-size:11px;margin-left:8px;background:var(--g2);border:1px solid var(--border);border-radius:4px;color:var(--ink-2);cursor:pointer",
+        title: "将此路径填入下方「到」目标输入框"
+      }, [el("span", { text: "选为目标" })]);
+      btnSetDst.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        document.getElementById("ws-to").value = sp.path;
+        wsPlanOk = false;
+        clear(document.getElementById("ws-plan"));
+        toast("已将目标工作区设为：" + sp.path, "info");
+      });
+
+      var row = el("div", { class: "row", style: "margin:2px 0;align-items:center" }, [
         el("span", { class: "path", style: "flex:1;min-width:200px",
           text: sp.path, title: (sp.variants || []).join("\n") || sp.path }),
         el("span", { class: "desc", style: "white-space:nowrap",
           text: "会话 " + (sp.sessions || 0) }),
+        btnSetDst,
         tags
       ]);
       // 点一行就把源路径填进下面的输入框——省得手敲长路径。
       row.style.cursor = "pointer";
       row.addEventListener("click", function () {
         document.getElementById("ws-from").value = sp.path;
-        document.getElementById("ws-to").value = "";
         wsPlanOk = false;
         clear(document.getElementById("ws-plan"));
       });

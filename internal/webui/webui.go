@@ -325,6 +325,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/workspace", s.guard(s.handleWorkspace))
 	mux.HandleFunc("/api/workspace/plan", s.guard(s.handleWorkspacePlan))
 	mux.HandleFunc("/api/workspace/apply", s.guard(s.handleWorkspaceApply))
+	mux.HandleFunc("/api/workspace/move-session", s.guard(s.handleWorkspaceMoveSession))
 	mux.HandleFunc("/api/telemetry", s.guard(s.handleTelemetry))
 	mux.HandleFunc("/api/credentials/import", s.guard(s.handleCredentialImport))
 	mux.HandleFunc("/api/credentials/export", s.guard(s.handleCredentialExport))

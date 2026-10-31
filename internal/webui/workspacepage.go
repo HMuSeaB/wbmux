@@ -53,10 +53,47 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 客户端在不在跑，是这页最要紧的一个状态：不在跑才能动手。
+	loose, _ := workspace.ListLooseSessions(s.probe(), id)
+	targets, _ := workspace.GetTargetSpaceOptions(s.probe(), id)
 	writeJSON(w, map[string]any{
-		"overview": ov,
-		"running":  workspaceRunning(id),
-		"suggest":  suggestTarget(ov),
+		"overview":      ov,
+		"running":       workspaceRunning(id),
+		"suggest":       suggestTarget(ov),
+		"looseSessions": loose,
+		"knownTargets":  targets,
+	})
+}
+
+// handleWorkspaceMoveSession 将单个会话转移归入目标工作区。
+func (s *Server) handleWorkspaceMoveSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		Host      string `json:"host"`
+		SessionID string `json:"sessionId"`
+		TargetCwd string `json:"targetCwd"`
+	}
+	if err := decodeSmallJSON(w, r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := workspaceTarget(req.Host)
+	if workspaceRunning(id) {
+		writeErr(w, http.StatusConflict, "客户端正在运行，请先完全退出客户端再执行会话归类（否则会被内存缓存覆盖）")
+		return
+	}
+	res, err := workspace.MoveSession(s.probe(), id, req.SessionID, req.TargetCwd)
+	if err != nil {
+		s.logf("会话归类失败: %v", err)
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.logf("会话归类成功: %s -> %s (会话: %s)", res.OldCwd, res.NewCwd, res.SessionTitle)
+	writeJSON(w, map[string]any{
+		"ok":     true,
+		"result": res,
 	})
 }
 
