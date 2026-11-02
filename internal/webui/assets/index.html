@@ -83,9 +83,9 @@
   .app { display: flex; align-items: stretch; min-height: 100vh; }
 
   .sidebar {
-    width: 216px; flex: none; position: sticky; top: 0; height: 100vh;
+    width: 232px; flex: none; position: sticky; top: 0; height: 100vh;
     display: flex; flex-direction: column;
-    padding: 22px 14px 18px;
+    padding: 22px 12px 18px;
     border-right: 1px solid var(--g4);
     background: var(--g1);
   }
@@ -124,10 +124,11 @@
     text-transform: uppercase;
   }
   .nav-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 10px; border-radius: var(--r-sm);
-    font-size: 13px; color: var(--ink-2);
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 9px; border-radius: var(--r-sm);
+    font-size: 12.8px; color: var(--ink-2);
     cursor: pointer; user-select: none;
+    white-space: nowrap;
     transition: background .12s ease, color .12s ease;
   }
   .nav-item .ico { color: var(--ink-3); transition: color .12s ease; }
@@ -136,9 +137,10 @@
   .nav-item.active { color: #fff; background: var(--g3); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
   .nav-item.active .ico { color: var(--brand); }
   .nav-badge {
-    margin-left: auto; font-size: 10.5px; padding: 1px 6px;
+    margin-left: auto; font-size: 10px; padding: 1.5px 6px;
     border-radius: 10px; background: var(--g4); color: var(--ink-3);
     font-family: var(--mono);
+    white-space: nowrap; flex: none; line-height: 1.4;
   }
   .nav-badge.ok { background: rgba(74, 157, 106, 0.2); color: var(--ok); }
 
@@ -1090,6 +1092,76 @@
   .gw-latency-fast { color: var(--ok) !important; font-weight: 600; }
   .gw-latency-mid { color: var(--ink-2); }
   .gw-latency-slow { color: var(--warn) !important; font-weight: 600; }
+  .gw-latency-very-slow { color: #f87171 !important; font-weight: 650; }
+
+  /* 429 频控超限与长报错美化 */
+  .gw-limit-card {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    border-radius: 6px;
+    padding: 6px 10px;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 240px;
+    max-width: 320px;
+    line-height: 1.45;
+    transition: all .15s ease;
+  }
+  .gw-limit-card:hover {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.12);
+  }
+  .gw-err-card {
+    background: rgba(239, 68, 68, 0.06);
+    border-left: 3px solid var(--bad);
+    padding: 5px 8px;
+    border-radius: 0 5px 5px 0;
+    max-width: 260px;
+    line-height: 1.4;
+  }
+  /* 导出下拉组件 */
+  .gw-export-dropdown {
+    position: relative;
+    display: inline-block;
+  }
+  .gw-export-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: #181a20;
+    border: 1px solid var(--g4);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    padding: 4px;
+    min-width: 190px;
+    z-index: 100;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .gw-export-menu.show {
+    display: flex;
+  }
+  .gw-export-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+    text-decoration: none;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    width: 100%;
+    text-align: left;
+    transition: background .12s, color .12s;
+  }
+  .gw-export-item:hover {
+    background: var(--g3);
+    color: var(--ink-1);
+  }
 
   .bar-fill.cn {
     background: linear-gradient(90deg, #2563eb, #38bdf8) !important;
@@ -2012,7 +2084,7 @@
 </style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3s8 3 8 9c0 5.5-3.5 8.5-8 9.5C7.5 20.5 4 17.5 4 12c0-6 8-9 8-9Z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol></defs></svg>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M4 18a9 9 0 1 1 16 0"/></symbol><symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 2.5 3L7 15"/><path d="M12.5 15H17"/></symbol><symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="m3 8.5 9 4.5 9-4.5"/><path d="M12 13v7"/></symbol><symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-6 1.5 3h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1.2 5.3"/><path d="M20 5v6h-6"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 5 5 10-11"/></symbol><symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol><symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9"/><path d="M14.5 9.8A2.6 2.6 0 0 0 12 8.4c-1.4 0-2.6.8-2.6 1.9 0 1.2 1 1.7 2.6 2 1.7.3 2.6.8 2.6 2 0 1.1-1.2 1.9-2.6 1.9a2.6 2.6 0 0 1-2.5-1.4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol><symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="11" rx="1.5"/><path d="M3.5 13h17"/><path d="M12 9v11"/><path d="M12 9S10.5 4.5 8.5 4.5a2.2 2.2 0 0 0 0 4.5H12Z"/><path d="M12 9s1.5-4.5 3.5-4.5a2.2 2.2 0 0 1 0 4.5H12Z"/></symbol><symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol><symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 5-8.5 5-8.5-5 8.5-5Z"/><path d="m4.5 14 7.5 4.4 7.5-4.4"/></symbol><symbol id="i-arrows" viewBox="0 0 24 24"><path d="M5 7h12l-3-3"/><path d="M19 17H7l3 3"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 4h4"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M10 11v6M14 11v6"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.6h17"/><path d="m8.9 14.7 2.2 2.2 4.1-4.7"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.4h7.3a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2Z"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3s8 3 8 9c0 5.5-3.5 8.5-8 9.5C7.5 20.5 4 17.5 4 12c0-6 8-9 8-9Z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol><symbol id="i-chart" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></symbol><symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol><symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol></defs></svg>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><span class="brand-name">wbmux</span> <span class="ver" id="ver"></span></div>
@@ -2301,29 +2373,42 @@
               <svg class="ico ico-sm" aria-hidden="true"><use href="#i-term"/></svg>实时请求审计流水 (最近 100 条)
             </span>
             <div style="display:flex;align-items:center;gap:8px">
-
               <span class="card-sub" id="gw-table-status-label">就绪</span>
+              <!-- 导出下拉组件 -->
+              <div class="gw-export-dropdown">
+                <button id="btn-gw-export" class="ghost compact" style="font-size:11px;padding:2px 8px;border-radius:4px" title="导出网关审计流水与统计数据">
+                  <svg class="ico ico-sm" aria-hidden="true"><use href="#i-download"/></svg>导出数据 ▾
+                </button>
+                <div id="gw-export-menu" class="gw-export-menu">
+                  <button id="btn-gw-export-csv" class="gw-export-item" title="导出结构化 CSV，适配 Excel 与 WPS">
+                    <svg class="ico ico-sm" aria-hidden="true"><use href="#i-table"/></svg>导出流水明细 (CSV / Excel)
+                  </button>
+                  <button id="btn-gw-export-json" class="gw-export-item" title="导出机器可读全量 JSON">
+                    <svg class="ico ico-sm" aria-hidden="true"><use href="#i-code"/></svg>导出流水明细 (JSON)
+                  </button>
+                  <button id="btn-gw-export-daily" class="gw-export-item" title="导出近 7 日模型与吞吐聚合统计">
+                    <svg class="ico ico-sm" aria-hidden="true"><use href="#i-chart"/></svg>导出 7 日统计汇总 (CSV)
+                  </button>
+                </div>
+              </div>
               <button id="btn-gw-clear-table" class="ghost danger compact" style="font-size:11px;padding:2px 8px;border-radius:4px" title="清空全部网关调用流水"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-trash"/></svg>清空</button>
             </div>
           </div>
 
-          <div style="overflow-x:auto">
+          <div style="overflow-x:auto;padding-bottom:2px">
             <table class="gw-table" style="width:100%;border-collapse:collapse;font-size:12px;text-align:left">
               <thead>
                 <tr style="border-bottom:1px solid var(--g4);color:var(--ink-3);font-size:11.5px">
-                  <th style="padding:8px 6px">时间</th>
-                  <th style="padding:8px 6px">请求模型</th>
-                  <th style="padding:8px 6px">调用账号</th>
-                  <th style="padding:8px 6px">模式</th>
-                  <th style="padding:8px 6px">状态</th>
-                  <th style="padding:8px 6px">TTFT</th>
-                  <th style="padding:8px 6px">总用时</th>
-                  <th style="padding:8px 6px">Tokens (输入/输出)</th>
-                  <th style="padding:8px 6px">说明</th>
+                  <th style="padding:7px 8px;white-space:nowrap;width:68px">时间</th>
+                  <th style="padding:7px 8px;min-width:130px">模型 · 账号</th>
+                  <th style="padding:7px 8px;text-align:center;width:55px">状态</th>
+                  <th style="padding:7px 8px;text-align:right;width:80px">耗时 · 首字</th>
+                  <th style="padding:7px 8px;text-align:right;width:95px">Tokens 吞吐</th>
+                  <th style="padding:7px 8px;min-width:160px">说明 / 状态</th>
                 </tr>
               </thead>
               <tbody id="gw-audit-tbody">
-                <tr><td colspan="9" style="text-align:center;padding:32px 0;color:var(--ink-3)">等待网关请求中...</td></tr>
+                <tr><td colspan="6" style="text-align:center;padding:32px 0;color:var(--ink-3)">等待网关请求中...</td></tr>
               </tbody>
             </table>
           </div>
@@ -9772,7 +9857,19 @@
       }
 
       records.forEach(function (r) {
-        var tStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "--";
+        var tStr = "--";
+        var fullTimeTitle = "";
+        if (r.timestamp) {
+          var d = new Date(r.timestamp);
+          if (!isNaN(d.getTime())) {
+            var hh = String(d.getHours()).padStart(2, '0');
+            var mm = String(d.getMinutes()).padStart(2, '0');
+            var ss = String(d.getSeconds()).padStart(2, '0');
+            tStr = hh + ":" + mm + ":" + ss;
+            fullTimeTitle = d.toLocaleString();
+          }
+        }
+
         var codePillClass = (r.statusCode >= 200 && r.statusCode < 300) ? "ok" : (r.statusCode >= 500 ? "danger" : "warn");
         var isFailover = r.failoverTriggered;
         var isBusyRetry = (r.modelBusyRetries || 0) > 0;
@@ -9783,62 +9880,162 @@
           if (r.ttftMs < 1000) ttftClass = "gw-latency-fast";
           else if (r.ttftMs > 3000) ttftClass = "gw-latency-slow";
         }
+
         var durClass = "gw-latency-mid";
+        var durText = "--";
         if (r.durationMs > 0) {
           if (r.durationMs < 2000) durClass = "gw-latency-fast";
-          else if (r.durationMs > 6000) durClass = "gw-latency-slow";
+          else if (r.durationMs > 10000) durClass = "gw-latency-very-slow";
+          else if (r.durationMs > 4000) durClass = "gw-latency-slow";
+
+          if (r.durationMs >= 1000) {
+            durText = r.durationMs.toLocaleString() + "ms (" + (r.durationMs / 1000).toFixed(1) + "s)";
+          } else {
+            durText = r.durationMs + "ms";
+          }
+        }
+
+        var totalTok = r.totalTokens || (r.promptTokens + r.completionTokens);
+        var totalTokStr = totalTok.toLocaleString();
+        var tokTag = "";
+        if (totalTok >= 1000000) {
+          tokTag = " (" + (totalTok / 1000000).toFixed(2) + "M)";
+        } else if (totalTok >= 10000) {
+          tokTag = " (" + (totalTok / 1000).toFixed(1) + "k)";
         }
 
         var statusDescEl;
-        if (r.errorMsg) {
-          statusDescEl = el("span", { style: "color:var(--bad);font-weight:550" }, [
-            r.errorMsg,
-            isBusyRetry ? el("span", { style: "color:var(--ink-3);font-size:10px;display:block", text: "已防抖重试 " + r.modelBusyRetries + " 次" }) : null
+        var rawErr = (r.errorMsg || "").trim();
+        var is429 = (r.statusCode === 429 || /frequency limit|rate limit|quota exceed|用量超限|频率限制/i.test(rawErr));
+
+        if (is429) {
+          // 429 频率超限：美化为结构化卡片
+          var resetDisplay = "";
+          var matchReset = rawErr.match(/reset\s+at\s+([^\,\.]+)/i);
+          if (matchReset && matchReset[1]) {
+            var rawTime = matchReset[1].trim();
+            var dateM = rawTime.match(/(\d{4}-\d{2}-\d{2})/);
+            var timeM = rawTime.match(/(\d{1,2}:\d{2}(?::\d{2})?)/);
+            if (timeM) {
+              var tStr = timeM[1];
+              var d = new Date();
+              var todayStr = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, '0') + "-" + String(d.getDate()).padStart(2, '0');
+              if (dateM && dateM[1] === todayStr) {
+                resetDisplay = "今日 " + tStr;
+              } else if (dateM) {
+                resetDisplay = dateM[1].slice(5) + " " + tStr;
+              } else {
+                resetDisplay = tStr;
+              }
+            } else {
+              resetDisplay = rawTime.replace(/UTC\+8/i, "").trim();
+            }
+          }
+
+          statusDescEl = el("div", {
+            class: "gw-limit-card",
+            title: "【上游 429 报错详情 (点击复制)】\n" + rawErr,
+            onclick: function (e) {
+              e.stopPropagation();
+              if (rawErr && navigator.clipboard) {
+                navigator.clipboard.writeText(rawErr).then(function () {
+                  toast("已复制 429 报错详情", "ok");
+                });
+              }
+            }
+          }, [
+            el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:4px" }, [
+              el("span", { style: "font-weight:650;color:#f87171;font-size:11px;display:inline-flex;align-items:center;gap:3px" }, [
+                "🛑 429 频控",
+                resetDisplay ? el("span", { style: "color:#fee2e2;font-weight:650", text: "(" + resetDisplay + " 重置)" }) : null
+              ]),
+              el("span", {
+                style: "font-size:9.5px;padding:0 5px;border-radius:3px;background:rgba(255,255,255,0.08);color:var(--ink-2);flex:none",
+                text: "复制"
+              })
+            ]),
+            el("div", { style: "color:var(--ink-3);font-size:10px;line-height:1.3" }, [
+              "💡 建议换免积分模型 Auto 或稍后重试"
+            ])
+          ]);
+        } else if (rawErr) {
+          // 普通异常卡片
+          statusDescEl = el("div", {
+            class: "gw-err-card",
+            title: rawErr + "\n(点击复制完整错误)",
+            onclick: function () {
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(rawErr);
+                toast("已复制异常信息", "ok");
+              }
+            }
+          }, [
+            el("div", {
+              style: "color:var(--bad);font-weight:550;font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word",
+              text: rawErr
+            }),
+            isBusyRetry ? el("span", { style: "color:var(--ink-3);font-size:10px;display:block;margin-top:2px", text: "已防抖重试 " + r.modelBusyRetries + " 次" }) : null
           ]);
         } else if (isBusyRetry) {
-          statusDescEl = el("span", { style: "color:#38bdf8;font-weight:550;cursor:help", title: retryTip }, [
+          statusDescEl = el("span", { style: "color:#38bdf8;font-weight:550;font-size:11.5px;cursor:help", title: retryTip }, [
             "⚡ 算力繁忙已化解",
             el("span", { style: "color:var(--ink-3);font-size:10px;display:block", text: r.retryDelays && r.retryDelays.length ? ("退避: " + r.retryDelays.join(" → ")) : (r.modelBusyRetries + "次重试") })
           ]);
         } else if (isFailover) {
-          statusDescEl = el("span", { style: "color:var(--warn)", text: "触发限流自动故障转移" });
+          statusDescEl = el("span", { style: "color:var(--warn);font-size:11.5px", text: "触发限流自动故障转移" });
         } else {
-          statusDescEl = el("span", { text: "正常转发" });
+          statusDescEl = el("span", { style: "color:var(--ok);font-size:11.5px", text: "✓ 正常转发" });
         }
 
+        var fmtTokSummary = totalTok >= 1000000
+          ? ((totalTok / 1000000).toFixed(2) + "M")
+          : (totalTok >= 10000 ? ((totalTok / 1000).toFixed(1) + "k") : totalTok.toLocaleString());
+        var fmtInTok = (r.promptTokens >= 10000) ? ((r.promptTokens / 1000).toFixed(0) + "k") : (r.promptTokens || 0);
+        var fmtOutTok = (r.completionTokens >= 10000) ? ((r.completionTokens / 1000).toFixed(0) + "k") : (r.completionTokens || 0);
+
         var tr = el("tr", { class: "gw-audit-row" }, [
-          el("td", { style: "padding:9px 6px;font-family:var(--mono);color:var(--ink-3);font-size:11px", text: tStr }),
-          el("td", { style: "padding:9px 6px;font-family:var(--mono);font-weight:600;color:var(--ink-1)" }, [
-            r.modelRequested || r.modelMapped || "unknown",
-            (r.modelMapped && r.modelMapped !== r.modelRequested) ? el("span", { style: "color:var(--ink-3);font-size:10.5px;display:block", text: "→ " + r.modelMapped }) : null
+          // 1. 时间
+          el("td", {
+            style: "padding:7px 8px;font-family:var(--mono);color:var(--ink-3);font-size:11px;white-space:nowrap",
+            title: fullTimeTitle,
+            text: tStr
+          }),
+          // 2. 模型 · 账号 · 模式（合并展示）
+          el("td", { style: "padding:7px 8px;min-width:130px" }, [
+            el("div", { style: "font-family:var(--mono);font-weight:600;color:var(--ink-1);font-size:11.5px;white-space:nowrap" }, [
+              r.modelRequested || r.modelMapped || "unknown",
+              (r.modelMapped && r.modelMapped !== r.modelRequested) ? el("span", { style: "color:var(--ink-3);font-size:10px;margin-left:4px;font-weight:400", text: "→ " + r.modelMapped }) : null
+            ]),
+            el("div", { style: "display:flex;align-items:center;gap:4px;margin-top:2px;font-size:10.5px;color:var(--ink-3);white-space:nowrap" }, [
+              el("span", { class: "pill", style: "font-size:9.5px;padding:0 4px;border-color:var(--g4);color:var(--ink-2)", text: r.isStream ? "流式" : "非流式" }),
+              el("span", { style: "max-width:110px;overflow:hidden;text-overflow:ellipsis", title: r.accountMask || r.accountId || "默认" }, [
+                r.accountMask || r.accountId || "默认"
+              ]),
+              isFailover ? el("span", { class: "pill warn", style: "font-size:9.5px;padding:0 3px", text: "换号" }) : null,
+              isBusyRetry ? el("span", { class: "pill ok", style: "font-size:9.5px;padding:0 3px;background:rgba(56,189,248,0.12);color:#38bdf8", title: retryTip, text: "防抖(" + r.modelBusyRetries + ")" }) : null
+            ])
           ]),
-          el("td", { style: "padding:9px 6px;color:var(--ink-2);font-size:11.5px" }, [
-            r.accountMask || r.accountId || "默认",
-            isFailover ? el("span", { class: "pill warn", style: "margin-left:4px;font-size:10px", text: "429换号" }) : null,
-            isBusyRetry ? el("span", {
-              class: "pill ok",
-              style: "margin-left:4px;font-size:10px;background:rgba(56,189,248,0.12);color:#38bdf8;border-color:rgba(56,189,248,0.35);cursor:help",
-              title: retryTip,
-              text: "⚡防抖重试(" + r.modelBusyRetries + ")"
-            }) : null
-          ]),
-          el("td", { style: "padding:9px 6px" }, [
-            el("span", { class: "pill", style: "font-size:10.5px;color:var(--ink-2);border-color:var(--g4)", text: r.isStream ? "流式" : "非流式" })
-          ]),
-          el("td", { style: "padding:9px 6px" }, [
+          // 3. 状态码
+          el("td", { style: "padding:7px 8px;text-align:center;width:55px;white-space:nowrap" }, [
             el("span", { class: "pill " + codePillClass, style: "font-size:11px", text: String(r.statusCode || 200) })
           ]),
-          el("td", { class: ttftClass, style: "padding:9px 6px;font-family:var(--mono)" }, [
-            (r.ttftMs > 0 ? r.ttftMs + "ms" : "--")
+          // 4. 总耗时 · 首字延迟（合并展示）
+          el("td", { style: "padding:7px 8px;font-family:var(--mono);text-align:right;white-space:nowrap;width:80px" }, [
+            el("div", { class: durClass, style: "font-size:11.5px;font-weight:600", text: durText }),
+            el("div", { style: "font-size:10px;color:var(--ink-3)", text: r.ttftMs > 0 ? ("首字 " + r.ttftMs + "ms") : "首字 --" })
           ]),
-          el("td", { class: durClass, style: "padding:9px 6px;font-family:var(--mono)" }, [
-            (r.durationMs > 0 ? r.durationMs + "ms" : "--")
+          // 5. Tokens 吞吐
+          el("td", { style: "padding:7px 8px;font-family:var(--mono);text-align:right;white-space:nowrap;width:95px" }, [
+            el("div", { style: "color:var(--ink-1);font-weight:600;font-size:11.5px", title: "精确总消耗: " + totalTok.toLocaleString() + " tokens" }, [
+              fmtTokSummary,
+              el("span", { style: "color:var(--ink-3);font-size:9.5px;margin-left:2px;font-weight:400", text: "tok" })
+            ]),
+            el("div", { style: "color:var(--ink-3);font-size:10px" }, [
+              "入 " + fmtInTok + " · 出 " + fmtOutTok
+            ])
           ]),
-          el("td", { style: "padding:9px 6px;font-family:var(--mono);color:var(--ink-2)" }, [
-            el("span", { style: "color:var(--ink-1);font-weight:600", text: String(r.totalTokens || (r.promptTokens + r.completionTokens)) }),
-            el("span", { style: "color:var(--ink-3);font-size:10.5px", text: " (" + r.promptTokens + " / " + r.completionTokens + ")" })
-          ]),
-          el("td", { style: "padding:9px 6px;color:var(--ink-3);font-size:11px;max-width:180px;word-break:break-all" }, [
+          // 6. 说明 / 异常详情
+          el("td", { style: "padding:7px 8px;font-size:11px;min-width:160px;word-break:break-word" }, [
             statusDescEl
           ])
         ]);
@@ -9996,8 +10193,168 @@
     });
   }
 
+  // ---------- 网关数据导出与文件下载辅助 ----------
+  function triggerBlobDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
+  }
+
+  function getExportTimestamp() {
+    var now = new Date();
+    return now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, "0") +
+      String(now.getDate()).padStart(2, "0") + "-" +
+      String(now.getHours()).padStart(2, "0") +
+      String(now.getMinutes()).padStart(2, "0") +
+      String(now.getSeconds()).padStart(2, "0");
+  }
+
+  // 1. 导出网关请求流水 CSV
+  function exportGatewayCSV() {
+    toast("正在导出网关调用流水 (CSV)...", "ok");
+    fetch("/api/gateway/export?format=csv")
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.blob();
+      })
+      .then(function (blob) {
+        triggerBlobDownload(blob, "wbmux-gateway-records-" + getExportTimestamp() + ".csv");
+        toast("网关流水 CSV 导出成功", "ok");
+      })
+      .catch(function () {
+        // 兜底离线前端生成
+        var records = (gwAuditData && gwAuditData.recentRecords) || [];
+        if (records.length === 0) {
+          toast("当前暂无调用流水可导出", "bad");
+          return;
+        }
+        var csvRows = [
+          "\uFEFF请求ID,时间,请求模型,映射模型,调用账号,模式,状态码,TTFT(ms),总用时(ms),提示词Tokens,补全Tokens,总Tokens,故障转移,说明/异常详情"
+        ];
+        records.forEach(function (r) {
+          var row = [
+            '"' + (r.id || "") + '"',
+            '"' + (r.timestamp ? new Date(r.timestamp).toLocaleString() : "") + '"',
+            '"' + (r.modelRequested || "") + '"',
+            '"' + (r.modelMapped || "") + '"',
+            '"' + (r.accountMask || r.accountId || "默认") + '"',
+            '"' + (r.isStream ? "流式" : "非流式") + '"',
+            r.statusCode || 200,
+            r.ttftMs || 0,
+            r.durationMs || 0,
+            r.promptTokens || 0,
+            r.completionTokens || 0,
+            r.totalTokens || 0,
+            r.failoverTriggered ? "是" : "否",
+            '"' + (r.errorMsg || "").replace(/"/g, '""') + '"'
+          ];
+          csvRows.push(row.join(","));
+        });
+        var blob = new Blob([csvRows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+        triggerBlobDownload(blob, "wbmux-gateway-records-" + getExportTimestamp() + ".csv");
+        toast("网关流水 CSV 导出成功 (本地离线备份)", "ok");
+      });
+  }
+
+  // 2. 导出网关全量审计与统计归档 JSON
+  function exportGatewayJSON() {
+    toast("正在导出全量归档 (JSON)...", "ok");
+    fetch("/api/gateway/export?format=json")
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.blob();
+      })
+      .then(function (blob) {
+        triggerBlobDownload(blob, "wbmux-gateway-archive-" + getExportTimestamp() + ".json");
+        toast("全量归档 JSON 导出成功", "ok");
+      })
+      .catch(function () {
+        if (!gwAuditData) {
+          toast("暂无数据可导出", "bad");
+          return;
+        }
+        var blob = new Blob([JSON.stringify(gwAuditData, null, 2)], { type: "application/json;charset=utf-8;" });
+        triggerBlobDownload(blob, "wbmux-gateway-archive-" + getExportTimestamp() + ".json");
+        toast("全量归档 JSON 导出成功 (当前快照)", "ok");
+      });
+  }
+
+  // 3. 导出近 7 日用量统计聚合 CSV
+  function exportGatewayDailyCSV() {
+    var daily = (gwAuditData && (gwAuditData.dailyStats || gwAuditData.daily)) || [];
+    if (daily.length === 0) {
+      toast("暂无近 7 日用量历史可导出", "bad");
+      return;
+    }
+    var rows = [
+      "\uFEFF日期,总请求数,成功数,失败数,输入Tokens,输出Tokens,总Tokens,平均TTFT(ms),平均总耗时(ms)"
+    ];
+    daily.forEach(function (d) {
+      rows.push([
+        d.date || "",
+        d.totalRequests || 0,
+        d.successCount || 0,
+        d.failCount || 0,
+        d.promptTokens || 0,
+        d.compTokens || 0,
+        d.totalTokens || 0,
+        d.avgTtftMs || 0,
+        d.avgDurationMs || 0
+      ].join(","));
+    });
+    var blob = new Blob([rows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    triggerBlobDownload(blob, "wbmux-gateway-daily-summary-" + getExportTimestamp() + ".csv");
+    toast("近 7 日用量统计 CSV 导出成功", "ok");
+  }
+
+  // 导出下拉菜单开关交互
+  var btnGwExport = document.getElementById("btn-gw-export");
+  var gwExportMenu = document.getElementById("gw-export-menu");
+  if (btnGwExport && gwExportMenu) {
+    btnGwExport.addEventListener("click", function (e) {
+      e.stopPropagation();
+      gwExportMenu.classList.toggle("show");
+    });
+    document.addEventListener("click", function (e) {
+      if (!btnGwExport.contains(e.target) && !gwExportMenu.contains(e.target)) {
+        gwExportMenu.classList.remove("show");
+      }
+    });
+  }
+
+  var btnExportCSV = document.getElementById("btn-gw-export-csv");
+  if (btnExportCSV) btnExportCSV.addEventListener("click", function () {
+    if (gwExportMenu) gwExportMenu.classList.remove("show");
+    exportGatewayCSV();
+  });
+
+  var btnExportJSON = document.getElementById("btn-gw-export-json");
+  if (btnExportJSON) btnExportJSON.addEventListener("click", function () {
+    if (gwExportMenu) gwExportMenu.classList.remove("show");
+    exportGatewayJSON();
+  });
+
+  var btnExportDaily = document.getElementById("btn-gw-export-daily");
+  if (btnExportDaily) btnExportDaily.addEventListener("click", function () {
+    if (gwExportMenu) gwExportMenu.classList.remove("show");
+    exportGatewayDailyCSV();
+  });
+
   function clearGatewayAudit() {
-    if (!confirm("确定要清空全部网关调用统计与请求流水明细吗？")) return;
+    var recCount = (gwAuditData && gwAuditData.recentRecords) ? gwAuditData.recentRecords.length : 0;
+    var tip = "确定要清空全部网关调用统计与请求流水明细吗？\n";
+    if (recCount > 0) {
+      tip += "\n当前已有 " + recCount + " 条审计流水，清空后不可恢复。\n💡 如需留存，可先点击「导出数据」备份为 CSV 或 JSON。";
+    }
+    if (!confirm(tip)) return;
     api("/api/gateway/clear", { method: "POST" })
       .then(function () {
         toast("网关调用流水已清空", "ok");

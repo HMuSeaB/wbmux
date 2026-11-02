@@ -300,6 +300,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/update/apply", s.guard(s.handleUpdateApply))
 	mux.HandleFunc("/api/gateway/stats", s.guard(s.handleGatewayStats))
 	mux.HandleFunc("/api/gateway/clear", s.guard(s.handleGatewayClear))
+	mux.HandleFunc("/api/gateway/export", s.guard(s.handleGatewayExport))
 	mux.HandleFunc("/api/model-radar/status", s.guard(s.handleModelRadarStatus))
 	mux.HandleFunc("/api/model-radar/ping", s.guard(s.handleModelRadarPing))
 	mux.HandleFunc("/api/shortcut", s.guard(s.handleShortcut))
