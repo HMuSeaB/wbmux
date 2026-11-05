@@ -115,9 +115,14 @@ func cmdGUI(args []string) error {
 		cfg = config.Config{}
 	}
 	addrFromConfig := false
-	if *addr == "" && cfg.GUIAddr != "" {
-		*addr = cfg.GUIAddr
-		addrFromConfig = true
+	if *addr == "" {
+		if cfg.GUIAddr != "" {
+			*addr = cfg.GUIAddr
+			addrFromConfig = true
+		} else {
+			// 未配置且未传参时，默认锁定首选固定端口 35907，避免随机端口导致客户端 models.json 失效
+			*addr = webui.DefaultAddr
+		}
 	}
 
 	// 非回环地址直接拒绝，不做"警告后放行"：这个服务能启动本机进程，

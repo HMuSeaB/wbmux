@@ -430,6 +430,92 @@ func TestResolveRoute(t *testing.T) {
 	}
 }
 
+// TestEnsureChatCompletionsPath 验证 BYOK baseURL 的容错补全逻辑：
+// 用户只填到 /v1 层级时自动追加 /chat/completions，已完整则不动。
+func TestEnsureChatCompletionsPath(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		// 已经完整 → 不动
+		{"https://api.example.com/v1/chat/completions", "https://api.example.com/v1/chat/completions"},
+		// 带尾斜杠的完整路径 → 去尾斜杠后不动
+		{"https://api.example.com/v1/chat/completions/", "https://api.example.com/v1/chat/completions"},
+		// 只到 /v1 → 补全
+		{"https://api.example.com/v1", "https://api.example.com/v1/chat/completions"},
+		// 只到 /v1/ → 去尾斜杠再补
+		{"https://api.example.com/v1/", "https://api.example.com/v1/chat/completions"},
+		// Step Plan 订阅制 /step_plan/v1 → 补全
+		{"https://api.stepfun.com/step_plan/v1", "https://api.stepfun.com/step_plan/v1/chat/completions"},
+		// 纯域名形态 → 补全 /v1/chat/completions
+		{"https://api.deepseek.com", "https://api.deepseek.com/v1/chat/completions"},
+		{"https://api.stepfun.ai/", "https://api.stepfun.ai/v1/chat/completions"},
+		// /v2 版本
+		{"https://api.example.com/v2", "https://api.example.com/v2/chat/completions"},
+		// 非版本号结尾 → 不补（可能是用户填的完整非标端点）
+		{"https://api.example.com/generate", "https://api.example.com/generate"},
+		// 非标准路径不动
+		{"https://custom.host/api/chat", "https://custom.host/api/chat"},
+	}
+	for _, c := range cases {
+		got := ensureChatCompletionsPath(c.in)
+		if got != c.want {
+			t.Errorf("ensureChatCompletionsPath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestChatRoutesToBYOKWithIncompleteBaseURL 端到端：BYOK 卡片 baseURL 只填
+// 到 /v1（不含 /chat/completions）时，代理自动补全后请求仍能打到正确端点。
+func TestChatRoutesToBYOKWithIncompleteBaseURL(t *testing.T) {
+	var gotPath, gotAuth string
+	var gotBody map[string]any
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"model\":\"step-5-preview\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer vendor.Close()
+
+	restore := config.SetRoot(t.TempDir())
+	defer restore()
+	// baseURL 只到 /v1，不含 /chat/completions
+	cfg := config.Config{Providers: []config.Provider{{
+		ID: "p1", Name: "step",
+		BaseURL: vendor.URL + "/v1",
+		APIKey:  "sk-step",
+		Models:  []string{"step-5-preview"},
+	}}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"wbmux-byok-p1-step-5-preview","stream":true,"messages":[{"role":"user","content":"x"}]}`))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d：%s", rec.Code, rec.Body.String())
+	}
+	// 关键断言：即使 baseURL 不含 /chat/completions，请求也要打到正确的路径
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("应打到 /v1/chat/completions，得到 %q", gotPath)
+	}
+	if gotAuth != "Bearer sk-step" {
+		t.Errorf("应带上卡片里的 key，得到 %q", gotAuth)
+	}
+	if gotBody["model"] != "step-5-preview" {
+		t.Errorf("上游应收到去掉前缀的模型名，得到 %v", gotBody["model"])
+	}
+}
+
 // TestChatRoutesToBYOKProvider 端到端：带自备前缀的请求必须打到卡片里的
 // 端点、用卡片里的 key，并且把**上游模型名**（去掉前缀）发过去。
 func TestChatRoutesToBYOKProvider(t *testing.T) {

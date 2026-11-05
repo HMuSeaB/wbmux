@@ -39,6 +39,13 @@ import (
 //go:embed assets
 var assets embed.FS
 
+// DefaultPort 是 wbmux 本地代理与图形界面的首选默认固定端口。
+// 避免因每次随机分配端口导致国内客户端 models.json 中的注入端点失效。
+const DefaultPort = 35907
+
+// DefaultAddr 是首选默认回环监听地址。
+const DefaultAddr = "127.0.0.1:35907"
+
 // Options 是构造服务端的输入。
 type Options struct {
 	// Version 展示在界面标题旁。
@@ -259,10 +266,18 @@ func New(opts Options) (*Server, error) {
 // 但没有令牌就调不动接口。令牌是每次启动随机生成的，外部猜不到。
 func (s *Server) Start() error {
 	addr := s.opts.Addr
+	var ln net.Listener
+	var err error
 	if addr == "" {
-		addr = "127.0.0.1:0"
+		// 首选默认固定端口 35907：稳定持久，国内客户端 models.json 跨次不失效
+		ln, err = net.Listen("tcp", DefaultAddr)
+		if err != nil {
+			// 默认固定端口已被占用，退回系统随机可用端口
+			ln, err = net.Listen("tcp", "127.0.0.1:0")
+		}
+	} else {
+		ln, err = net.Listen("tcp", addr)
 	}
-	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("无法监听 %s: %w", addr, err)
 	}

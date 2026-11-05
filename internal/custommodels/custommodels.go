@@ -239,8 +239,8 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			// 而国内壳子里的 Agent 全靠工具干活——写 false 的结果是
 			// 模型只能聊天，什么也做不了。实测官方配置里这几个免费模型
 			// 都是 supportsToolCall=true。
-			"supportsToolCall":  m.Tools,
-			"supportsImages":    m.Images,
+			"supportsToolCall": m.Tools,
+			"supportsImages":   m.Images,
 			// 思考类开关官方配置里没有对应字段，不猜，一律 false。
 			"supportsReasoning": false,
 		}
@@ -266,9 +266,13 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			if model == "" {
 				continue
 			}
+			displayName := model
+			if p.Name != "" && !strings.EqualFold(p.Name, model) {
+				displayName = fmt.Sprintf("%s · %s", p.Name, model)
+			}
 			entry := map[string]any{
 				"id":                p.EntryPrefix() + model,
-				"name":              fmt.Sprintf("%s · %s", p.Name, model),
+				"name":              displayName,
 				"vendor":            "Custom",
 				"url":               chatURL,
 				"apiKey":            apiKey,
@@ -282,6 +286,12 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			}
 			if p.MaxInputTokens > 0 {
 				entry["maxInputTokens"] = p.MaxInputTokens
+				entry["contextWindow"] = p.MaxInputTokens
+			} else {
+				// 缺省时默认赋予 1,000,000 上下文认知，避免被客户端截断至 300k 内置默认值
+				entry["contextWindow"] = 1000000
+				entry["maxInputTokens"] = 1000000
+				entry["maxOutputTokens"] = 64000
 			}
 			if p.MaxOutputTokens > 0 {
 				entry["maxOutputTokens"] = p.MaxOutputTokens
@@ -457,4 +467,3 @@ func hasAnyFreeModel(intl []usage.LiveModel) bool {
 	}
 	return false
 }
-

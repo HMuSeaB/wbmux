@@ -112,7 +112,7 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 			}
 			return upstreamRoute{
 				Label:    p.Name,
-				Endpoint: p.BaseURL,
+				Endpoint: ensureChatCompletionsPath(p.BaseURL),
 				APIKey:   p.APIKey,
 				Provider: &p,
 				Model:    model,
@@ -169,6 +169,41 @@ func normalizeModelName(name string) string {
 			return s
 		}
 	}
+}
+
+// ensureChatCompletionsPath 对 BYOK 提供方的 baseURL 做智能容错处理：
+// 如果用户只填到了 /v1 层级而没有带 /chat/completions 后缀，自动补上；
+// 如果用户只填了基础域名（如 https://api.stepfun.ai 或 https://api.deepseek.com），自动补全 /v1/chat/completions。
+//
+// 规则：
+//   - 已经以 /chat/completions 结尾 → 原样返回
+//   - 以 /v1、/v2 等版本号结尾 → 追加 /chat/completions
+//   - 仅纯域名（Path 为空或仅为 /） → 追加 /v1/chat/completions
+//   - 其他非标端点 → 原样返回
+func ensureChatCompletionsPath(baseURL string) string {
+	raw := strings.TrimSpace(baseURL)
+	if raw == "" {
+		return ""
+	}
+	u := strings.TrimRight(raw, "/")
+	if strings.HasSuffix(u, "/chat/completions") {
+		return u
+	}
+	parsed, err := url.Parse(u)
+	if err == nil {
+		p := strings.TrimRight(parsed.Path, "/")
+		if p == "" {
+			parsed.Path = "/v1/chat/completions"
+			return parsed.String()
+		}
+		parts := strings.Split(p, "/")
+		last := parts[len(parts)-1]
+		if len(last) >= 2 && (last[0] == 'v' || last[0] == 'V') && last[1] >= '0' && last[1] <= '9' {
+			parsed.Path = p + "/chat/completions"
+			return parsed.String()
+		}
+	}
+	return u
 }
 
 // upstreamRequest 是改写后的转发请求。
