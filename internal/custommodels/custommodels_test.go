@@ -685,26 +685,39 @@ func TestSyncOnlyLockedDoesNotTouchFile(t *testing.T) {
 }
 
 // TestBuildContextWindowDoc 验证 contextWindow 阶梯档位对象生成：
-// 必须保证 supportedLengths >= 2 且包含期望阶梯，客户端切换 Context 时才不会被置空。
+// 必须严格保证 supportedLengths 为 2 档或 3 档（客户端前端 resolveContextUsageWindowTiers
+// 硬编码要求 r.length === 2 || r.length === 3，超出则前端开关完全不渲染），且阶梯按 1000 整千对齐。
 func TestBuildContextWindowDoc(t *testing.T) {
 	doc := buildContextWindowDoc(1000000)
 	lengths, ok := doc["supportedLengths"].([]int)
-	if !ok || len(lengths) < 2 {
-		t.Fatalf("supportedLengths 至少应有 2 档以激活客户端 UI: %v", doc)
+	if !ok || (len(lengths) != 2 && len(lengths) != 3) {
+		t.Fatalf("supportedLengths 档位数量必须为 2 档或 3 档，实际得到 %d 档: %v", len(lengths), doc)
 	}
 	if doc["defaultLength"] != 1000000 {
 		t.Errorf("defaultLength 应为 1000000, 得到 %v", doc["defaultLength"])
 	}
-	// 验证包含常见阶梯并以 maxInputTokens 结尾
+	// 验证包含整千阶梯并以 maxInputTokens 结尾
+	for _, l := range lengths {
+		if l%1000 != 0 {
+			t.Errorf("档位值必须为 1000 的倍数以保证前端优雅格式化为 K/M，得到 %d", l)
+		}
+	}
 	last := lengths[len(lengths)-1]
 	if last != 1000000 {
 		t.Errorf("最后一档应等于上限 1000000，得到 %d", last)
 	}
 
+	// 192k 模型（Hy3）
+	hy3Doc := buildContextWindowDoc(192000)
+	hy3Lengths := hy3Doc["supportedLengths"].([]int)
+	if len(hy3Lengths) != 2 && len(hy3Lengths) != 3 {
+		t.Errorf("Hy3 阶梯数量应为 2 档或 3 档: %v", hy3Doc)
+	}
+
 	// 小窗口模型
-	small := buildContextWindowDoc(32768)
+	small := buildContextWindowDoc(32000)
 	smallLengths := small["supportedLengths"].([]int)
-	if len(smallLengths) < 2 {
-		t.Errorf("小窗口模型也应保证至少两档: %v", small)
+	if len(smallLengths) != 2 && len(smallLengths) != 3 {
+		t.Errorf("小窗口模型也应保证 2 档或 3 档: %v", small)
 	}
 }

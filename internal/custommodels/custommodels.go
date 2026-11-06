@@ -478,32 +478,71 @@ func hasAnyFreeModel(intl []usage.LiveModel) bool {
 // buildContextWindowDoc 根据模型的最大输入 token 数量生成 WorkBuddy 客户端合规的
 // contextWindow 阶梯档位对象。
 //
-// 客户端 5.6.2 ~ 5.8.3+ 在解析会话预算 (resolveEffectiveContextBudget) 时，
-// 严格要求 contextWindow 是包含 supportedLengths 与 defaultLength 的对象，
-// 且 supportedLengths.length >= 2，否则用户在客户端 UI 界面上切换上下文长度（Context）
-// 时会被判定为非法值并立刻静默重置为 null（这也是用户反馈"调了跟没调一样"的根因）。
+// 客户端在解析会话预算 (resolveEffectiveContextBudget) 时，要求 contextWindow 是包含
+// supportedLengths 与 defaultLength 的对象。
+// 更关键的是，客户端前端渲染进程中的分段滑动选择器组件 (ContextWindowSegmented)
+// 内部 hardcode 严格限制了档位数量：
+//
+//	resolveContextUsageWindowTiers = e => {
+//	    let r = ...filter(...).sort((e, t) => e - t);
+//	    return r.length === 2 || r.length === 3 ? r : void 0;
+//	}
+//	resolveContextWindowTiers = e =>
+//	    e.length === 2 ? [{tier: 'default'}, {tier: 'extraLong'}]
+//	  : e.length === 3 ? [{tier: 'default'}, {tier: 'moderate'}, {tier: 'extraLong'}]
+//	  : [];
+//
+// 若档位数量超过 3（如以前的 6 档），前端直接返回 undefined，分段滑动开关完全不渲染或失效！
+// 此外，客户端格式化函数 formatContextWindow 要求数值必须是 1000 的整数倍
+// (t % 1000 == 0 ? `${t/1000}K` : String(t))，否则会被渲染成丑陋且不友好的纯数字字符串 (如 "32768")。
 func buildContextWindowDoc(maxInputTokens int) map[string]any {
 	if maxInputTokens <= 0 {
 		maxInputTokens = 1000000
 	}
-	// 基础标准阶梯：32k, 64k, 128k, 256k, 512k, 1M
-	standardSteps := []int{32768, 65536, 131072, 262144, 524288, 1000000}
+
 	var supported []int
-	for _, step := range standardSteps {
-		if step < maxInputTokens {
-			supported = append(supported, step)
+	switch {
+	case maxInputTokens >= 1000000:
+		// 1M 级别（如 DeepSeek-V4.1-Flash、Hy4 等）：
+		// 严格 3 档（128K 日常轻快 / 200K 适中扩展 / 1M 满血超长），
+		// 对应前端 default / moderate / extraLong
+		supported = []int{128000, 200000, maxInputTokens}
+	case maxInputTokens >= 300000:
+		// 300k~500k 级别
+		supported = []int{128000, 200000, maxInputTokens}
+	case maxInputTokens >= 190000:
+		// 192k~256k 级别（如 Hy3 的 192k）
+		supported = []int{64000, 128000, maxInputTokens}
+	case maxInputTokens >= 100000:
+		// 100k~160k 级别
+		supported = []int{32000, 64000, maxInputTokens}
+	default:
+		// 小于 100k 的小窗口模型，凑足 2 档（整千对齐）
+		half := (maxInputTokens / 2 / 1000) * 1000
+		if half <= 0 {
+			half = maxInputTokens / 2
 		}
-	}
-	supported = append(supported, maxInputTokens)
-	if len(supported) < 2 {
-		// 保证至少两档以激活客户端 UI 选择器
-		half := maxInputTokens / 2
-		if half > 0 {
+		if half > 0 && half < maxInputTokens {
 			supported = []int{half, maxInputTokens}
 		} else {
-			supported = []int{16384, maxInputTokens}
+			supported = []int{maxInputTokens}
 		}
 	}
+
+	// 兜底保障：若档位数量不足 2 档且上限允许，硬编码凑齐 2 档以激活客户端 UI 选择器
+	if len(supported) < 2 {
+		lower := (maxInputTokens / 2 / 1000) * 1000
+		if lower > 0 {
+			supported = []int{lower, maxInputTokens}
+		} else {
+			supported = []int{16000, maxInputTokens}
+		}
+	}
+	// 兜底保障：绝对不能超过 3 档，超过则截取 [首档, 次高档, 尾档]
+	if len(supported) > 3 {
+		supported = []int{supported[0], supported[len(supported)-2], supported[len(supported)-1]}
+	}
+
 	return map[string]any{
 		"supportedLengths": supported,
 		"defaultLength":   maxInputTokens,
