@@ -9,6 +9,7 @@ import (
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/growth"
+	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
@@ -260,5 +261,66 @@ func TestHandleGrowthDomesticTasksAndSweep(t *testing.T) {
 	srv.handleGrowthDomesticGuardianTrigger(trigRec, trigReq)
 	if trigRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for guardian trigger, got %d: %s", trigRec.Code, trigRec.Body.String())
+	}
+}
+
+func TestHandleGrowthIntlSimulateActive(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"id\":\"cmb-test\",\"choices\":[{\"delta\":{\"content\":\"模拟对话成功！\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+		case "/v2/report":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	srv, err := New(Options{Token: "test-guard-token"})
+	if err != nil {
+		t.Fatalf("New server error: %v", err)
+	}
+
+	srv.upstreamBaseFn = func() string { return ts.URL }
+	srv.intlCredFn = func(p *variant.Probe) (usage.ProxyCredentials, error) {
+		return usage.ProxyCredentials{Token: "intl-tok-999", UID: "intl-uid-999"}, nil
+	}
+
+	// 1. 测试错误方法 GET 应拒绝
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/growth/intl/simulate-active", nil)
+	recGet := httptest.NewRecorder()
+	srv.handleGrowthIntlSimulateActive(recGet, reqGet)
+	if recGet.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 MethodNotAllowed for GET, got %d", recGet.Code)
+	}
+
+	// 2. 测试正常 POST 模拟对话
+	reqPost := httptest.NewRequest(http.MethodPost, "/api/growth/intl/simulate-active", strings.NewReader(`{"model":"deepseek-v4.1-flash-sg"}`))
+	recPost := httptest.NewRecorder()
+	srv.handleGrowthIntlSimulateActive(recPost, reqPost)
+
+	if recPost.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for simulate-active, got %d: %s", recPost.Code, recPost.Body.String())
+	}
+
+	var res growth.SimulateResult
+	if err := json.Unmarshal(recPost.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal simulate result failed: %v", err)
+	}
+	if !res.OK {
+		t.Errorf("expected res.OK to be true")
+	}
+	if res.Model != "deepseek-v4.1-flash-sg" {
+		t.Errorf("expected model deepseek-v4.1-flash-sg, got %s", res.Model)
+	}
+	if !strings.Contains(res.Reply, "模拟对话成功") {
+		t.Errorf("expected reply to contain 模拟对话成功, got %s", res.Reply)
+	}
+	if !res.Reported {
+		t.Errorf("expected res.Reported to be true")
 	}
 }

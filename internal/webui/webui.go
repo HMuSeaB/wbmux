@@ -354,6 +354,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/auth/web-login", s.guard(s.handleAuthWebLogin))
 	mux.HandleFunc("/api/growth/streak", s.guard(s.handleGrowthStreak))
 	mux.HandleFunc("/api/growth/redeem", s.guard(s.handleGrowthRedeem))
+	mux.HandleFunc("/api/growth/intl/simulate-active", s.guard(s.handleGrowthIntlSimulateActive))
+	mux.HandleFunc("/api/intl/simulate-active", s.guard(s.handleGrowthIntlSimulateActive))
 	mux.HandleFunc("/api/growth/domestic/tasks", s.guard(s.handleGrowthDomesticTasks))
 	mux.HandleFunc("/api/growth/domestic/run", s.guard(s.handleGrowthDomesticRun))
 	mux.HandleFunc("/api/growth/domestic/claim", s.guard(s.handleGrowthDomesticClaim))

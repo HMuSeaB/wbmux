@@ -97,6 +97,50 @@ func (s *Server) handleGrowthRedeem(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGrowthIntlSimulateActive 处理国际端“一键模拟今日活跃会话”请求。
+// 写操作（发起会话与遥测上报，闭环官方活跃判定，次日官方跑批发放 +30 积分奖励）。
+func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	var req struct {
+		Model string `json:"model"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req)
+	}
+
+	p := s.probe()
+	c, err := s.intlCred(p)
+	if err != nil || c.Token == "" {
+		writeErr(w, http.StatusNotFound, "未配置国际版账号凭证，请先登录国际版账号")
+		return
+	}
+
+	client := growth.NewClient(s.upstreamBase())
+	res, err := client.SimulateIntlActive(credential.Credential{Token: c.Token, UID: c.UID}, req.Model)
+	if err != nil {
+		s.note(ProxyLogEntry{
+			Level: "bad",
+			Text:  "国际版模拟活跃对话失败: " + err.Error(),
+		})
+		writeErr(w, http.StatusBadGateway, "模拟活跃对话失败: "+err.Error())
+		return
+	}
+
+	usage.InvalidateLiveCache(variant.Intl)
+
+	s.note(ProxyLogEntry{
+		Level: "info",
+		Model: res.Model,
+		Text:  fmt.Sprintf("已成功模拟国际端今日活跃对话 (耗时 %dms, 首字 %dms) · 次日跑批自动发放 +30 积分", res.DurationMs, res.TTFTMs),
+	})
+
+	writeJSON(w, res)
+}
+
 // DomesticTasksResponse 国内端成长计划全量任务与收益响应。
 type DomesticTasksResponse struct {
 	Tasks              []growth.GrowthTask        `json:"tasks"`

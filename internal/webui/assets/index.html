@@ -2947,6 +2947,22 @@
     <div id="checkin-auto-note" style="margin-top:10px"></div>
     <div id="checkin-body" style="margin-top:14px"></div>
   </section>
+  <section style="margin-top:24px">
+    <h2><svg class="ico-sm" aria-hidden="true" style="color:var(--brand)"><use href="#i-zap"/></svg>国际版每日活跃打卡 (次日自动发放 +30 积分)</h2>
+    <p class="sub">
+      国际版（WorkBuddy / CodeBuddy International）不设静态签到接口，而是通过<strong>每日有效桌面问答会话</strong>核算活跃度。官方在次日凌晨跑批统一发放 <strong>+30 积分</strong>，并累计连续活跃进度（可阶梯兑换 50~150 积分）。
+    </p>
+    <p class="sub">
+      如果你当天未通过客户端对话，或自选模型未走官方桌面链路，可在此<strong>完整跑一次模拟对话</strong>：后端将携带官方 8 大桌面身份头，调用免积分模型（首选 <code>deepseek-v4.1-flash-sg</code>），完整走完流式交互并上报 6 项遥测事件闭环。
+    </p>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="btn-checkin-intl-simulate" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff">
+        <svg class="ico ico-sm" aria-hidden="true"><use href="#i-zap"/></svg> 模拟今日活跃对话 (+30 积分)
+      </button>
+      <span class="hint" id="checkin-intl-simulate-hint" style="margin:0"></span>
+    </div>
+    <div id="checkin-intl-simulate-box" style="margin-top:14px" hidden></div>
+  </section>
   <section>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-clock"/></svg>自动签到的边界</h2>
     <p class="sub">
@@ -4815,6 +4831,67 @@
     else if (!st.active) claim.title = "这一侧没有开签到活动";
     else if (st.todayCheckedIn) claim.title = "今天已经签过了";
     else claim.title = "";
+  }
+
+  // runIntlActiveSimulation 统一调度国际端模拟活跃对话（+30 积分）生命周期
+  function runIntlActiveSimulation(btnEl, resultBoxEl) {
+    if (!btnEl) return;
+    btnEl.disabled = true;
+    var origHtml = btnEl.innerHTML;
+    btnEl.innerHTML = '<span class="spinner-sm"></span> 模拟对话中…';
+
+    if (resultBoxEl) {
+      resultBoxEl.hidden = false;
+      resultBoxEl.style.display = "block";
+      resultBoxEl.innerHTML = '<div style="display:flex;align-items:center;gap:6px;color:var(--brand);font-size:12px;padding:8px 0">' +
+        '<span class="spinner-sm"></span> 正在向国际后端发起免积分对话 (首选 deepseek-v4.1-flash-sg) 并上报 6 项桌面事件…' +
+        '</div>';
+    }
+
+    api("/api/growth/intl/simulate-active", { method: "POST" }).then(function (res) {
+      btnEl.disabled = false;
+      btnEl.innerHTML = '<svg class="ico ico-sm" aria-hidden="true" style="margin-right:3px"><use href="#i-check"/></svg> 今日已模拟';
+      btnEl.style.background = "rgba(34,197,94,0.18)";
+      btnEl.style.color = "var(--green, #22c55e)";
+      toast("模拟对话成功！官方次日统一发放 +30 积分奖励", "ok");
+
+      if (resultBoxEl) {
+        resultBoxEl.hidden = false;
+        resultBoxEl.style.display = "block";
+        resultBoxEl.innerHTML =
+          '<div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.25);border-radius:var(--r-sm);padding:12px 14px">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">' +
+              '<span style="font-weight:600;color:var(--green, #22c55e);display:flex;align-items:center;gap:5px;font-size:12.5px">' +
+                '<svg class="ico ico-sm"><use href="#i-check"/></svg> 模拟对话闭环达成 (次日 +30 积分)' +
+              '</span>' +
+              '<span style="font-size:11px;color:var(--ink-3);font-family:var(--mono)">耗时 ' + res.duration_ms + 'ms (首字 ' + res.ttft_ms + 'ms)</span>' +
+            '</div>' +
+            '<div style="font-size:11.5px;color:var(--ink-2);margin-bottom:6px">' +
+              '<strong>调用模型：</strong><code style="color:var(--brand);font-size:12px">' + (res.model || 'deepseek-v4.1-flash-sg') + '</code> ' +
+              '<span class="badge" style="background:rgba(34,197,94,0.15);color:var(--green);font-size:10.5px;padding:1px 6px;border-radius:3px">0.00x 免积分</span>' +
+            '</div>' +
+            '<div style="font-size:11.5px;color:var(--ink-2);background:rgba(0,0,0,0.18);padding:8px 10px;border-radius:4px;margin-bottom:8px;line-height:1.5;font-style:italic">' +
+              '“' + (res.reply || '') + '”' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:4px">' +
+              '<svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"/></svg> ' + (res.report_message || '已成功闭环上报 6 项桌面事件') +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--ink-3);margin-top:4px">' +
+              '💡 <strong>积分说明：</strong>' + (res.next_day_reward_note || '模拟对话已完成，次日官方跑批自动发放 +30 积分。') +
+            '</div>' +
+          '</div>';
+      }
+      loadUsage(true, true);
+    }).catch(function (err) {
+      btnEl.disabled = false;
+      btnEl.innerHTML = origHtml;
+      if (resultBoxEl) {
+        resultBoxEl.hidden = false;
+        resultBoxEl.style.display = "block";
+        resultBoxEl.innerHTML = '<div style="color:var(--bad, #ef4444);font-size:12px;background:rgba(239,68,68,0.1);padding:10px;border-radius:var(--r-sm)">模拟对话失败：' + (err.message || '网络或接口异常') + '</div>';
+      }
+      toast("模拟对话失败：" + err.message, "bad");
+    });
   }
 
   // 进页面时**先自动签到**，再按结果渲染。
@@ -8592,9 +8669,26 @@
         text: "刷新",
         title: "连续活跃可阶梯领取 50/150 积分奖励"
       });
+      var streakBtnGroup = el("div", { style: "display:flex;align-items:center;gap:6px;flex-shrink:0" });
+      var btnSimulateAction = el("button", {
+        class: "primary",
+        style: "padding:3px 10px;font-size:11px;height:auto;white-space:nowrap;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:none",
+        html: '<svg class="ico ico-sm" aria-hidden="true" style="margin-right:3px"><use href="#i-zap"/></svg>模拟活跃 (+30c)',
+        title: "向国际后端发起免积分模拟对话并上报桌面链路事件，锁定次日 +30 积分每日活跃"
+      });
+      var intlSimulateResultCard = el("div", {
+        id: "intl-simulate-result-card",
+        style: "display:none;margin-top:8px"
+      });
+      btnSimulateAction.onclick = function () {
+        runIntlActiveSimulation(btnSimulateAction, intlSimulateResultCard);
+      };
+      streakBtnGroup.appendChild(btnSimulateAction);
+      streakBtnGroup.appendChild(btnStreakAction);
       intlStreakSec.appendChild(streakInfoBox);
-      intlStreakSec.appendChild(btnStreakAction);
+      intlStreakSec.appendChild(streakBtnGroup);
       intlCard.appendChild(intlStreakSec);
+      intlCard.appendChild(intlSimulateResultCard);
 
       // 异步拉取 Streak 状态
       api("/api/growth/streak").then(function (st) {
@@ -8990,6 +9084,12 @@
     loadCheckinStatus();
   });
   document.getElementById("btn-checkin-claim").addEventListener("click", claimCheckin);
+  var btnCheckinIntlSim = document.getElementById("btn-checkin-intl-simulate");
+  if (btnCheckinIntlSim) {
+    btnCheckinIntlSim.addEventListener("click", function () {
+      runIntlActiveSimulation(this, document.getElementById("checkin-intl-simulate-box"));
+    });
+  }
   document.getElementById("chk-checkin-auto").addEventListener("change", function () {
     var box = document.getElementById("checkin-auto-note");
     var on = this.checked;
