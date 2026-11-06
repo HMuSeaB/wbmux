@@ -2953,7 +2953,7 @@
       国际版（WorkBuddy / CodeBuddy International）不设静态签到接口，而是通过<strong>每日有效桌面问答会话</strong>核算活跃度。官方在次日凌晨跑批统一发放 <strong>+30 积分</strong>，并累计连续活跃进度（可阶梯兑换 50~150 积分）。
     </p>
     <p class="sub">
-      如果你当天未通过客户端对话，或自选模型未走官方桌面链路，可在此<strong>完整跑一次模拟对话</strong>：后端将携带官方 8 大桌面身份头，调用免积分模型（首选 <code>deepseek-v4.1-flash-sg</code>），完整走完流式交互并上报 6 项遥测事件闭环。
+      如果你当天未通过客户端对话，或自选模型未走官方桌面链路，可在此<strong>完整跑一次模拟对话</strong>：后端将携带官方 8 大桌面身份头，自动动态匹配当前官方免积分模型（如 <code>hy4free</code> 等），完整走完流式交互并上报 6 项遥测事件闭环。
     </p>
     <div class="row" style="margin-top:14px">
       <button class="primary" id="btn-checkin-intl-simulate" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff">
@@ -4844,7 +4844,7 @@
       resultBoxEl.hidden = false;
       resultBoxEl.style.display = "block";
       resultBoxEl.innerHTML = '<div style="display:flex;align-items:center;gap:6px;color:var(--brand);font-size:12px;padding:8px 0">' +
-        '<span class="spinner-sm"></span> 正在向国际后端发起免积分对话 (首选 deepseek-v4.1-flash-sg) 并上报 6 项桌面事件…' +
+        '<span class="spinner-sm"></span> 正在向国际后端发起免积分对话 (动态匹配官方限免模型) 并上报 6 项桌面事件…' +
         '</div>';
     }
 
@@ -4867,7 +4867,7 @@
               '<span style="font-size:11px;color:var(--ink-3);font-family:var(--mono)">耗时 ' + res.duration_ms + 'ms (首字 ' + res.ttft_ms + 'ms)</span>' +
             '</div>' +
             '<div style="font-size:11.5px;color:var(--ink-2);margin-bottom:6px">' +
-              '<strong>调用模型：</strong><code style="color:var(--brand);font-size:12px">' + (res.model || 'deepseek-v4.1-flash-sg') + '</code> ' +
+              '<strong>调用模型：</strong><code style="color:var(--brand);font-size:12px">' + (res.model || 'hy4free') + '</code> ' +
               '<span class="badge" style="background:rgba(34,197,94,0.15);color:var(--green);font-size:10.5px;padding:1px 6px;border-radius:3px">0.00x 免积分</span>' +
             '</div>' +
             '<div style="font-size:11.5px;color:var(--ink-2);background:rgba(0,0,0,0.18);padding:8px 10px;border-radius:4px;margin-bottom:8px;line-height:1.5;font-style:italic">' +

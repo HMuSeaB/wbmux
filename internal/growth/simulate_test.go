@@ -113,10 +113,10 @@ func TestSimulateIntlActiveModelFallback(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			requestedModels = append(requestedModels, body.Model)
 
-			// 模拟 deepseek-v4.1-flash-sg 报 11102 (不存在)，后续 deepseek-v4.1-flash 成功
-			if body.Model == "deepseek-v4.1-flash-sg" {
+			// 模拟 hy4free 报 11102 (不存在)，后续 hy3 成功
+			if body.Model == "hy4free" {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"code":11102,"msg":"model [deepseek-v4.1-flash-sg] not exist"}`))
+				_, _ = w.Write([]byte(`{"code":11102,"msg":"model [hy4free] not exist"}`))
 				return
 			}
 
@@ -140,13 +140,13 @@ func TestSimulateIntlActiveModelFallback(t *testing.T) {
 		UID:   "test-uid",
 	}
 
-	res, err := client.SimulateIntlActive(cred, "deepseek-v4.1-flash-sg")
+	res, err := client.SimulateIntlActive(cred, "hy4free", "hy3")
 	if err != nil {
 		t.Fatalf("期望回退成功，但报错: %v", err)
 	}
 
-	if res.Model != "deepseek-v4.1-flash" {
-		t.Errorf("期望最终成功模型为 deepseek-v4.1-flash，实际: %s", res.Model)
+	if res.Model != "hy3" {
+		t.Errorf("期望最终成功模型为 hy3，实际: %s", res.Model)
 	}
 	if len(requestedModels) != 2 {
 		t.Errorf("期望依次尝试了 2 个模型，实际: %v", requestedModels)

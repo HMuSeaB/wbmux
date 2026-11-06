@@ -119,8 +119,24 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// 动态解析当前实时免积分候选模型（优先用户指定，其次官方限免 FreeNow / 0 积分模型）
+	var candidates []string
+	if req.Model != "" {
+		candidates = append(candidates, req.Model)
+	}
+	if live := usage.LiveAccounts(p)[string(variant.Intl)]; live != nil && live.OK {
+		for _, m := range live.Models {
+			if !m.Locked && (m.FreeNow || m.Rate == 0) {
+				idLower := strings.ToLower(m.ID)
+				if !strings.Contains(idLower, "image") && !strings.Contains(idLower, "video") {
+					candidates = append(candidates, m.ID)
+				}
+			}
+		}
+	}
+
 	client := growth.NewClient(s.upstreamBase())
-	res, err := client.SimulateIntlActive(credential.Credential{Token: c.Token, UID: c.UID}, req.Model)
+	res, err := client.SimulateIntlActive(credential.Credential{Token: c.Token, UID: c.UID}, candidates...)
 	if err != nil {
 		s.note(ProxyLogEntry{
 			Level: "bad",
@@ -135,7 +151,7 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 	s.note(ProxyLogEntry{
 		Level: "info",
 		Model: res.Model,
-		Text:  fmt.Sprintf("已成功模拟国际端今日活跃对话 (耗时 %dms, 首字 %dms) · 次日跑批自动发放 +30 积分", res.DurationMs, res.TTFTMs),
+		Text:  fmt.Sprintf("已成功模拟国际端今日活跃对话 (模型: %s, 耗时 %dms, 首字 %dms) · 次日跑批自动发放 +30 积分", res.Model, res.DurationMs, res.TTFTMs),
 	})
 
 	writeJSON(w, res)

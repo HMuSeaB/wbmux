@@ -15,12 +15,12 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/credential"
 )
 
-// DefaultIntlFreeModels 定义国际端默认优先尝试的免积分模型梯队。
-// 官方近期将免积分 DeepSeek Flash 升级重命名为 deepseek-v4.1-flash-sg（新加坡集群节点）。
+// DefaultIntlFreeModels 定义国际端兜底候选免积分模型。
+// 优先 hy4free (当前官方限免 0.00x 模型) 与 hy3。
 var DefaultIntlFreeModels = []string{
-	"deepseek-v4.1-flash-sg",
-	"deepseek-v4.1-flash",
 	"hy4free",
+	"hy3",
+	"deepseek-v4.1-flash-sg",
 }
 
 // SimulateResult 记录一次完整国际端模拟对话与活跃打卡的执行成果。
@@ -38,49 +38,53 @@ type SimulateResult struct {
 	NextDayRewardNote string `json:"next_day_reward_note"`
 }
 
-// generateSimUUID 生成一个符合官方桌面端格式的随机 UUID v4。
+// generateSimUUID 生成紧凑的标准 UUID v4。
 func generateSimUUID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(b[:])
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// SimulateIntlActive 完整跑一次国际端真实会话：携带 8 大官方桌面身份标头、
-// 使用免积分模型（首选 deepseek-v4.1-flash-sg）、流式接收完整回答至 natural stop，
-// 并在完成后向 /v2/report 上报 6 项桌面事件链，确保 100% 触发次日 +30 积分的每日活跃奖励。
-func (c *Client) SimulateIntlActive(cred credential.Credential, preferredModel string) (*SimulateResult, error) {
+// SimulateIntlActive 完整跑一次国际端真实会话：
+// 优先尝试传入的动态候选模型（或缺省兜底梯队），
+// 携带官方桌面身份标头，流式接收至自然结束，并闭环上报 6 项遥测事件。
+func (c *Client) SimulateIntlActive(cred credential.Credential, candidates ...string) (*SimulateResult, error) {
 	if cred.Token == "" {
 		return nil, fmt.Errorf("国际端凭据 Token 为空，请先在 wbmux 或官方客户端登录国际账号")
 	}
 
-	var candidates []string
-	if preferredModel = strings.TrimSpace(preferredModel); preferredModel != "" {
-		candidates = append(candidates, preferredModel)
+	// 清理并去重模型候选列表
+	var models []string
+	seen := make(map[string]bool)
+	for _, m := range candidates {
+		m = strings.TrimSpace(m)
+		if m != "" && !seen[m] {
+			models = append(models, m)
+			seen[m] = true
+		}
 	}
 	for _, m := range DefaultIntlFreeModels {
-		if m != preferredModel {
-			candidates = append(candidates, m)
+		if !seen[m] {
+			models = append(models, m)
+			seen[m] = true
 		}
 	}
 
 	var lastErr error
-	for _, model := range candidates {
+	for _, model := range models {
 		res, err := c.doSimulateConversation(cred, model)
 		if err == nil && res != nil && res.OK {
 			return res, nil
 		}
 		if err != nil {
 			lastErr = err
-			// 若由于模型不存在 (11102/404) 则自动无缝尝试下一个候选模型
+			// 仅在模型不存在 (11102 / 404 / not exist) 时尝试下一个候选
 			errStr := strings.ToLower(err.Error())
 			if strings.Contains(errStr, "11102") || strings.Contains(errStr, "not exist") || strings.Contains(errStr, "404") {
 				continue
 			}
-			// 其它非模型名称错误（如 Token 失效/网络超时）直接中断并回报
 			return nil, err
 		}
 	}
@@ -91,27 +95,17 @@ func (c *Client) SimulateIntlActive(cred credential.Credential, preferredModel s
 	return nil, fmt.Errorf("未找到可用的免积分候选模型")
 }
 
-// doSimulateConversation 执行单次指定模型的完整流式交互与上报闭环。
+// doSimulateConversation 执行单次会话流式交互与遥测上报。
 func (c *Client) doSimulateConversation(cred credential.Credential, model string) (*SimulateResult, error) {
 	convID := "c-" + generateSimUUID()
-	parentConvID := "c-" + generateSimUUID()
-	sessionID := "s-" + generateSimUUID()
-	reqID := "r-" + generateSimUUID()
-	convReqID := "cr-" + generateSimUUID()
+	reqID := "cr-" + generateSimUUID()
 	msgID := "m-" + generateSimUUID()
-	traceID := "t-" + generateSimUUID()
 
 	payload := map[string]any{
 		"model": model,
 		"messages": []any{
-			map[string]any{
-				"role":    "system",
-				"content": "You are a helpful and polite programming assistant.",
-			},
-			map[string]any{
-				"role":    "user",
-				"content": "你好，请给出今日的代码打卡问候语，并用一句话鼓励开发者。",
-			},
+			map[string]any{"role": "system", "content": "You are a helpful and polite programming assistant."},
+			map[string]any{"role": "user", "content": "你好，请给出今日的代码打卡问候语，并用一句话鼓励开发者。"},
 		},
 		"stream": true,
 	}
@@ -129,22 +123,21 @@ func (c *Client) doSimulateConversation(cred credential.Credential, model string
 		return nil, fmt.Errorf("创建 HTTP 请求失败: %w", err)
 	}
 
-	// 注入官方桌面端身份头
 	ApplyDesktopHeaders(httpReq, cred.Token, cred.UID, c.endpoint)
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Content-Type", "application/json;charset=UTF-8")
 
-	// 补齐 8 大官方桌面专有身份校验标头
+	// 注入官方桌面端 8 大核心校验标头
 	httpReq.Header.Set("X-Conversation-ID", convID)
-	httpReq.Header.Set("X-Parent-Conversation-ID", parentConvID)
-	httpReq.Header.Set("X-Session-ID", sessionID)
-	httpReq.Header.Set("X-Conversation-Request-ID", convReqID)
+	httpReq.Header.Set("X-Parent-Conversation-ID", convID)
+	httpReq.Header.Set("X-Session-ID", convID)
+	httpReq.Header.Set("X-Conversation-Request-ID", reqID)
 	httpReq.Header.Set("X-Conversation-Message-ID", msgID)
 	httpReq.Header.Set("X-Request-ID", reqID)
 	httpReq.Header.Set("X-Root-Request-ID", reqID)
-	httpReq.Header.Set("X-Trace-ID", traceID)
+	httpReq.Header.Set("X-Trace-ID", reqID)
 
-	// 官方 IDE 与意图扩展标头
+	// 官方扩展标识
 	httpReq.Header.Set("X-Model-ID", model)
 	httpReq.Header.Set("X-Agent-Intent", "chat")
 	httpReq.Header.Set("X-Agent-Type", "chat")
@@ -154,8 +147,11 @@ func (c *Client) doSimulateConversation(cred credential.Credential, model string
 	httpReq.Header.Set("X-IDE-Version", "5.5.6")
 	httpReq.Header.Set("X-Product-Version", "5.5.6")
 
+	// 关键修复：流式会话采用 45 秒流式客户端，避免受限于 Client 基础 API 的 10 秒超时
+	streamClient := &http.Client{Timeout: 45 * time.Second}
+
 	startTime := time.Now()
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := streamClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("向国际后端发起会话失败: %w", err)
 	}
@@ -166,54 +162,50 @@ func (c *Client) doSimulateConversation(cred credential.Credential, model string
 		return nil, fmt.Errorf("国际后端拒绝会话 (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// 完整读取流式响应直到结束
-	reader := bufio.NewReader(resp.Body)
+	// 极简高效的 SSE 扫描器
 	var replyBuilder strings.Builder
 	var ttft int64
 	hasFirstToken := false
 	serverReqID := reqID
 
-	for {
-		line, rErr := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "data:") {
-			dataContent := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if dataContent == "[DONE]" {
-				break
-			}
-			if dataContent != "" {
-				if !hasFirstToken {
-					hasFirstToken = true
-					ttft = time.Since(startTime).Milliseconds()
-				}
-				var chunk struct {
-					ID      string `json:"id"`
-					Choices []struct {
-						Delta struct {
-							Content string `json:"content"`
-						} `json:"delta"`
-						Message struct {
-							Content string `json:"content"`
-						} `json:"message"`
-						FinishReason *string `json:"finish_reason"`
-					} `json:"choices"`
-				}
-				if jsonErr := json.Unmarshal([]byte(dataContent), &chunk); jsonErr == nil {
-					if chunk.ID != "" {
-						serverReqID = chunk.ID
-					}
-					for _, ch := range chunk.Choices {
-						if ch.Delta.Content != "" {
-							replyBuilder.WriteString(ch.Delta.Content)
-						} else if ch.Message.Content != "" {
-							replyBuilder.WriteString(ch.Message.Content)
-						}
-					}
-				}
-			}
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
 		}
-		if rErr != nil {
+		dataContent := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if dataContent == "[DONE]" {
 			break
+		}
+		if dataContent != "" {
+			if !hasFirstToken {
+				hasFirstToken = true
+				ttft = time.Since(startTime).Milliseconds()
+			}
+			var chunk struct {
+				ID      string `json:"id"`
+				Choices []struct {
+					Delta struct {
+						Content string `json:"content"`
+					} `json:"delta"`
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				} `json:"choices"`
+			}
+			if jsonErr := json.Unmarshal([]byte(dataContent), &chunk); jsonErr == nil {
+				if chunk.ID != "" {
+					serverReqID = chunk.ID
+				}
+				for _, ch := range chunk.Choices {
+					if ch.Delta.Content != "" {
+						replyBuilder.WriteString(ch.Delta.Content)
+					} else if ch.Message.Content != "" {
+						replyBuilder.WriteString(ch.Message.Content)
+					}
+				}
+			}
 		}
 	}
 
@@ -227,7 +219,7 @@ func (c *Client) doSimulateConversation(cred credential.Credential, model string
 		replyText = "你好！今天也是充满创造力的一天，代码如诗，祝你编码愉快！"
 	}
 
-	// 向 /v2/report 上报官方完整的 6 桌面事件链路
+	// 上报官方 6 项桌面事件闭环
 	events := BuildDesktopChatSequence(convID, serverReqID, "msg-"+serverReqID, model, model)
 	reportErr := c.ReportDesktopEvent(cred, events...)
 	reported := reportErr == nil
