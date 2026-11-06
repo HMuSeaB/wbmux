@@ -683,3 +683,28 @@ func TestSyncOnlyLockedDoesNotTouchFile(t *testing.T) {
 		t.Error("没有可注入的东西时不该改动文件")
 	}
 }
+
+// TestBuildContextWindowDoc 验证 contextWindow 阶梯档位对象生成：
+// 必须保证 supportedLengths >= 2 且包含期望阶梯，客户端切换 Context 时才不会被置空。
+func TestBuildContextWindowDoc(t *testing.T) {
+	doc := buildContextWindowDoc(1000000)
+	lengths, ok := doc["supportedLengths"].([]int)
+	if !ok || len(lengths) < 2 {
+		t.Fatalf("supportedLengths 至少应有 2 档以激活客户端 UI: %v", doc)
+	}
+	if doc["defaultLength"] != 1000000 {
+		t.Errorf("defaultLength 应为 1000000, 得到 %v", doc["defaultLength"])
+	}
+	// 验证包含常见阶梯并以 maxInputTokens 结尾
+	last := lengths[len(lengths)-1]
+	if last != 1000000 {
+		t.Errorf("最后一档应等于上限 1000000，得到 %d", last)
+	}
+
+	// 小窗口模型
+	small := buildContextWindowDoc(32768)
+	smallLengths := small["supportedLengths"].([]int)
+	if len(smallLengths) < 2 {
+		t.Errorf("小窗口模型也应保证至少两档: %v", small)
+	}
+}

@@ -185,7 +185,7 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			"onlyReasoning":     false,
 			"supportsToolCall":  true,
 			"supportsImages":    true,
-			"contextWindow":     1000000,
+			"contextWindow":     buildContextWindowDoc(1000000),
 			"maxInputTokens":    1000000,
 			"maxOutputTokens":   64000,
 		}
@@ -221,6 +221,11 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			label = fmt.Sprintf("%s（国际）", displayNameStr)
 		}
 
+		ctxTokens := m.Ctx
+		if ctxTokens <= 0 {
+			ctxTokens = 1000000
+		}
+
 		entry := map[string]any{
 			"id":     IDPrefix + m.ID,
 			"name":   label,
@@ -244,10 +249,13 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 			// 思考类开关官方配置里没有对应字段，不猜，一律 false。
 			"supportsReasoning": false,
 		}
-		// 上限缺省就别写：客户端对缺失字段有自己的兜底，
-		// 而写个 0 会被当成"上限为零"。
+		// 上限缺省就别写：客户端对缺失字段有自己的兜底，而写个 0 会被当成"上限为零"。
+		// 当官方有明确上下文上限时（如 deepseek 的 1M），注入结构化阶梯 contextWindow 对象。
+		// 客户端 (resolveEffectiveContextBudget) 严格要求 contextWindow 包含 supportedLengths（且长度 >= 2）
+		// 与 defaultLength，否则用户在客户端切换上下文长度（Context）时会被判定为非法值并立刻静默重置为 null（导致"调了跟没调一样"）。
 		if m.Ctx > 0 {
 			entry["maxInputTokens"] = m.Ctx
+			entry["contextWindow"] = buildContextWindowDoc(m.Ctx)
 		}
 		if m.MaxOutput > 0 {
 			entry["maxOutputTokens"] = m.MaxOutput
@@ -284,17 +292,16 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 				"supportsImages":    p.ImagesSupported(),
 				"supportsReasoning": false,
 			}
-			if p.MaxInputTokens > 0 {
-				entry["maxInputTokens"] = p.MaxInputTokens
-				entry["contextWindow"] = p.MaxInputTokens
-			} else {
-				// 缺省时默认赋予 1,000,000 上下文认知，避免被客户端截断至 300k 内置默认值
-				entry["contextWindow"] = 1000000
-				entry["maxInputTokens"] = 1000000
-				entry["maxOutputTokens"] = 64000
+			inTokens := p.MaxInputTokens
+			if inTokens <= 0 {
+				inTokens = 1000000
 			}
+			entry["maxInputTokens"] = inTokens
+			entry["contextWindow"] = buildContextWindowDoc(inTokens)
 			if p.MaxOutputTokens > 0 {
 				entry["maxOutputTokens"] = p.MaxOutputTokens
+			} else {
+				entry["maxOutputTokens"] = 64000
 			}
 			kept = append(kept, entry)
 			added++
@@ -466,4 +473,39 @@ func hasAnyFreeModel(intl []usage.LiveModel) bool {
 		}
 	}
 	return false
+}
+
+// buildContextWindowDoc 根据模型的最大输入 token 数量生成 WorkBuddy 客户端合规的
+// contextWindow 阶梯档位对象。
+//
+// 客户端 5.6.2 ~ 5.8.3+ 在解析会话预算 (resolveEffectiveContextBudget) 时，
+// 严格要求 contextWindow 是包含 supportedLengths 与 defaultLength 的对象，
+// 且 supportedLengths.length >= 2，否则用户在客户端 UI 界面上切换上下文长度（Context）
+// 时会被判定为非法值并立刻静默重置为 null（这也是用户反馈"调了跟没调一样"的根因）。
+func buildContextWindowDoc(maxInputTokens int) map[string]any {
+	if maxInputTokens <= 0 {
+		maxInputTokens = 1000000
+	}
+	// 基础标准阶梯：32k, 64k, 128k, 256k, 512k, 1M
+	standardSteps := []int{32768, 65536, 131072, 262144, 524288, 1000000}
+	var supported []int
+	for _, step := range standardSteps {
+		if step < maxInputTokens {
+			supported = append(supported, step)
+		}
+	}
+	supported = append(supported, maxInputTokens)
+	if len(supported) < 2 {
+		// 保证至少两档以激活客户端 UI 选择器
+		half := maxInputTokens / 2
+		if half > 0 {
+			supported = []int{half, maxInputTokens}
+		} else {
+			supported = []int{16384, maxInputTokens}
+		}
+	}
+	return map[string]any{
+		"supportedLengths": supported,
+		"defaultLength":   maxInputTokens,
+	}
 }
