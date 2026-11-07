@@ -174,9 +174,6 @@ type ProxyCredentials struct {
 }
 
 // IntlProxyCredentials 读国际侧凭据（代理层用）。
-//
-// 国际侧一直是明文，所以这条链路很轻：读文件 + 解析 + 校验非空。
-// 国内侧的信封不走这里——代理只服务国际后端。
 func IntlProxyCredentials(probe *variant.Probe) (ProxyCredentials, error) {
 	c, err := readCredential(probe, variant.Intl)
 	if err != nil {
@@ -188,11 +185,29 @@ func IntlProxyCredentials(probe *variant.Probe) (ProxyCredentials, error) {
 	return ProxyCredentials{Token: c.Token, UID: c.UID}, nil
 }
 
+// CNProxyCredentials 读国内侧凭据（代理层用，支持解密信封）。
+func CNProxyCredentials(probe *variant.Probe) (ProxyCredentials, error) {
+	c, err := readCredential(probe, variant.CN)
+	if err != nil {
+		return ProxyCredentials{}, err
+	}
+	if c.Token == "" {
+		return ProxyCredentials{}, fmt.Errorf("国内侧 accessToken 为空")
+	}
+	return ProxyCredentials{Token: c.Token, UID: c.UID}, nil
+}
+
 // IntlEndpoint 返回国际后端地址（与产品配置 endpoint 一致）。
 func IntlEndpoint() string { return liveEndpoint[variant.Intl] }
 
-// IntlCommonHeaders 官方接口通用附加头（X-Product / User-Agent）。
+// CNEndpoint 返回国内后端地址（与产品配置 endpoint 一致）。
+func CNEndpoint() string { return liveEndpoint[variant.CN] }
+
+// IntlCommonHeaders 国际官方接口通用附加头（X-Product / User-Agent）。
 func IntlCommonHeaders() map[string]string { return liveCommonHeaders(variant.Intl) }
+
+// CNCommonHeaders 国内官方接口通用附加头（X-Product / User-Agent）。
+func CNCommonHeaders() map[string]string { return liveCommonHeaders(variant.CN) }
 
 // liveCacheTTL 内的重复请求直接用缓存：面板每点一次就打一轮官方接口，
 // 没必要；提升至 5 分钟安全长缓存，防范高频查询导致的风控限流或封禁。

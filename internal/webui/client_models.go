@@ -29,6 +29,20 @@ func (s *Server) handleInjectCustomModels(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{"added": added, "note": note})
 }
 
+// handleInjectCNIntoIntl 把国内版模型反向注入国际版客户端的自定义模型清单（~/.workbuddy-ai/models.json）。
+func (s *Server) handleInjectCNIntoIntl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	added, note, err := s.syncCNIntoIntl()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"added": added, "note": note})
+}
+
 // handleIntlModelSelection 获取或更新自选的国际付费模型注入列表
 func (s *Server) handleIntlModelSelection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -228,4 +242,55 @@ func (s *Server) SyncCustomModels() (int, error) {
 		s.note(ProxyLogEntry{Level: "info", Text: note})
 	}
 	return added, nil
+}
+
+// syncCNIntoIntl 把国内版提供的可用模型反向注入国际版客户端的自定义模型清单。
+func (s *Server) syncCNIntoIntl() (int, string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		s.note(ProxyLogEntry{Level: "bad", Text: "读取设置失败（自备提供方将不注入）：" + compactError(err.Error())})
+		cfg = config.Config{}
+	}
+
+	var cnErr string
+	var cnModels []usage.LiveModel
+	var accounts map[string]*usage.LiveAccount
+	if s.liveAccountsFn != nil {
+		accounts = s.liveAccountsFn(s.probe())
+	} else {
+		accounts = usage.LiveAccounts(s.probe())
+	}
+	if live := accounts[string(variant.CN)]; live != nil && live.OK {
+		cnModels = live.Models
+	} else if live != nil && live.Err != "" {
+		cnErr = live.Err
+	} else {
+		cnErr = "国内侧凭据不可用"
+	}
+
+	base := "http://" + s.Addr() + "/v1/chat/completions"
+	path := filepath.Join(s.probe().DataDir(variant.Intl), "models.json")
+
+	added, err := custommodels.SyncCNIntoIntl(path, base, s.token, cnModels, cfg.Providers)
+	if err != nil {
+		return 0, "", err
+	}
+
+	validCount := 0
+	for _, m := range cnModels {
+		if strings.TrimSpace(m.ID) != "" && !custommodels.IsMediaModel(m.ID) {
+			validCount++
+		}
+	}
+	own := 0
+	for _, p := range cfg.Providers {
+		own += len(p.Models)
+	}
+
+	parts := fmt.Sprintf("已向国际版注入 %d 个模型（国内专享 %d + 自备提供方 %d）", added, validCount, own)
+	if cnErr != "" {
+		parts += "；国内侧这一轮没注入：" + cnErr
+	}
+	parts += "。重启国际版客户端后在模型选择器里可见"
+	return added, parts, nil
 }

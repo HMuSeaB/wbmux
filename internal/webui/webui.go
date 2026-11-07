@@ -149,6 +149,7 @@ type Server struct {
 	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
 	domesticCredFn     func(*variant.Probe) (credential.Credential, error)
 	domesticEndpointFn func() string
+	liveAccountsFn     func(*variant.Probe) map[string]*usage.LiveAccount
 	// logPathFn 覆盖"日志文件在哪"。quotalive.go 启动时会从日志尾部恢复
 	// 限流状态（进程重启后内存里那份就没了，而模型可能还被限着）。
 	logPathFn func() string
@@ -294,6 +295,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
+	mux.HandleFunc("/api/inject-cn-into-intl", s.guard(s.handleInjectCNIntoIntl))
+	mux.HandleFunc("/api/client/inject-cn-into-intl", s.guard(s.handleInjectCNIntoIntl))
 	mux.HandleFunc("/api/custom-models/intl-selection", s.guard(s.handleIntlModelSelection))
 	mux.HandleFunc("/api/providers", s.guard(s.handleProviders))
 	mux.HandleFunc("/api/proxy-log", s.guard(s.handleProxyLog))
@@ -451,7 +454,15 @@ func (s *Server) URL() string {
 }
 
 // Addr 返回实际监听的地址。
-func (s *Server) Addr() string { return s.ln.Addr().String() }
+func (s *Server) Addr() string {
+	if s.ln == nil {
+		if s.opts.Addr != "" {
+			return s.opts.Addr
+		}
+		return DefaultAddr
+	}
+	return s.ln.Addr().String()
+}
 
 // Token 返回本次使用的访问令牌。调用方（CLI）需要把它存下来，
 // 好让下次启动沿用同一个——令牌变了，注入到国内客户端的模型就失效了

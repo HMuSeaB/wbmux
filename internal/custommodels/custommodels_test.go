@@ -721,3 +721,115 @@ func TestBuildContextWindowDoc(t *testing.T) {
 		t.Errorf("小窗口模型也应保证 2 档或 3 档: %v", small)
 	}
 }
+
+// TestSyncCNIntoIntl 验证把国内模型反向注入国际版客户端 models.json：
+// 1. 自动过滤纯生图/生视频多媒体模型
+// 2. 携带 IDPrefixCN ("wbmux-cn-")
+// 3. 剥离旧条目并保留用户原生自定义模型
+// 4. 生成规范的 2~3 档整千阶梯 contextWindow
+func TestSyncCNIntoIntl(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "models.json")
+
+	// 模拟已存在用户自建模型与旧 wbmux 注入模型
+	initialDoc := map[string]any{
+		"models": []map[string]any{
+			{"id": "user-custom-1", "name": "我的专属模型", "url": "https://api.openai.com/v1"},
+			{"id": "wbmux-cn-old-model", "name": "旧国内模型", "url": "http://127.0.0.1:35907"},
+		},
+	}
+	rawInit, _ := json.Marshal(initialDoc)
+	_ = os.WriteFile(path, rawInit, 0o644)
+
+	cnModels := []usage.LiveModel{
+		{ID: "minimax-m2.5", Name: "MiniMax-M2.5", Tools: true, Ctx: 200000, MaxOutput: 64000},
+		{ID: "kling-video-v1", Name: "快手可灵生视频", Tools: false}, // 纯视频多媒体，应过滤
+		{ID: "flux-image-pro", Name: "Flux绘图", Tools: false},   // 纯生图，应过滤
+		{ID: "glm-5.1", Name: "GLM-5.1", Tools: true, Ctx: 256000},
+	}
+
+	providers := []config.Provider{
+		{
+			ID:      "byok-test",
+			Name:    "自备模型",
+			BaseURL: "https://api.example.com/v1",
+			APIKey:  "sk-test",
+			Models:  []string{"custom-gpt-4o"},
+		},
+	}
+
+	added, err := SyncCNIntoIntl(path, "http://127.0.0.1:35907/v1/chat/completions", "tok123", cnModels, providers)
+	if err != nil {
+		t.Fatalf("SyncCNIntoIntl 失败: %v", err)
+	}
+	// 期望注入：minimax-m2.5 + glm-5.1 (2个国内) + custom-gpt-4o (1个BYOK) = 3个
+	if added != 3 {
+		t.Errorf("期望注入 3 个模型，实际注入 %d 个", added)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 models.json 失败: %v", err)
+	}
+	list := mustParse(t, raw)
+
+	// 总条目：保留的 1 个用户模型 + 3 个注入模型 = 4 条
+	if len(list) != 4 {
+		t.Fatalf("期望保留 4 条模型，实际得到 %d 条: %s", len(list), string(raw))
+	}
+
+	foundUser := false
+	foundMiniMax := false
+	foundGLM := false
+	foundBYOK := false
+	foundMedia := false
+
+	for _, m := range list {
+		id, _ := m["id"].(string)
+		if id == "user-custom-1" {
+			foundUser = true
+		}
+		if id == "wbmux-cn-minimax-m2.5" {
+			foundMiniMax = true
+			if m["maxInputTokens"] != float64(200000) {
+				t.Errorf("MiniMax maxInputTokens 期望 200000，实际: %v", m["maxInputTokens"])
+			}
+			cw, ok := m["contextWindow"].(map[string]any)
+			if !ok {
+				t.Fatalf("缺少 contextWindow 结构: %v", m)
+			}
+			lengths := cw["supportedLengths"].([]any)
+			if len(lengths) < 2 || len(lengths) > 3 {
+				t.Errorf("contextWindow 阶梯数必须为 2 档或 3 档，实际: %d", len(lengths))
+			}
+		}
+		if id == "wbmux-cn-glm-5.1" {
+			foundGLM = true
+		}
+		if strings.Contains(id, "kling") || strings.Contains(id, "image") {
+			foundMedia = true
+		}
+		if id == "wbmux-byok-byok-test-custom-gpt-4o" {
+			foundBYOK = true
+		}
+		if id == "wbmux-cn-old-model" {
+			t.Errorf("旧的 wbmux-cn-old-model 不应被保留")
+		}
+	}
+
+	if !foundUser {
+		t.Errorf("用户原有模型 user-custom-1 应被完整保留")
+	}
+	if !foundMiniMax {
+		t.Errorf("国内模型 wbmux-cn-minimax-m2.5 未注入")
+	}
+	if !foundGLM {
+		t.Errorf("国内模型 wbmux-cn-glm-5.1 未注入")
+	}
+	if !foundBYOK {
+		t.Errorf("BYOK 提供方模型未注入")
+	}
+	if foundMedia {
+		t.Errorf("纯多媒体生图/生视频模型未被过滤")
+	}
+}

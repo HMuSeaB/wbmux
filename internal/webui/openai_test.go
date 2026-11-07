@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/usage"
@@ -402,21 +403,25 @@ func TestResolveRoute(t *testing.T) {
 		{ID: "p10", Name: "自备B", BaseURL: "https://b.example/v1/chat/completions", APIKey: "sk-b"},
 	}
 	cases := []struct {
-		name      string
-		in        string
-		wantModel string
-		wantLabel string // "国际后端" = 走内置
-		wantKey   string
+		name        string
+		in          string
+		wantModel   string
+		wantLabel   string // "国际后端" = 走内置
+		wantKey     string
+		wantVariant variant.ID
 	}{
-		{"注入的国际免费模型", "wbmux-intl-deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", ""},
-		{"客户端又套了一层前缀", "custom-local:wbmux-intl-hy3", "hy3", "国际后端", ""},
-		{"自备提供方", "wbmux-byok-p1-deepseek-chat", "deepseek-chat", "自备A", "sk-a"},
-		{"客户端前缀叠在自备上", "custom-local:wbmux-byok-p1-qwen-max", "qwen-max", "自备A", "sk-a"},
+		{"注入的国际免费模型", "wbmux-intl-deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", "", variant.Intl},
+		{"客户端又套了一层前缀", "custom-local:wbmux-intl-hy3", "hy3", "国际后端", "", variant.Intl},
+		{"注入的国内专属模型", "wbmux-cn-minimax-m2.5", "minimax-m2.5", "国内后端", "", variant.CN},
+		{"客户端套前缀的国内专属模型", "custom-local:wbmux-cn-glm-5.1", "glm-5.1", "国内后端", "", variant.CN},
+		{"自备提供方", "wbmux-byok-p1-deepseek-chat", "deepseek-chat", "自备A", "sk-a", ""},
+		{"客户端前缀叠在自备上", "custom-local:wbmux-byok-p1-qwen-max", "qwen-max", "自备A", "sk-a", ""},
 		// p1 是 p10 的前缀：必须先匹配更长的那个，否则 p10 会被 p1 吃掉。
-		{"前缀更长的优先", "wbmux-byok-p10-glm-4", "glm-4", "自备B", "sk-b"},
-		{"外部工具直连（官方 id）", "deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", ""},
-		{"没见过的提供方前缀当不明来源", "wbmux-byok-p99-x", "wbmux-byok-p99-x", "国际后端", ""},
-		{"只有前缀没有模型名", "wbmux-byok-p1-", "wbmux-byok-p1-", "国际后端", ""},
+		{"前缀更长的优先", "wbmux-byok-p10-glm-4", "glm-4", "自备B", "sk-b", ""},
+		{"外部工具直连（官方 id）", "deepseek-v4.1-flash", "deepseek-v4.1-flash", "国际后端", "", variant.Intl},
+		{"没见过的提供方前缀当不明来源", "wbmux-byok-p99-x", "wbmux-byok-p99-x", "国际后端", "", variant.Intl},
+		{"只有前缀没有模型名", "wbmux-byok-p1-", "wbmux-byok-p1-", "国际后端", "", variant.Intl},
+		{"国内只有前缀没有模型名", "wbmux-cn-", "wbmux-cn-", "国际后端", "", variant.Intl},
 	}
 	for _, c := range cases {
 		got := resolveRoute(c.in, providers)
@@ -424,7 +429,11 @@ func TestResolveRoute(t *testing.T) {
 			t.Errorf("%s：resolveRoute(%q) = {model:%q label:%q key:%q}，期望 {%q %q %q}",
 				c.name, c.in, got.Model, got.Label, got.APIKey, c.wantModel, c.wantLabel, c.wantKey)
 		}
-		if (got.Provider == nil) != (c.wantLabel == "国际后端") {
+		if c.wantVariant != "" && got.TargetVariant != c.wantVariant {
+			t.Errorf("%s：TargetVariant 期望 %q，得到 %q", c.name, c.wantVariant, got.TargetVariant)
+		}
+		isBuiltin := c.wantLabel == "国际后端" || c.wantLabel == "国内后端"
+		if (got.Provider == nil) != isBuiltin {
 			t.Errorf("%s：Provider 判空不对（%v）", c.name, got.Provider)
 		}
 	}
@@ -568,6 +577,100 @@ func TestChatRoutesToBYOKProvider(t *testing.T) {
 	entries := readProxyLog(t, srv)
 	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Text, "自备A") {
 		t.Errorf("日志应写明经过哪个提供方：%+v", entries)
+	}
+}
+
+// TestChatForwardsToDomesticBackend 验证带有 wbmux-cn- 前缀的模型请求被正确分流发往国内后端：
+// 1. 剥离 wbmux-cn- 前缀
+// 2. 打到 domesticEndpoint 提供的地址
+// 3. 携带国内鉴权凭据 (Authorization: Bearer <cn-token>, X-User-Id: <cn-uid>)
+// 4. 携带国内通用头 (X-Product: workbuddy 等) 与渠道校验身份头
+// 5. 正确透传上游响应
+func TestChatForwardsToDomesticBackend(t *testing.T) {
+	var gotBody map[string]any
+	var gotPath string
+	var gotAuth string
+	var gotUID string
+	var gotProduct string
+	var gotConvID string
+
+	sse := "data: {\"model\":\"minimax-m2.5\",\"choices\":[{\"delta\":{\"content\":\"国内模型回复\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+
+	upCN := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotUID = r.Header.Get("X-User-Id")
+		gotProduct = r.Header.Get("X-Product")
+		gotConvID = r.Header.Get("X-Conversation-Id")
+
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, sse)
+	}))
+	defer upCN.Close()
+
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// 覆盖国内端点与凭据
+	srv.domesticEndpointFn = func() string { return upCN.URL }
+	srv.domesticCredFn = func(*variant.Probe) (credential.Credential, error) {
+		return credential.Credential{Token: "cn-secret-token", UID: "cn-user-888"}, nil
+	}
+	// 国际侧设为无效，确保没有误打到国际侧
+	srv.upstreamBaseFn = func() string { return "http://intl-should-not-be-called.invalid" }
+
+	body := `{"model":"wbmux-cn-minimax-m2.5","stream":false,
+	  "messages":[{"role":"user","content":"你好"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIChat(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d：%s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/v2/chat/completions" {
+		t.Errorf("应打到国内端点 /v2/chat/completions，得到 %q", gotPath)
+	}
+	if gotAuth != "Bearer cn-secret-token" {
+		t.Errorf("应带上国内 Bearer token，得到 %q", gotAuth)
+	}
+	if gotUID != "cn-user-888" {
+		t.Errorf("应带上国内 X-User-Id，得到 %q", gotUID)
+	}
+	if gotProduct != "workbuddy" {
+		t.Errorf("应带上国内 X-Product: workbuddy，得到 %q", gotProduct)
+	}
+	if gotConvID == "" {
+		t.Errorf("应补齐渠道校验身份头 X-Conversation-Id")
+	}
+	if gotBody["model"] != "minimax-m2.5" {
+		t.Errorf("上游应收到剥离 wbmux-cn- 前缀的模型名，得到 %v", gotBody["model"])
+	}
+
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应解析失败: %v", err)
+	}
+	if len(resp.Choices) != 1 || resp.Choices[0].Message.Content != "国内模型回复" {
+		t.Errorf("内容不符合预期: %s", rec.Body.String())
+	}
+
+	// 验证日志中记录了 [国内后端]
+	entries := readProxyLog(t, srv)
+	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Text, "国内后端") {
+		t.Errorf("日志应明确标注 [国内后端]：%+v", entries)
 	}
 }
 
@@ -1056,6 +1159,91 @@ func TestProbeHTTPClientProxyDispatch(t *testing.T) {
 	proxyURL, err := trCustom.Proxy(req)
 	if err != nil || proxyURL == nil || proxyURL.Host != "127.0.0.1:7890" {
 		t.Errorf("期望代理到 127.0.0.1:7890，得到 %v (err=%v)", proxyURL, err)
+	}
+}
+
+// TestHandleOpenAIModelsDoubleVariant 验证 GET /v1/models 双端聚合输出：
+// 1. 国际端模型原样输出（带 free-now 标记）
+// 2. 国内端模型带 wbmux-cn- 前缀输出，标记 owned_by: workbuddy-cn
+// 3. 过滤纯多媒体生视频/生图模型
+// 4. 输出 auto-free / auto 虚拟智能路由项
+func TestHandleOpenAIModelsDoubleVariant(t *testing.T) {
+	srv, err := New(Options{Token: "test-token", Probe: &variant.Probe{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	srv.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{
+			string(variant.Intl): {
+				OK: true,
+				Models: []usage.LiveModel{
+					{ID: "deepseek-v4.1-flash", FreeNow: true},
+					{ID: "claude-3-7-sonnet", FreeNow: false},
+				},
+			},
+			string(variant.CN): {
+				OK: true,
+				Models: []usage.LiveModel{
+					{ID: "minimax-m2.5"},
+					{ID: "glm-5.1"},
+					{ID: "kling-video-v1"}, // 多媒体，应被过滤
+				},
+			},
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	srv.handleOpenAIModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，得到 %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+
+	modelMap := make(map[string]string)
+	for _, m := range resp.Data {
+		modelMap[m.ID] = m.OwnedBy
+	}
+
+	// 国际端
+	if modelMap["deepseek-v4.1-flash"] != "workbuddy-ai:free-now" {
+		t.Errorf("deepseek-v4.1-flash 期望 owned_by workbuddy-ai:free-now，得到 %q", modelMap["deepseek-v4.1-flash"])
+	}
+	if modelMap["claude-3-7-sonnet"] != "workbuddy-ai" {
+		t.Errorf("claude-3-7-sonnet 期望 owned_by workbuddy-ai，得到 %q", modelMap["claude-3-7-sonnet"])
+	}
+
+	// 国内端
+	if modelMap["wbmux-cn-minimax-m2.5"] != "workbuddy-cn" {
+		t.Errorf("wbmux-cn-minimax-m2.5 期望 owned_by workbuddy-cn，得到 %q", modelMap["wbmux-cn-minimax-m2.5"])
+	}
+	if modelMap["wbmux-cn-glm-5.1"] != "workbuddy-cn" {
+		t.Errorf("wbmux-cn-glm-5.1 期望 owned_by workbuddy-cn，得到 %q", modelMap["wbmux-cn-glm-5.1"])
+	}
+
+	// 多媒体过滤
+	if _, ok := modelMap["wbmux-cn-kling-video-v1"]; ok {
+		t.Errorf("多媒体模型 kling-video-v1 不应出现在 /v1/models 清单中")
+	}
+
+	// 虚拟路由
+	if _, ok := modelMap["auto-free"]; !ok {
+		t.Errorf("期望包含 auto-free 虚拟路由项")
+	}
+	if _, ok := modelMap["auto"]; !ok {
+		t.Errorf("期望包含 auto 虚拟路由项")
 	}
 }
 

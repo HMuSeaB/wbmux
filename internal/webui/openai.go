@@ -67,26 +67,28 @@ const maxChatBodyBytes = 32 << 20
 
 // upstreamRoute 是一次转发要去哪里、用什么凭据与模型名。
 //
-// 代理现在有两种上游：内置的国际 WorkBuddy 后端（凭据来自客户端认证文件），
+// 代理现在支持三种上游：内置的国际 WorkBuddy 后端、内置的国内 WorkBuddy 后端，
 // 以及用户自己填的 OpenAI 兼容端点（BYOK，凭据来自设置文件）。路由靠
 // **注入条目 id 的前缀**区分，因为那是客户端唯一会原样带回来的信息。
 type upstreamRoute struct {
-	// Label 只用于日志与错误信息（"国际后端" / 提供方名字）。
+	// Label 只用于日志与错误信息（"国际后端" / "国内后端" / 提供方名字）。
 	Label string
 	// Endpoint 是完整的补全端点。
 	Endpoint string
-	// APIKey 为空表示走内置国际凭据（那是唯一需要额外头的一侧）。
+	// APIKey 为空表示走内置凭据（由 TargetVariant 决定是国际还是国内）。
 	APIKey string
-	// Provider 为 nil 表示走内置国际后端；否则是命中的那张 BYOK 卡片。
+	// Provider 为 nil 表示走内置后端；否则是命中的那张 BYOK 卡片。
 	Provider *config.Provider
 	// Model 是发给上游的模型名（已剥掉我们自己的前缀）。
 	Model string
+	// TargetVariant 记录目标官方后端（variant.CN 或 variant.Intl，默认 Intl）。
+	TargetVariant variant.ID
 }
 
 // resolveRoute 把客户端发来的 model 解析成一条路由。
 //
 // 顺序很重要：先剥客户端那层 custom-local: 前缀，再按**最长**的提供方前缀
-// 匹配（否则 p1 会把 p10 的条目吃掉），最后才落到内置国际后端。
+// 匹配（否则 p1 会把 p10 的条目吃掉），接着识别国内端前缀 wbmux-cn-，最后才落到内置国际后端。
 // 认不出来的名字一律按内置后端处理——外部工具直连时用的就是官方 id。
 func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute {
 	m := clientModel
@@ -120,20 +122,35 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 		}
 	}
 
+	// 优先识别国内端前缀 wbmux-cn-
+	if strings.HasPrefix(m, custommodels.IDPrefixCN) {
+		model := strings.TrimPrefix(m, custommodels.IDPrefixCN)
+		model = strings.TrimSpace(model)
+		if model != "" {
+			return upstreamRoute{
+				Label:         "国内后端",
+				Model:         model,
+				TargetVariant: variant.CN,
+			}
+		}
+	}
+
 	normalized := normalizeModelName(m)
 	if isAutoFreeAlias(normalized) {
 		fastest, _ := modelradar.Default().FastestFreeModel("deepseek-chat")
 		return upstreamRoute{
-			Label: "智能最速限免",
-			Model: fastest,
+			Label:         "智能最速限免",
+			Model:         fastest,
+			TargetVariant: variant.Intl,
 		}
 	}
 
 	// 认不出来 → 内置国际后端（外部工具直连时用的就是官方 id，
 	// 也可能带着我们注入的 wbmux-intl- 前缀，交给 normalizeModelName 剥）。
 	return upstreamRoute{
-		Label: "国际后端",
-		Model: normalized,
+		Label:         "国际后端",
+		Model:         normalized,
+		TargetVariant: variant.Intl,
 	}
 }
 
@@ -156,7 +173,7 @@ func isAutoFreeAlias(m string) bool {
 //
 // 而客户端界面上只会显示一句「502 | Trace Id」，看不出任何原因。
 //
-// 循环剥而不是剥一次：两种前缀可能叠加出现。
+// 循环剥而不是剥一次：多种前缀可能叠加出现。
 func normalizeModelName(name string) string {
 	s := strings.TrimSpace(name)
 	for {
@@ -354,32 +371,60 @@ func (s *Server) registerOpenAI(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/messages/count_tokens", s.searchAuthGuard(s.handleGatewayCountTokens))
 }
 
-// handleOpenAIModels 返回国际侧实时模型清单（OpenAI 格式）。
+// handleOpenAIModels 返回双端（国际侧 + 国内侧）聚合实时模型清单（OpenAI 格式）。
 func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeOpenAIError(w, http.StatusMethodNotAllowed, "只接受 GET")
 		return
 	}
-	live := usage.LiveAccounts(s.probe())[string(variant.Intl)]
-	if live == nil || !live.OK {
-		msg := "国际侧凭据不可用"
-		if live != nil && live.Err != "" {
-			msg = live.Err
+	var accounts map[string]*usage.LiveAccount
+	if s.liveAccountsFn != nil {
+		accounts = s.liveAccountsFn(s.probe())
+	} else {
+		accounts = usage.LiveAccounts(s.probe())
+	}
+	liveIntl := accounts[string(variant.Intl)]
+	liveCN := accounts[string(variant.CN)]
+
+	if (liveIntl == nil || !liveIntl.OK) && (liveCN == nil || !liveCN.OK) {
+		msg := "后端凭据均不可用"
+		if liveIntl != nil && liveIntl.Err != "" {
+			msg = liveIntl.Err
+		} else if liveCN != nil && liveCN.Err != "" {
+			msg = liveCN.Err
 		}
 		writeOpenAIError(w, http.StatusServiceUnavailable, msg)
 		return
 	}
-	data := make([]map[string]any, 0, len(live.Models)+2)
-	for _, m := range live.Models {
-		owned := "workbuddy-ai"
-		if m.FreeNow {
-			owned = "workbuddy-ai:free-now"
+
+	data := make([]map[string]any, 0, 60)
+
+	// 1. 国际端模型
+	if liveIntl != nil && liveIntl.OK {
+		for _, m := range liveIntl.Models {
+			owned := "workbuddy-ai"
+			if m.FreeNow {
+				owned = "workbuddy-ai:free-now"
+			}
+			data = append(data, map[string]any{
+				"id": m.ID, "object": "model", "owned_by": owned,
+			})
 		}
-		data = append(data, map[string]any{
-			"id": m.ID, "object": "model", "owned_by": owned,
-		})
 	}
-	// 智能优选虚拟模型：自动分发至当前延迟最低且健康的限免模型
+
+	// 2. 国内端模型（带 wbmux-cn- 前缀暴露，方便外部工具区分调用）
+	if liveCN != nil && liveCN.OK {
+		for _, m := range liveCN.Models {
+			if custommodels.IsMediaModel(m.ID) {
+				continue
+			}
+			data = append(data, map[string]any{
+				"id": custommodels.IDPrefixCN + m.ID, "object": "model", "owned_by": "workbuddy-cn",
+			})
+		}
+	}
+
+	// 3. 智能优选虚拟模型：自动分发至当前延迟最低且健康的限免模型
 	data = append(data, map[string]any{
 		"id": "auto-free", "object": "model", "owned_by": "wbmux:auto-routing",
 	})
@@ -549,21 +594,39 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	// 自备提供方只用卡片里的 key。
 	headers := map[string]string{}
 	if route.Provider == nil {
-		// 这里**不**查实时账号（LiveAccounts）：那是两个网络往返外加一把全局锁，
-		// 会把首字延迟从毫秒级拖到秒级，而它对"这次能不能转发"没有任何额外保证
-		// ——凭据读得出来就够。模型是否存在交给上游回答，它的报错比我们猜的准。
-		cred, err := s.intlCred(s.probe())
-		if err != nil {
-			s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
-				Text: "拒绝请求：国际侧凭据不可用：" + compactError(err.Error())})
-			writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		route.Endpoint = s.upstreamBase() + chatCompletionsPath
-		headers["Authorization"] = "Bearer " + cred.Token
-		headers["X-User-Id"] = cred.UID
-		for k, v := range usage.IntlCommonHeaders() {
-			headers[k] = v
+		// 内置官方后端：按 TargetVariant 自动分流国内端与国际端
+		if route.TargetVariant == variant.CN {
+			cred, err := s.domesticCred(s.probe())
+			if err != nil || cred.Token == "" {
+				errText := "国内侧凭据不可用"
+				if err != nil {
+					errText += "：" + compactError(err.Error())
+				}
+				s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
+					Text: "拒绝请求：" + errText})
+				writeOpenAIError(w, http.StatusServiceUnavailable, errText)
+				return
+			}
+			route.Endpoint = s.domesticEndpoint() + chatCompletionsPath
+			headers["Authorization"] = "Bearer " + cred.Token
+			headers["X-User-Id"] = cred.UID
+			for k, v := range usage.CNCommonHeaders() {
+				headers[k] = v
+			}
+		} else {
+			cred, err := s.intlCred(s.probe())
+			if err != nil {
+				s.note(ProxyLogEntry{Level: "bad", Model: route.Model, Tools: up.Tools,
+					Text: "拒绝请求：国际侧凭据不可用：" + compactError(err.Error())})
+				writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
+				return
+			}
+			route.Endpoint = s.upstreamBase() + chatCompletionsPath
+			headers["Authorization"] = "Bearer " + cred.Token
+			headers["X-User-Id"] = cred.UID
+			for k, v := range usage.IntlCommonHeaders() {
+				headers[k] = v
+			}
 		}
 	} else {
 		headers["Authorization"] = "Bearer " + route.APIKey

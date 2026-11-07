@@ -2171,6 +2171,10 @@
             <svg class="ico ico-sm" aria-hidden="true"><use href="#i-up"/></svg>
             一键注入免费模型到国内端
           </button>
+          <button class="ghost" id="btn-inject-cn-intl" title="把国内端专属模型（MiniMax、GLM-5.1、Kimi、DeepSeek 等）反向注入到国际客户端（~/.workbuddy-ai/models.json）">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-download"/></svg>
+            反向注入国内模型到国际端
+          </button>
           <button class="ghost" id="btn-hero-restart" title="重启国内客户端使新注入的模型生效">
             <svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>
             重启客户端生效
@@ -4648,7 +4652,29 @@
       toast("注入失败：" + e.message, "bad");
     }).then(function () {
       busy = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = ICO("up", "ico-sm") + "注入国际模型到国内客户端"; }
+      if (btn) { btn.disabled = false; btn.innerHTML = ICO("up", "ico-sm") + "一键注入免费模型到国内端"; }
+    });
+  }
+
+  function runInjectCNToIntl() {
+    if (busy) return;
+    busy = true;
+    var btn = document.getElementById("btn-inject-cn-intl");
+    if (btn) { btn.disabled = true; btn.textContent = "反向注入中…"; }
+    api("/api/inject-cn-into-intl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (res) {
+      toast((res.note || "反向注入完成") + "（共 " + (res.added || 0) + " 个）", "ok");
+    }).catch(function (e) {
+      toast("反向注入失败：" + e.message, "bad");
+    }).then(function () {
+      busy = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="ico ico-sm" aria-hidden="true"><use href="#i-download"/></svg> 反向注入国内模型到国际端';
+      }
     });
   }
 
@@ -8968,6 +8994,8 @@
   }
   document.getElementById("btn-probe").addEventListener("click", runProbe);
   document.getElementById("btn-inject").addEventListener("click", runInject);
+  var btnInjectCN = document.getElementById("btn-inject-cn-intl");
+  if (btnInjectCN) btnInjectCN.addEventListener("click", runInjectCNToIntl);
   document.getElementById("btn-both").addEventListener("click", launchBoth);
   var btnHeroBoth = document.getElementById("btn-hero-both");
   if (btnHeroBoth) btnHeroBoth.addEventListener("click", launchBoth);

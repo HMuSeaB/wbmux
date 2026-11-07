@@ -27,9 +27,12 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
-// IDPrefix 是"国际免费模型"注入条目的 id 前缀：同步时整体替换旧条目，
+// IDPrefix 是"国际免费/自选模型"注入国内客户端的条目 id 前缀：同步时整体替换旧条目，
 // 绝不动用户自己加的自定义模型。
 const IDPrefix = "wbmux-intl-"
+
+// IDPrefixCN 是"国内模型"反向注入国际版客户端或本地网关代理的条目 id 前缀。
+const IDPrefixCN = "wbmux-cn-"
 
 // modelsDoc 是 models.json 的**新版**文档形状。
 //
@@ -54,7 +57,7 @@ type modelsDoc struct {
 // 决定把请求转给谁（见 webui.resolveRoute）。凡是这几个前缀开头的条目，
 // 同步时都可以放心重写——它们是我们的，不是用户的。
 func ownedPrefixes() []string {
-	return []string{IDPrefix, config.ProviderIDPrefix}
+	return []string{IDPrefix, IDPrefixCN, config.ProviderIDPrefix}
 }
 
 // isOwned 判断一条条目是不是 wbmux 注入的。
@@ -547,4 +550,169 @@ func buildContextWindowDoc(maxInputTokens int) map[string]any {
 		"supportedLengths": supported,
 		"defaultLength":   maxInputTokens,
 	}
+}
+
+// SyncCNIntoIntl 把国内版提供的可用模型反向注入到国际版客户端的自定义模型清单（~/.workbuddy-ai/models.json）。
+//
+// 规则：
+//   - 校验国际客户端数据目录存在性，不存在时不盲目创建
+//   - 剥掉此前的旧条目（包含 IDPrefixCN 与 BYOK），用户条目原样保留
+//   - 过滤纯多媒体模型（生图/生视频），只注入语言交互与编码模型
+//   - 注入前缀 IDPrefixCN ("wbmux-cn-")，供代理路由回国内后端
+//   - 注入严格 2~3 档整千阶梯 contextWindow 与 maxInputTokens、maxOutputTokens
+//   - 写前备份、原子写盘与结构校验
+func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.LiveModel, providers []config.Provider) (int, error) {
+	if dir := filepath.Dir(modelsJSONPath); dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			return 0, fmt.Errorf("国际客户端的数据目录还不存在（%s）：先启动一次国际客户端，再点注入", dir)
+		}
+	}
+
+	// 过滤有效模型：排除生图、生视频
+	var validModels []usage.LiveModel
+	for _, m := range cnModels {
+		if strings.TrimSpace(m.ID) == "" || IsMediaModel(m.ID) {
+			continue
+		}
+		validModels = append(validModels, m)
+	}
+
+	if len(validModels) == 0 && len(providers) == 0 {
+		return 0, nil
+	}
+
+	var list []map[string]any
+	var rawOld []byte
+	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
+		rawOld = raw
+		list, _ = parseModelsJSON(raw)
+	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
+	if list == nil && len(rawOld) > 0 {
+		_ = os.WriteFile(modelsJSONPath+".wbmux-corrupt", rawOld, 0o644)
+	}
+
+	// 剥旧 + 保留用户条目
+	var kept []map[string]any
+	for _, m := range list {
+		id, _ := m["id"].(string)
+		if isOwned(id) {
+			continue
+		}
+		kept = append(kept, m)
+	}
+
+	added := 0
+	injectedIDs := make(map[string]bool)
+
+	for _, m := range validModels {
+		lowerID := strings.ToLower(m.ID)
+		if injectedIDs[lowerID] {
+			continue
+		}
+		injectedIDs[lowerID] = true
+
+		displayNameStr := displayName(m)
+		label := fmt.Sprintf("%s（国内专享）", displayNameStr)
+
+		ctxTokens := m.Ctx
+		if ctxTokens <= 0 {
+			ctxTokens = 128000
+		}
+
+		entry := map[string]any{
+			"id":                IDPrefixCN + m.ID,
+			"name":              label,
+			"vendor":            "Custom",
+			"url":               chatURL,
+			"apiKey":            apiKey,
+			"useCustomProtocol": true,
+			"onlyReasoning":     false,
+			"supportsToolCall":  m.Tools,
+			"supportsImages":    m.Images,
+			"supportsReasoning": false,
+			"maxInputTokens":    ctxTokens,
+			"contextWindow":     buildContextWindowDoc(ctxTokens),
+		}
+		if m.MaxOutput > 0 {
+			entry["maxOutputTokens"] = m.MaxOutput
+		} else {
+			entry["maxOutputTokens"] = 64000
+		}
+		kept = append(kept, entry)
+		added++
+	}
+
+	// 同时注入用户自备提供方（BYOK）
+	for _, p := range providers {
+		for _, model := range p.Models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			displayName := model
+			if p.Name != "" && !strings.EqualFold(p.Name, model) {
+				displayName = fmt.Sprintf("%s · %s", p.Name, model)
+			}
+			entry := map[string]any{
+				"id":                p.EntryPrefix() + model,
+				"name":              displayName,
+				"vendor":            "Custom",
+				"url":               chatURL,
+				"apiKey":            apiKey,
+				"useCustomProtocol": true,
+				"onlyReasoning":     false,
+				"supportsToolCall":  p.ToolsSupported(),
+				"supportsImages":    p.ImagesSupported(),
+				"supportsReasoning": false,
+			}
+			inTokens := p.MaxInputTokens
+			if inTokens <= 0 {
+				inTokens = 1000000
+			}
+			entry["maxInputTokens"] = inTokens
+			entry["contextWindow"] = buildContextWindowDoc(inTokens)
+			if p.MaxOutputTokens > 0 {
+				entry["maxOutputTokens"] = p.MaxOutputTokens
+			} else {
+				entry["maxOutputTokens"] = 64000
+			}
+			kept = append(kept, entry)
+			added++
+		}
+	}
+
+	doc := modelsDoc{Models: kept}
+	if doc.Models == nil {
+		doc.Models = []map[string]any{}
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return 0, err
+	}
+	var check modelsDoc
+	if err := json.Unmarshal(out, &check); err != nil {
+		return 0, fmt.Errorf("拒绝写入：生成的清单无法解析回 JSON：%w", err)
+	}
+
+	if raw, err := os.ReadFile(modelsJSONPath); err == nil {
+		_ = os.WriteFile(modelsJSONPath+".wbmux-bak", raw, 0o644)
+	}
+
+	tmp := modelsJSONPath + ".wbmux-tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, modelsJSONPath); err != nil {
+		_ = os.Remove(tmp)
+		return 0, err
+	}
+	return added, nil
+}
+
+// IsMediaModel 检查模型 ID 是否属于纯生图或生视频等多媒体模型。
+func IsMediaModel(id string) bool {
+	lower := strings.ToLower(id)
+	return strings.Contains(lower, "image") || strings.Contains(lower, "video") || strings.Contains(lower, "kling")
 }
