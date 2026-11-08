@@ -50,7 +50,27 @@
     --r-lg: 12px;
   }
 
-  * { box-sizing: border-box; }
+  /* 全局现代极简纤细滚动条样式，彻底替代 Windows 粗糙白边原生滚动条 */
+  * {
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: var(--g5) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--g5);
+    border-radius: 999px;
+    transition: background .2s;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-3);
+  }
   html, body { margin: 0; padding: 0; }
   body {
     background: var(--g0);
@@ -4638,7 +4658,7 @@
     if (existing) existing.remove();
 
     var overlay = el("div", { class: "modal-overlay", id: "ccswitch-export-modal" });
-    var card = el("div", { class: "modal-card", style: "max-width:640px" });
+    var card = el("div", { class: "modal-card", style: "max-width:680px" });
 
     function closeModal() {
       overlay.classList.remove("open");
@@ -4646,11 +4666,14 @@
     }
 
     var head = el("div", { class: "modal-head" }, [
-      el("div", { class: "modal-title" }, [
-        el("svg", { class: "ico ico-sm", html: '<use href="#i-upload"/>' }),
-        "一键导入配置至 cc-switch"
+      el("div", { style: "display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;padding-right:12px" }, [
+        el("div", { class: "modal-title" }, [
+          el("svg", { class: "ico ico-sm", html: '<use href="#i-upload"/>' }),
+          "一键导入配置至 cc-switch"
+        ]),
+        el("div", { class: "modal-sub", style: "font-size:11.5px;color:var(--ink-3);line-height:1.45", text: "将 WorkBuddy 免积分、国内核心专享以及自备模型一键写入本地 cc-switch 数据库，让 Claude Code、OpenCode 或 Codex 客户端随心一键切换" })
       ]),
-      el("div", { class: "modal-sub", text: "将 WorkBuddy 免积分、国内核心专享以及自备模型一键写入本地 cc-switch 数据库，让 Claude Code、OpenCode 或 Codex 客户端随心一键切换" })
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal, title: "关闭" })
     ]);
 
     var body = el("div", { class: "modal-body", style: "display:flex;flex-direction:column;gap:14px" });
@@ -4721,7 +4744,9 @@
 
       // 3. 选择要导出的模型清单 (Models，支持聚合模式与分端模式可选)
       var currentMode = res.mode || "merged";
-      var scrollBox = el("div", { style: "max-height:180px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:8px 10px;background:var(--g1);display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:6px;transition:opacity 0.2s" });
+      var scrollBox = el("div", {
+        style: "max-height:220px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:8px 10px;background:var(--g1);display:grid;grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));gap:6px;transition:opacity 0.2s;scrollbar-width:thin;scrollbar-color:var(--g5) transparent"
+      });
       var modelChecks = [];
 
       function renderModels(list) {
@@ -4747,13 +4772,18 @@
 
           var tagPill = el("span", {
             class: "pill " + tagClass,
-            style: "font-size:10px;padding:1px 5px",
+            style: "font-size:10px;padding:1.5px 6px;white-space:nowrap;flex-shrink:0;line-height:1.2",
             text: tagText
           });
 
-          var lbl = el("label", { class: "check", style: "margin:0;font-size:12px;display:flex;align-items:center;gap:6px" }, [
-            chk,
-            el("span", { style: "overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: m.name }),
+          var lbl = el("label", {
+            class: "check",
+            style: "margin:0;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:var(--r-sm);cursor:pointer;transition:background .12s"
+          }, [
+            el("div", { style: "display:flex;align-items:center;gap:6px;min-width:0;flex:1" }, [
+              chk,
+              el("span", { style: "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px", text: m.name, title: m.name })
+            ]),
             tagPill
           ]);
           scrollBox.appendChild(lbl);
@@ -4893,11 +4923,14 @@
     }
 
     var head = el("div", { class: "modal-head" }, [
-      el("div", { class: "modal-title" }, [
-        el("svg", { class: "ico ico-sm", html: '<use href="#i-download"/>' }),
-        "从 cc-switch 提取提供方至 BYOK"
+      el("div", { style: "display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;padding-right:12px" }, [
+        el("div", { class: "modal-title" }, [
+          el("svg", { class: "ico ico-sm", html: '<use href="#i-download"/>' }),
+          "从 cc-switch 提取提供方至 BYOK"
+        ]),
+        el("div", { class: "modal-sub", style: "font-size:11.5px;color:var(--ink-3);line-height:1.45", text: "从本地 ~/.cc-switch/cc-switch.db 提取第三方模型配置，一键导入为 wbmux 自备提供方" })
       ]),
-      el("div", { class: "modal-sub", text: "从本地 ~/.cc-switch/cc-switch.db 提取第三方模型配置，一键导入为 wbmux 自备提供方" })
+      el("button", { class: "modal-close", html: '<svg class="ico ico-sm"><use href="#i-x"/></svg>', onclick: closeModal, title: "关闭" })
     ]);
 
     var body = el("div", { class: "modal-body", style: "display:flex;flex-direction:column;gap:12px" });
@@ -4929,20 +4962,20 @@
       body.appendChild(note);
 
       var checks = [];
-      var scroll = el("div", { style: "max-height:240px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:6px 8px;background:var(--g1);display:flex;flex-direction:column;gap:6px" });
+      var scroll = el("div", { style: "max-height:240px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:6px 8px;background:var(--g1);display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;scrollbar-color:var(--g5) transparent" });
       items.forEach(function (it) {
         var chk = el("input", { type: "checkbox", checked: true });
         chk._item = it;
         checks.push(chk);
 
-        var row = el("label", { class: "check", style: "margin:0;display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:4px" }, [
-          el("div", { style: "display:flex;align-items:center;gap:6px;min-width:0" }, [
+        var row = el("label", { class: "check", style: "margin:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:4px;cursor:pointer;transition:background .12s" }, [
+          el("div", { style: "display:flex;align-items:center;gap:6px;min-width:0;flex:1" }, [
             chk,
-            el("span", { style: "font-weight:600;font-size:12px", text: it.name }),
-            el("span", { class: "pill ghost", style: "font-size:10px", text: it.appType }),
+            el("span", { style: "font-weight:600;font-size:12px;white-space:nowrap", text: it.name }),
+            el("span", { class: "pill ghost", style: "font-size:10px;white-space:nowrap;flex-shrink:0", text: it.appType }),
             el("span", { style: "font-size:11px;color:var(--ink-3);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: it.baseURL })
           ]),
-          el("span", { class: "pill " + (it.hasKey ? "ok" : "warn"), style: "font-size:10px", text: it.hasKey ? ("key …" + it.keyTail) : "无Key" })
+          el("span", { class: "pill " + (it.hasKey ? "ok" : "warn"), style: "font-size:10px;white-space:nowrap;flex-shrink:0", text: it.hasKey ? ("key …" + it.keyTail) : "无Key" })
         ]);
         scroll.appendChild(row);
       });
