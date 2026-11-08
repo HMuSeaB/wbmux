@@ -558,10 +558,12 @@ func buildContextWindowDoc(maxInputTokens int) map[string]any {
 //   - 校验国际客户端数据目录存在性，不存在时不盲目创建
 //   - 剥掉此前的旧条目（包含 IDPrefixCN 与 BYOK），用户条目原样保留
 //   - 过滤纯多媒体模型（生图/生视频），只注入语言交互与编码模型
+//   - 选型过滤：若 selectedCNModels 为空，默认使用 config.DefaultCuratedCNModels 白名单（精选模式，避免塞满客户端）；
+//     若显式配置了自选名单，则严格按照自选名单注入
 //   - 注入前缀 IDPrefixCN ("wbmux-cn-")，供代理路由回国内后端
 //   - 注入严格 2~3 档整千阶梯 contextWindow 与 maxInputTokens、maxOutputTokens
 //   - 写前备份、原子写盘与结构校验
-func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.LiveModel, providers []config.Provider) (int, error) {
+func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.LiveModel, providers []config.Provider, selectedCNModels []string) (int, error) {
 	if dir := filepath.Dir(modelsJSONPath); dir != "" {
 		if _, err := os.Stat(dir); err != nil {
 			return 0, fmt.Errorf("国际客户端的数据目录还不存在（%s）：先启动一次国际客户端，再点注入", dir)
@@ -579,6 +581,20 @@ func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.Liv
 
 	if len(validModels) == 0 && len(providers) == 0 {
 		return 0, nil
+	}
+
+	// 构建允许注入的国内模型过滤映射
+	selectedSet := make(map[string]bool)
+	if len(selectedCNModels) == 0 {
+		for _, id := range config.DefaultCuratedCNModels {
+			selectedSet[strings.ToLower(id)] = true
+		}
+	} else {
+		for _, id := range selectedCNModels {
+			if clean := strings.ToLower(strings.TrimSpace(id)); clean != "" {
+				selectedSet[clean] = true
+			}
+		}
 	}
 
 	var list []map[string]any
@@ -608,6 +624,9 @@ func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.Liv
 
 	for _, m := range validModels {
 		lowerID := strings.ToLower(m.ID)
+		if !selectedSet[lowerID] {
+			continue // 仅注入精选或自选的模型
+		}
 		if injectedIDs[lowerID] {
 			continue
 		}

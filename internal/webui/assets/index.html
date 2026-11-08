@@ -3135,7 +3135,9 @@
   var nativeMode = false;
   var busy = false;
   var selectedIntlModels = [];
-  // selectedFromState 标记"已选付费模型"是否已经由 /api/state 初始化过。
+  var selectedCNModels = [];
+  var curatedCNModels = ["minimax-m2.5", "glm-5.1", "kimi-k2.6", "hy3", "deepseek-v4-flash", "hunyuan-chat"];
+  // selectedFromState 标记"已选模型"是否已经由 /api/state 初始化过。
   // /api/state 读本地配置、毫秒级返回；/api/usage 要拉双端账单，
   // 实测能到 20s+。两者之间的空档里任何一次重画都会把勾选状态显示成 0，
   // 所以一旦 state 回来，就不许慢接口再覆盖它（见 loadUsage）。
@@ -3279,6 +3281,27 @@
     var targetId = String(modelId).toLowerCase();
     for (var i = 0; i < selectedIntlModels.length; i++) {
       if (String(selectedIntlModels[i]).toLowerCase() === targetId) return true;
+    }
+    return false;
+  }
+
+  function isCNModelCurated(modelId) {
+    if (!modelId) return false;
+    var targetId = String(modelId).toLowerCase();
+    for (var i = 0; i < curatedCNModels.length; i++) {
+      if (String(curatedCNModels[i]).toLowerCase() === targetId) return true;
+    }
+    return false;
+  }
+
+  function isCNModelSelected(modelId) {
+    if (!modelId) return false;
+    var targetId = String(modelId).toLowerCase();
+    if (!selectedCNModels || selectedCNModels.length === 0) {
+      return isCNModelCurated(targetId);
+    }
+    for (var i = 0; i < selectedCNModels.length; i++) {
+      if (String(selectedCNModels[i]).toLowerCase() === targetId) return true;
     }
     return false;
   }
@@ -7857,6 +7880,12 @@
       if (!selectedFromState && u && Array.isArray(u.selectedIntlModels) && u.selectedIntlModels.length) {
         selectedIntlModels = u.selectedIntlModels;
       }
+      if (!selectedFromState && u && Array.isArray(u.selectedCNModels) && u.selectedCNModels.length) {
+        selectedCNModels = u.selectedCNModels;
+      }
+      if (u && Array.isArray(u.curatedCNModels) && u.curatedCNModels.length) {
+        curatedCNModels = u.curatedCNModels;
+      }
       renderUsage();
       return u;
     }).catch(function (e) {
@@ -8158,7 +8187,7 @@
     var summaryEl = el("summary", { style: "font-size:12px;color:var(--ink-3)", text: summaryTitle });
     details.appendChild(summaryEl);
 
-    // 针对国际端模型，提供顶部控制条（搜索、过滤标签、统计）
+    // 针对国际端与国内端模型，提供顶部控制条（搜索、过滤标签、统计）
     var filterMode = "all";
     var searchKeyword = "";
     var statLabel = null;
@@ -8212,6 +8241,58 @@
         if (filterMode === "free") matchFilter = isFree;
         else if (filterMode === "injected") matchFilter = isInjected;
         else if (filterMode === "unadded") matchFilter = (!isFree && !isSel);
+
+        card.style.display = (matchKw && matchFilter) ? "" : "none";
+      });
+    }
+
+    function updateCNStatsAndFilters() {
+      var total = list.length;
+      var curatedCount = 0;
+      var injectedCount = 0;
+      var unaddedCount = 0;
+
+      list.forEach(function (r) {
+        var isCur = isCNModelCurated(r.id);
+        var isSel = isCNModelSelected(r.id);
+        if (isCur) curatedCount++;
+        if (isSel) injectedCount++;
+        else unaddedCount++;
+      });
+
+      if (filterBtns["all"]) filterBtns["all"].textContent = "全部 (" + total + ")";
+      if (filterBtns["curated"]) filterBtns["curated"].textContent = "精选 (" + curatedCount + ")";
+      if (filterBtns["injected"]) filterBtns["injected"].textContent = "已入国际端 (" + injectedCount + ")";
+      if (filterBtns["unadded"]) filterBtns["unadded"].textContent = "未入国际端 (" + unaddedCount + ")";
+
+      var isCustom = (selectedCNModels && selectedCNModels.length > 0);
+      var subHint = isCustom ? ("已自选 " + injectedCount + " 款注入") : ("精选 " + injectedCount + " 款注入 (默认)");
+      if (statLabel) {
+        statLabel.textContent = subHint;
+      }
+      summaryEl.textContent = "国内模型库与反向注入（" + total + " 个 · " + subHint + "）";
+    }
+
+    function applyCNFilter() {
+      var kw = searchKeyword.toLowerCase().trim();
+      cards.forEach(function (item) {
+        var card = item.card;
+        var r = item.data;
+        var isCur = isCNModelCurated(r.id);
+        var isSel = isCNModelSelected(r.id);
+
+        var matchKw = true;
+        if (kw) {
+          var nameStr = (r.name || "").toLowerCase();
+          var idStr = (r.id || "").toLowerCase();
+          var descStr = (r.desc || "").toLowerCase();
+          matchKw = (nameStr.indexOf(kw) >= 0 || idStr.indexOf(kw) >= 0 || descStr.indexOf(kw) >= 0);
+        }
+
+        var matchFilter = true;
+        if (filterMode === "curated") matchFilter = isCur;
+        else if (filterMode === "injected") matchFilter = isSel;
+        else if (filterMode === "unadded") matchFilter = !isSel;
 
         card.style.display = (matchKw && matchFilter) ? "" : "none";
       });
@@ -8285,12 +8366,144 @@
       });
       radarBar.appendChild(btnPingAll);
       details.appendChild(radarBar);
+    } else if (side === "cn") {
+      var toolbar = el("div", { class: "mfold-toolbar" });
+      var searchWrap = el("div", { class: "mfold-search-wrap" });
+      var searchIcon = el("span", { html: ICO("search", "ico-sm"), style: "color:var(--ink-3);display:flex" });
+      var searchInput = el("input", {
+        type: "text",
+        class: "mfold-search",
+        placeholder: "搜索国内模型（如 DeepSeek / Kimi / MiniMax / GLM / 混元）…"
+      });
+      searchInput.addEventListener("input", function (e) {
+        searchKeyword = e.target.value || "";
+        applyCNFilter();
+      });
+      searchWrap.appendChild(searchIcon);
+      searchWrap.appendChild(searchInput);
+      toolbar.appendChild(searchWrap);
+
+      var filtersWrap = el("div", { class: "mfold-filters" });
+      var fTypes = [
+        { key: "all", label: "全部" },
+        { key: "curated", label: "精选推荐" },
+        { key: "injected", label: "已入国际端" },
+        { key: "unadded", label: "未入国际端" }
+      ];
+      fTypes.forEach(function (ft) {
+        var btn = el("button", {
+          type: "button",
+          class: "mfold-filter-btn" + (filterMode === ft.key ? " active" : ""),
+          text: ft.label
+        });
+        btn.addEventListener("click", function () {
+          filterMode = ft.key;
+          Object.keys(filterBtns).forEach(function (k) {
+            filterBtns[k].classList.remove("active");
+          });
+          btn.classList.add("active");
+          applyCNFilter();
+        });
+        filterBtns[ft.key] = btn;
+        filtersWrap.appendChild(btn);
+      });
+      toolbar.appendChild(filtersWrap);
+
+      statLabel = el("div", { class: "mfold-stats" });
+      toolbar.appendChild(statLabel);
+      details.appendChild(toolbar);
+
+      // 顶部快捷批处理操作条
+      var batchBar = el("div", { class: "mfold-radar-bar", style: "justify-content:space-between;padding:5px 8px" });
+      var batchInfo = el("div", { style: "font-size:11.5px;color:var(--ink-2);display:flex;align-items:center;gap:6px" }, [
+        el("span", { class: "pulse-dot" }),
+        el("span", { text: "支持精选推荐 (6款) 快速注入或自主勾选，杜绝 36+ 全量灌入导致国际端模型列表臃肿" })
+      ]);
+      batchBar.appendChild(batchInfo);
+
+      var batchActions = el("div", { style: "display:flex;gap:6px;align-items:center" });
+      var btnResetCurated = el("button", {
+        type: "button",
+        class: "btn-m-action",
+        style: "padding:2px 8px;font-size:11px",
+        text: "恢复精选 (6款)",
+        title: "重置为默认官方核心精选推荐模型（MiniMax-M2.5, GLM-5.1, Kimi-K2.6, 混元3.0, DeepSeek-V4-Flash 等）"
+      });
+      btnResetCurated.addEventListener("click", function () {
+        if (btnResetCurated.disabled) return;
+        btnResetCurated.disabled = true;
+        api("/api/custom-models/cn-selection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "reset" })
+        }).then(function (res) {
+          btnResetCurated.disabled = false;
+          selectedCNModels = res.selected || [];
+          toast("已恢复为默认 6 款精选推荐模型并同步到国际端！", "ok");
+          renderUsage();
+        }).catch(function (err) {
+          btnResetCurated.disabled = false;
+          toast("恢复精选失败：" + err.message, "bad");
+        });
+      });
+      batchActions.appendChild(btnResetCurated);
+
+      var btnSelectAll = el("button", {
+        type: "button",
+        class: "btn-m-action",
+        style: "padding:2px 8px;font-size:11px",
+        text: "一键全选全部",
+        title: "将所有国内可用模型全部勾选并反向注入国际版客户端"
+      });
+      btnSelectAll.addEventListener("click", function () {
+        if (btnSelectAll.disabled) return;
+        btnSelectAll.disabled = true;
+        api("/api/custom-models/cn-selection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "all" })
+        }).then(function (res) {
+          btnSelectAll.disabled = false;
+          selectedCNModels = res.selected || [];
+          toast("已将全部国内模型全选并同步到国际端！", "ok");
+          renderUsage();
+        }).catch(function (err) {
+          btnSelectAll.disabled = false;
+          toast("全选失败：" + err.message, "bad");
+        });
+      });
+      batchActions.appendChild(btnSelectAll);
+
+      var btnSyncNow = el("button", {
+        type: "button",
+        class: "btn-m-action",
+        style: "padding:2px 8px;font-size:11px;color:var(--brand);border-color:rgba(99,179,196,0.3)",
+        html: ICO("refresh", "ico-sm") + " 立即同步",
+        title: "立即将勾选的国内模型写入国际端 models.json"
+      });
+      btnSyncNow.addEventListener("click", function () {
+        btnSyncNow.disabled = true;
+        api("/api/custom-models/sync-cn-to-intl", { method: "POST" })
+          .then(function (res) {
+            btnSyncNow.disabled = false;
+            toast("同步成功：" + (res.note || "已更新国际端 models.json"), "ok");
+          })
+          .catch(function (err) {
+            btnSyncNow.disabled = false;
+            toast("同步失败：" + err.message, "bad");
+          });
+      });
+      batchActions.appendChild(btnSyncNow);
+
+      batchBar.appendChild(batchActions);
+      details.appendChild(batchBar);
     }
 
     list.forEach(function (r) {
       var isFree = !!r.free;
-      var isSel = isIntl ? isIntlModelSelected(r.id) : false;
-      var isInjected = isFree || isSel;
+      var isCur = isCNModelCurated(r.id);
+      var isSel = isIntl ? isIntlModelSelected(r.id) : isCNModelSelected(r.id);
+      var isInjected = isIntl ? (isFree || isSel) : isSel;
 
       var meta = ["速度 " + (r.rate !== undefined ? r.rate.toFixed(2) : "0.00") + "x"];
       if (r.ctx) meta.push((r.ctx >= 1000000 ? (r.ctx / 1000000) + "M" : Math.round(r.ctx / 1000) + "K") + " 窗口");
@@ -8298,6 +8511,12 @@
       var cardKids = [
         el("div", { class: "mrow" }, [
           el("span", { class: "mname", title: (r.id || "") + " · " + (r.raw || ""), text: r.name || prettyModel(r.id) }),
+          (!isIntl && isCur) ? el("span", {
+            class: "pill",
+            style: "font-size:10px;padding:1px 6px;background:rgba(99,179,196,0.15);border:1px solid rgba(99,179,196,0.38);color:var(--brand);font-weight:600",
+            text: "精选推荐",
+            title: "默认推荐反向注入国际版的核心模型"
+          }) : null,
           r.locked ? el("span", {
             class: "pill warn",
             style: "font-size:10px;padding:1px 6px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.38);color:#fbbf24;cursor:help;font-weight:600;display:inline-flex;align-items:center;gap:3px",
@@ -8399,6 +8618,79 @@
 
         card.appendChild(foot);
         cards.push({ card: card, data: r });
+      } else if (side === "cn") {
+        var foot = el("div", { class: "mcard-foot" });
+        var capsWrap = el("div", { class: "mcard-caps" });
+        if (r.tools) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "Agent工具" }));
+        if (r.images) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "多模态" }));
+        if (r.maxOutput) capsWrap.appendChild(el("span", { class: "mcard-cap-tag", text: "单次" + Math.round(r.maxOutput / 1000) + "K" }));
+        if (isCur) {
+          capsWrap.appendChild(el("span", {
+            class: "mcard-cap-tag",
+            style: "color:var(--brand);border-color:rgba(99,179,196,0.3);background:rgba(99,179,196,0.08)",
+            text: "核心精选"
+          }));
+        }
+        foot.appendChild(capsWrap);
+
+        var actBtnHtml = isSel
+          ? '<span class="act-added">' + ICO("check", "ico-sm") + ' 已入国际端</span>' +
+            '<span class="act-remove">' + ICO("x", "ico-sm") + ' 移出国际端</span>'
+          : ICO("plus", "ico-sm") + ' 加入国际端';
+
+        var btnTitle = isSel
+          ? "已加入国际客户端自定义模型（点击移出，重启国际端生效）"
+          : "点击加入国际客户端自定义模型（通过本地网关反向代理国内后端）";
+
+        var actBtn = el("button", {
+          type: "button",
+          class: "btn-m-action" + (isSel ? " added" : ""),
+          html: actBtnHtml,
+          title: btnTitle
+        });
+
+        (function (modelItem, buttonEl, cardEl) {
+          buttonEl.addEventListener("click", function () {
+            if (buttonEl.disabled) return;
+            buttonEl.disabled = true;
+            buttonEl.textContent = "同步中…";
+
+            api("/api/custom-models/cn-selection", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: modelItem.id, action: "toggle" })
+            }).then(function (res) {
+              if (res && res.selected !== undefined) {
+                selectedCNModels = res.selected || [];
+              }
+              var nowIn = isCNModelSelected(modelItem.id);
+              buttonEl.disabled = false;
+              if (nowIn) {
+                buttonEl.className = "btn-m-action added";
+                buttonEl.innerHTML = '<span class="act-added">' + ICO("check", "ico-sm") + ' 已入国际端</span>' +
+                                     '<span class="act-remove">' + ICO("x", "ico-sm") + ' 移出国际端</span>';
+                buttonEl.title = "已加入国际客户端自定义模型（点击移出，重启国际端生效）";
+                cardEl.classList.add("injected");
+                toast("已加入国际客户端：" + (modelItem.name || modelItem.id) + "（重启国际版生效）", "ok");
+              } else {
+                buttonEl.className = "btn-m-action";
+                buttonEl.innerHTML = ICO("plus", "ico-sm") + " 加入国际端";
+                buttonEl.title = "点击加入国际客户端自定义模型（通过本地网关反向代理国内后端）";
+                cardEl.classList.remove("injected");
+                toast("已从国际客户端移出：" + (modelItem.name || modelItem.id) + "（重启国际版生效）", "warn");
+              }
+              updateCNStatsAndFilters();
+              applyCNFilter();
+            }).catch(function (err) {
+              buttonEl.disabled = false;
+              toast("操作失败：" + err.message, "bad");
+            });
+          });
+        })(r, actBtn, card);
+
+        foot.appendChild(actBtn);
+        card.appendChild(foot);
+        cards.push({ card: card, data: r });
       }
 
       grid.appendChild(card);
@@ -8407,6 +8699,8 @@
     details.appendChild(grid);
     if (isIntl) {
       updateStatsAndFilters();
+    } else if (side === "cn") {
+      updateCNStatsAndFilters();
     }
     return details;
   }
@@ -8599,7 +8893,13 @@
     // 国内模型库概览折叠
     var cnRawModels = (cnLv.ok && cnLv.models && cnLv.models.length) ? cnLv.models : (rates["cn"] || []);
     if (cnRawModels.length) {
-      cnCard.appendChild(renderModelDetailsFold("cn", cnRawModels, "展开国内模型清单（" + cnRawModels.length + " 个）"));
+      var cnInjectedCount = 0;
+      cnRawModels.forEach(function (m) {
+        if (isCNModelSelected(m.id)) cnInjectedCount++;
+      });
+      var isCustom = (selectedCNModels && selectedCNModels.length > 0);
+      var cnSubTitle = isCustom ? ("已自选 " + cnInjectedCount + " 款入国际端") : ("精选 " + cnInjectedCount + " 款入国际端 (默认)");
+      cnCard.appendChild(renderModelDetailsFold("cn", cnRawModels, "国内模型库与反向注入（" + cnRawModels.length + " 个 · " + cnSubTitle + "）"));
     }
     grid.appendChild(cnCard);
 
@@ -9246,6 +9546,10 @@
   api("/api/state").then(function (st) {
     state = st;
     selectedIntlModels = (st && st.selectedIntlModels) || [];
+    selectedCNModels = (st && st.selectedCNModels) || [];
+    if (st && Array.isArray(st.curatedCNModels) && st.curatedCNModels.length) {
+      curatedCNModels = st.curatedCNModels;
+    }
     selectedFromState = true;
     // 默认选另一套后端——这正是用户打开界面的原因。
     target = st.backends.filter(function (b) {

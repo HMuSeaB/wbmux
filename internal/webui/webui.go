@@ -298,6 +298,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/inject-cn-into-intl", s.guard(s.handleInjectCNIntoIntl))
 	mux.HandleFunc("/api/client/inject-cn-into-intl", s.guard(s.handleInjectCNIntoIntl))
 	mux.HandleFunc("/api/custom-models/intl-selection", s.guard(s.handleIntlModelSelection))
+	mux.HandleFunc("/api/custom-models/cn-selection", s.guard(s.handleCNModelSelection))
 	mux.HandleFunc("/api/providers", s.guard(s.handleProviders))
 	mux.HandleFunc("/api/proxy-log", s.guard(s.handleProxyLog))
 	mux.HandleFunc("/api/zcode/list", s.guard(s.handleZCodeList))
@@ -650,6 +651,10 @@ type State struct {
 	QuotaWarn string `json:"quotaWarn,omitempty"`
 	// SelectedIntlModels 是用户选中的国际端付费/高级模型 ID 列表。
 	SelectedIntlModels []string `json:"selectedIntlModels,omitempty"`
+	// SelectedCNModels 是用户选中的国内专属模型 ID 列表（反向注入国际版客户端）。
+	SelectedCNModels []string `json:"selectedCNModels,omitempty"`
+	// CuratedCNModels 是国内默认精选推荐模型 ID 列表。
+	CuratedCNModels []string `json:"curatedCNModels,omitempty"`
 }
 
 // CheckView 是 doctor 的单项结论。
@@ -723,6 +728,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			DetectedProxyAddr: netroute.DetectedProxy(),
 		},
 		SelectedIntlModels: cfg.SelectedIntlModels,
+		SelectedCNModels:   cfg.SelectedCNModels,
+		CuratedCNModels:    config.DefaultCuratedCNModels,
 	}
 	if len(st.Quota) > 0 {
 		st.QuotaWarn = quotaWarnText(st.Quota)

@@ -95,6 +95,12 @@ type Config struct {
 	// 其 ID 会持久化在此列表中，并由 custommodels.Sync 注入到国内客户端 models.json。
 	SelectedIntlModels []string `json:"selectedIntlModels,omitempty"`
 
+	// SelectedCNModels 是用户选中的国内端专属模型 ID 列表（用于反向注入国际版客户端）。
+	//
+	// 当此列表为空（用户尚未定制）时，wbmux 默认只注入 DefaultCuratedCNModels 精选模型，
+	// 避免将全部 30+ 款国内模型全量灌入导致国际版客户端下拉框臃肿杂乱。
+	SelectedCNModels []string `json:"selectedCNModels,omitempty"`
+
 	// ProxyChatRequests 控制大模型聊天请求转发是否使用系统代理（兼容旧开关）。
 	ProxyChatRequests *bool `json:"proxyChatRequests,omitempty"`
 
@@ -406,5 +412,27 @@ func (c Config) ChatProxyURL() (*url.URL, error) {
 		return NormalizeProxyURL(c.ChatProxyAddr)
 	}
 	return nil, nil
+}
+
+// DefaultCuratedCNModels 是国内端默认精选推荐反向注入的模型 ID 白名单。
+// 仅包含最强、最稳定且最具代表性的核心大模型，避免一次性将 30+ 款模型全量塞入国际端导致界面混乱。
+var DefaultCuratedCNModels = []string{
+	"minimax-m2.5",
+	"glm-5.1",
+	"kimi-k2.6",
+	"hy3",
+	"deepseek-v4-flash",
+	"hunyuan-chat",
+}
+
+// IsCuratedCNModel 判断一个国内模型 ID 是否属于默认精选推荐白名单。
+func IsCuratedCNModel(modelID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelID))
+	for _, id := range DefaultCuratedCNModels {
+		if strings.ToLower(id) == lower {
+			return true
+		}
+	}
+	return false
 }
 

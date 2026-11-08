@@ -758,11 +758,12 @@ func TestSyncCNIntoIntl(t *testing.T) {
 		},
 	}
 
-	added, err := SyncCNIntoIntl(path, "http://127.0.0.1:35907/v1/chat/completions", "tok123", cnModels, providers)
+	// 默认未指定自选列表时：自动使用 DefaultCuratedCNModels（minimax-m2.5 和 glm-5.1 在其中）
+	added, err := SyncCNIntoIntl(path, "http://127.0.0.1:35907/v1/chat/completions", "tok123", cnModels, providers, nil)
 	if err != nil {
 		t.Fatalf("SyncCNIntoIntl 失败: %v", err)
 	}
-	// 期望注入：minimax-m2.5 + glm-5.1 (2个国内) + custom-gpt-4o (1个BYOK) = 3个
+	// 期望注入：minimax-m2.5 + glm-5.1 (2个国内精选) + custom-gpt-4o (1个BYOK) = 3个
 	if added != 3 {
 		t.Errorf("期望注入 3 个模型，实际注入 %d 个", added)
 	}
@@ -831,5 +832,21 @@ func TestSyncCNIntoIntl(t *testing.T) {
 	}
 	if foundMedia {
 		t.Errorf("纯多媒体生图/生视频模型未被过滤")
+	}
+
+	// 显式指定自选列表：只选 glm-5.1
+	addedCustom, err := SyncCNIntoIntl(path, "http://127.0.0.1:35907/v1/chat/completions", "tok123", cnModels, providers, []string{"glm-5.1"})
+	if err != nil {
+		t.Fatalf("自选同步失败: %v", err)
+	}
+	if addedCustom != 2 { // 1 个国内自选 glm-5.1 + 1 个 BYOK
+		t.Errorf("自选模式期望注入 2 个模型，实际注入 %d 个", addedCustom)
+	}
+	rawCustom, _ := os.ReadFile(path)
+	if strings.Contains(string(rawCustom), "wbmux-cn-minimax-m2.5") {
+		t.Errorf("未勾选的 minimax-m2.5 不应被注入")
+	}
+	if !strings.Contains(string(rawCustom), "wbmux-cn-glm-5.1") {
+		t.Errorf("勾选的 glm-5.1 必须被注入")
 	}
 }

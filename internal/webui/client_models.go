@@ -139,6 +139,127 @@ func (s *Server) handleIntlModelSelection(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// handleCNModelSelection 获取或更新自选的国内专属模型注入列表（反向注入国际版客户端）。
+func (s *Server) handleCNModelSelection(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := config.Load()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"selected": cfg.SelectedCNModels,
+			"curated":  config.DefaultCuratedCNModels,
+		})
+	case http.MethodPost:
+		var req struct {
+			Selected []string `json:"selected"`
+			Model    string   `json:"model"`
+			Action   string   `json:"action"` // "toggle", "add", "remove", "reset", "all"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "请求解析失败："+err.Error())
+			return
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		var updated []string
+		if req.Action == "reset" {
+			// 重置为默认精选
+			updated = nil
+		} else if req.Action == "all" {
+			// 一键全选全部可用国内模型
+			var allModels []string
+			var accounts map[string]*usage.LiveAccount
+			if s.liveAccountsFn != nil {
+				accounts = s.liveAccountsFn(s.probe())
+			} else {
+				accounts = usage.LiveAccounts(s.probe())
+			}
+			if live := accounts[string(variant.CN)]; live != nil && live.OK {
+				for _, m := range live.Models {
+					if strings.TrimSpace(m.ID) != "" && !custommodels.IsMediaModel(m.ID) {
+						allModels = append(allModels, m.ID)
+					}
+				}
+			}
+			updated = allModels
+		} else if req.Model != "" {
+			modelID := strings.TrimSpace(req.Model)
+			current := make(map[string]bool)
+			// 如果当前尚未特别定制，以默认精选白名单为初始基准
+			baseList := cfg.SelectedCNModels
+			if len(baseList) == 0 {
+				baseList = append([]string(nil), config.DefaultCuratedCNModels...)
+			}
+			for _, m := range baseList {
+				current[strings.ToLower(m)] = true
+			}
+			targetLower := strings.ToLower(modelID)
+			switch req.Action {
+			case "remove":
+				delete(current, targetLower)
+			case "add":
+				current[targetLower] = true
+			case "toggle", "":
+				if current[targetLower] {
+					delete(current, targetLower)
+				} else {
+					current[targetLower] = true
+				}
+			}
+			for _, m := range baseList {
+				if current[strings.ToLower(m)] {
+					updated = append(updated, m)
+					delete(current, strings.ToLower(m))
+				}
+			}
+			if current[targetLower] {
+				updated = append(updated, modelID)
+			}
+		} else {
+			// 批量覆盖模式
+			seen := make(map[string]bool)
+			for _, m := range req.Selected {
+				clean := strings.TrimSpace(m)
+				if clean != "" && !seen[strings.ToLower(clean)] {
+					seen[strings.ToLower(clean)] = true
+					updated = append(updated, clean)
+				}
+			}
+		}
+
+		cfg.SelectedCNModels = updated
+		if err := config.Save(cfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
+			return
+		}
+
+		added, note, syncErr := s.syncCNIntoIntl()
+		errMsg := ""
+		if syncErr != nil {
+			errMsg = syncErr.Error()
+		}
+
+		writeJSON(w, map[string]any{
+			"ok":       true,
+			"selected": cfg.SelectedCNModels,
+			"curated":  config.DefaultCuratedCNModels,
+			"added":    added,
+			"note":     note,
+			"syncErr":  errMsg,
+		})
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET 或 POST")
+	}
+}
+
 // syncInto 把当前能提供的模型写进国内客户端的清单，返回注入条数与一句
 // 给用户看的话。
 //
@@ -271,14 +392,27 @@ func (s *Server) syncCNIntoIntl() (int, string, error) {
 	base := "http://" + s.Addr() + "/v1/chat/completions"
 	path := filepath.Join(s.probe().DataDir(variant.Intl), "models.json")
 
-	added, err := custommodels.SyncCNIntoIntl(path, base, s.token, cnModels, cfg.Providers)
+	added, err := custommodels.SyncCNIntoIntl(path, base, s.token, cnModels, cfg.Providers, cfg.SelectedCNModels)
 	if err != nil {
 		return 0, "", err
 	}
 
+	selectedSet := make(map[string]bool)
+	if len(cfg.SelectedCNModels) == 0 {
+		for _, id := range config.DefaultCuratedCNModels {
+			selectedSet[strings.ToLower(id)] = true
+		}
+	} else {
+		for _, id := range cfg.SelectedCNModels {
+			if clean := strings.ToLower(strings.TrimSpace(id)); clean != "" {
+				selectedSet[clean] = true
+			}
+		}
+	}
+
 	validCount := 0
 	for _, m := range cnModels {
-		if strings.TrimSpace(m.ID) != "" && !custommodels.IsMediaModel(m.ID) {
+		if strings.TrimSpace(m.ID) != "" && !custommodels.IsMediaModel(m.ID) && selectedSet[strings.ToLower(m.ID)] {
 			validCount++
 		}
 	}
@@ -287,7 +421,11 @@ func (s *Server) syncCNIntoIntl() (int, string, error) {
 		own += len(p.Models)
 	}
 
-	parts := fmt.Sprintf("已向国际版注入 %d 个模型（国内专享 %d + 自备提供方 %d）", added, validCount, own)
+	modeStr := "自选"
+	if len(cfg.SelectedCNModels) == 0 {
+		modeStr = "精选"
+	}
+	parts := fmt.Sprintf("已向国际版注入 %d 个模型（国内%s %d + 自备提供方 %d）", added, modeStr, validCount, own)
 	if cnErr != "" {
 		parts += "；国内侧这一轮没注入：" + cnErr
 	}

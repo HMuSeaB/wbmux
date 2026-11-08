@@ -568,6 +568,10 @@ type usageResponse struct {
 	ProxyQuota []ProxyQuota `json:"proxyQuota"`
 	// SelectedIntlModels 是用户已选定注入国内端的国际付费大模型 ID 列表。
 	SelectedIntlModels []string `json:"selectedIntlModels"`
+	// SelectedCNModels 是用户已选定注入国际端的国内专属大模型 ID 列表。
+	SelectedCNModels []string `json:"selectedCNModels"`
+	// CuratedCNModels 是国内默认精选推荐模型 ID 列表。
+	CuratedCNModels []string `json:"curatedCNModels"`
 }
 
 // handleUsage 返回额度账单 + 代理观察到的当前可用性。
@@ -582,14 +586,18 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := config.Load()
 	var selected []string
+	var selectedCN []string
 	if err == nil {
 		selected = cfg.SelectedIntlModels
+		selectedCN = cfg.SelectedCNModels
 	}
 	writeJSON(w, usageResponse{
 		Survey:             usage.BuildFast(s.probe()),
 		ProxyQuota:         s.quotaSnapshot(),
 		ProxyOK:            s.quotaOKSnapshot(),
 		SelectedIntlModels: selected,
+		SelectedCNModels:   selectedCN,
+		CuratedCNModels:    config.DefaultCuratedCNModels,
 	})
 }
 
