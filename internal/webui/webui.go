@@ -588,9 +588,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := assets.ReadFile("assets/index.html")
+	page, err := RenderIndexPage()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "界面资源缺失")
+		writeErr(w, http.StatusInternalServerError, "界面资源组装失败: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

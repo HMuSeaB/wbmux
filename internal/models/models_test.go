@@ -84,3 +84,4 @@ func TestModelQueries(t *testing.T) {
 		t.Errorf("ExclusiveCNList want >= 2 models (minimax, kimi), got %d", len(exCN))
 	}
 }
+

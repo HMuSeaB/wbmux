@@ -8,20 +8,34 @@ import (
 )
 
 // TestIndexHTMLValidity 作为持续集成与防呆防护用例：
-// 检验 embedded 的 index.html 资源完整性、关键函数入口以及脚本语法的健全性，
+// 检验 embedded 模块化前端资源完整性、RenderIndexPage 聚合输出以及脚本语法的健全性，
 // 杜绝任何因代码合并截断或未闭合括号/引号导致的 WebUI 全局崩溃。
 func TestIndexHTMLValidity(t *testing.T) {
-	content, err := assets.ReadFile("assets/index.html")
+	// 1. 验证各模块化文件独立存在且体积正常
+	cssData, err := assets.ReadFile("assets/css/style.css")
+	if err != nil || len(cssData) < 10000 {
+		t.Fatalf("assets/css/style.css 缺失或体积异常: %v (%d bytes)", err, len(cssData))
+	}
+
+	for _, mod := range jsModuleOrder {
+		data, err := assets.ReadFile(mod)
+		if err != nil || len(data) < 100 {
+			t.Errorf("JS 模块 %s 缺失或内容为空: %v", mod, err)
+		}
+	}
+
+	// 2. 验证聚合渲染器输出
+	content, err := RenderIndexPage()
 	if err != nil {
-		t.Fatalf("无法读取嵌入的 assets/index.html: %v", err)
+		t.Fatalf("RenderIndexPage 聚合失败: %v", err)
 	}
 
 	htmlStr := string(content)
 	if len(htmlStr) < 50000 {
-		t.Fatalf("index.html 体积异常偏小 (%d bytes)", len(htmlStr))
+		t.Fatalf("聚合后页面体积异常偏小 (%d bytes)", len(htmlStr))
 	}
 
-	// 1. 验证关键函数入口与核心逻辑未被意外删除或覆盖
+	// 3. 验证关键函数入口与核心逻辑完整存在
 	criticalSymbols := []string{
 		"function showCCSwitchExportModal",
 		"function showCCSwitchImportModal",
@@ -37,11 +51,11 @@ func TestIndexHTMLValidity(t *testing.T) {
 		}
 	}
 
-	// 2. 提取 <script> 块并进行语法健全度校验
+	// 4. 提取聚合后的 <script> 块并进行语法健全度校验
 	reScript := regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)
 	matches := reScript.FindAllStringSubmatch(htmlStr, -1)
 	if len(matches) == 0 {
-		t.Fatalf("未在 index.html 中发现 <script> 标签")
+		t.Fatalf("未在聚合 HTML 中发现 <script> 标签")
 	}
 
 	for idx, m := range matches {
@@ -66,7 +80,7 @@ func TestIndexHTMLValidity(t *testing.T) {
 		}
 	}
 
-	// 3. 若宿主环境安装有 Node.js，通过 stdin 对提取的代码执行精准 AST 编译校验
+	// 5. 若宿主环境安装有 Node.js，通过 stdin 对聚合后的代码执行精准 AST 编译校验
 	nodePath, err := exec.LookPath("node")
 	if err == nil && nodePath != "" {
 		for idx, m := range matches {
