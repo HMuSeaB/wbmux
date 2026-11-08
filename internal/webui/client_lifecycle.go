@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -85,17 +86,20 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 关掉**实际在跑的那个**客户端，而不是按目标后端的名字去找。
+	// 优先关闭目标端专属的可执行文件。
 	//
-	// 2026-10-16 的真实故障：用户点「重启国际版」，但这台机器上跑的是
-	// `WorkBuddy.exe`（国内版的名字），而逻辑去找 `WorkBuddyAI.exe` ——
-	// 找不到，于是"已关闭 0 个进程"，旧实例继续占着单实例锁，新实例起不来。
-	// 用户看到的就是"点了重启但什么都没变"。
-	//
-	// 两个名字只差一个词尾（`WorkBuddy` / `WorkBuddyAI`），界面上既看不出
-	// 自己点的哪个后端，更看不出进程名对不上。所以这里不去猜，**按实际在跑
-	// 的那个关**：两侧的名字都试一遍，谁在跑关谁。
-	killed, err := clientproc.TerminateAny(variant.ExecutableNames()...)
+	// 双开场景下两侧各自常驻，如果用户点「重启国际版」却直接把 TerminateAny
+	// 全杀掉，国内端的小程序远控也会被误杀断连。
+	// 所以：如果目标端专有进程（如 WorkBuddyAI.exe）正在运行，只关目标端！
+	// 仅在目标端专有进程未运行（如单安装覆盖模式，用国内版 exe 连国际版后端）时，
+	// 才回退至 TerminateAny 搜索正在跑的宿主进程。
+	var killed int
+	targetExe := target.WinExecutableName
+	if stat := clientproc.Inspect(targetExe); stat.Running {
+		killed, err = clientproc.Terminate(targetExe)
+	} else {
+		killed, err = clientproc.TerminateAny(variant.ExecutableNames()...)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError,
 			"关闭客户端没成功："+err.Error()+"。为避免两个实例抢同一份数据，"+
@@ -130,26 +134,65 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
-// launchBothResult 是一侧的双开结果。
-type launchBothResult struct {
-	Side string `json:"side"`
-	Name string `json:"name"`
-	OK   bool   `json:"ok"`
-	Err  string `json:"err,omitempty"`
+// handleTerminateClient 关闭指定侧的客户端进程。
+func (s *Server) handleTerminateClient(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.decodeRequest(w, r)
+	if !ok {
+		return
+	}
+	target, err := variant.Get(req.Target)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "目标客户端无效")
+		return
+	}
+	targetExe := target.WinExecutableName
+	var killed int
+	if stat := clientproc.Inspect(targetExe); stat.Running {
+		killed, err = clientproc.Terminate(targetExe)
+	} else {
+		killed, err = clientproc.TerminateAny(variant.ExecutableNames()...)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "关闭客户端失败: "+err.Error())
+		return
+	}
+	s.logf("关闭客户端 %s 进程：共关闭 %d 个", target.DisplayName, killed)
+	writeJSON(w, map[string]any{
+		"ok":     true,
+		"target": req.Target,
+		"name":   target.DisplayName,
+		"killed": killed,
+	})
 }
 
-// handleLaunchBoth 双开：两侧各用各的安装**原样启动**。
+// launchBothOptions 控制双开行为。
+type launchBothOptions struct {
+	Force bool `json:"force"` // true: 无论是否运行强制启动；false: 智能自适应模式（默认跳过正在运行的一侧）
+}
+
+// launchBothResult 是一侧的双开结果。
+type launchBothResult struct {
+	Side           string `json:"side"`
+	Name           string `json:"name"`
+	OK             bool   `json:"ok"`
+	AlreadyRunning bool   `json:"alreadyRunning,omitempty"`
+	PIDs           []int  `json:"pids,omitempty"`
+	Err            string `json:"err,omitempty"`
+}
+
+// handleLaunchBoth 双开：两侧各用各的安装启动。
 //
-// 双开与"切换"是两个物种：切换是同一份 exe 换后端，一次只能一个；
-// 双开是两套安装并行——互斥锁/数据目录/认证文件本就按产品分开
-// （2026-09-26 实测，含互斥锁名 workbuddy vs workbuddy-ai）。
-// 每侧独立启动：一侧失败（比如没装）不影响另一侧，结果逐侧回传，
-// 界面如实汇报，不合并成一个笼统的成功/失败。
+// 智能自适应模式（默认）：若一侧已在运行，保留现有进程不重复拉起，自动只补开未启动的一侧；
+// 强制模式（force=true）：无论当前进程状态，强制调用 Launch。
+// 每侧独立处理：一侧失败不影响另一侧，结果逐侧回传。
 func (s *Server) handleLaunchBoth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
 		return
 	}
+	var opts launchBothOptions
+	_ = json.NewDecoder(r.Body).Decode(&opts)
+
 	var results []launchBothResult
 	for _, id := range []variant.ID{variant.CN, variant.Intl} {
 		res := launchBothResult{Side: string(id)}
@@ -157,6 +200,19 @@ func (s *Server) handleLaunchBoth(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			res.Name = pv.TargetName
 		}
+
+		b, err := variant.Get(id)
+		if err == nil && !opts.Force {
+			stat := clientproc.Inspect(b.WinExecutableName)
+			if stat.Running {
+				res.OK = true
+				res.AlreadyRunning = true
+				res.PIDs = stat.PIDs
+				results = append(results, res)
+				continue
+			}
+		}
+
 		prep, err := runner.Prepare(runner.Options{
 			Target:    id,
 			Native:    true,

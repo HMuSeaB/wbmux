@@ -18,6 +18,38 @@ func TestPidsOfAbsentProcess(t *testing.T) {
 	}
 }
 
+// TestInspectAbsentProcess 测试 Inspect 查询不存在进程的返回。
+func TestInspectAbsentProcess(t *testing.T) {
+	st := Inspect("definitely-not-a-real-process-xyz")
+	if st.Running {
+		t.Errorf("不存在的进程应当报告 Running=false，实际 %v", st)
+	}
+	if len(st.PIDs) != 0 {
+		t.Errorf("不存在的进程 PIDs 应当为空，实际 %v", st.PIDs)
+	}
+}
+
+// TestInspectWithHook 测试使用钩子模拟进程感知。
+func TestInspectWithHook(t *testing.T) {
+	cleanup := SetInspectHookForTest(func(name string) (Status, bool) {
+		if name == "mock-client.exe" {
+			return Status{Running: true, PIDs: []int{1234, 5678}}, true
+		}
+		return Status{}, false
+	})
+	defer cleanup()
+
+	st := Inspect("mock-client")
+	if !st.Running || len(st.PIDs) != 2 || st.PIDs[0] != 1234 {
+		t.Errorf("未能通过钩子正确模拟进程状态：%+v", st)
+	}
+
+	st2 := Inspect("other-process")
+	if st2.Running {
+		t.Errorf("非命中钩子进程不应报告在跑：%+v", st2)
+	}
+}
+
 // TestTerminateAbsentIsNoop 目标没在跑时 Terminate 应当"成功但关掉 0 个"。
 //
 // 这条很重要：用户可能自己已经关了客户端，此时点「重启客户端」应该

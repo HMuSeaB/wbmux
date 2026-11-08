@@ -20,6 +20,7 @@ package clientproc
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,49 @@ import (
 // 界面多半是双击启动的，子进程再闪一个黑窗口会让人以为出错。
 func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+}
+
+// Status 包含某个镜像的进程运行状态与 PID 列表。
+type Status struct {
+	Running bool  `json:"running"`
+	PIDs    []int `json:"pids,omitempty"`
+}
+
+// inspectHook 供测试在无真实客户端进程时打桩模拟。
+var inspectHook func(execName string) (Status, bool)
+
+// SetInspectHookForTest 注册测试专用的进程探测钩子，返回清理函数。
+func SetInspectHookForTest(hook func(execName string) (Status, bool)) func() {
+	prev := inspectHook
+	inspectHook = hook
+	return func() { inspectHook = prev }
+}
+
+// Inspect 查询某个可执行文件名（会自动补齐 .exe）的实时运行状态与 PID 列表。
+func Inspect(execName string) Status {
+	name := execName
+	if !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		name += ".exe"
+	}
+	if inspectHook != nil {
+		if st, ok := inspectHook(name); ok {
+			return st
+		}
+	}
+	rawPids := pidsOf(name)
+	if len(rawPids) == 0 {
+		return Status{Running: false}
+	}
+	var pids []int
+	for _, raw := range rawPids {
+		if p, err := strconv.Atoi(raw); err == nil && p > 0 {
+			pids = append(pids, p)
+		}
+	}
+	return Status{
+		Running: len(pids) > 0,
+		PIDs:    pids,
+	}
 }
 
 // pidsOf 列出某镜像名的所有 PID。

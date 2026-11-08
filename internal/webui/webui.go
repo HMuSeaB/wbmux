@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/checkin"
+	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
@@ -288,10 +289,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/sessions", s.handleSessionsPage)
 	mux.HandleFunc("/api/state", s.guard(s.handleState))
+	mux.HandleFunc("/api/clients/status", s.guard(s.handleClientsStatus))
 	mux.HandleFunc("/api/doctor", s.guard(s.handleDoctor))
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))
 	mux.HandleFunc("/api/launch", s.guard(s.handleLaunch))
 	mux.HandleFunc("/api/restart-client", s.guard(s.handleRestart))
+	mux.HandleFunc("/api/terminate-client", s.guard(s.handleTerminateClient))
 	mux.HandleFunc("/api/launch-both", s.guard(s.handleLaunchBoth))
 	mux.HandleFunc("/api/probe", s.guard(s.handleProbe))
 	mux.HandleFunc("/api/inject-custom-models", s.guard(s.handleInjectCustomModels))
@@ -611,6 +614,14 @@ type InstallView struct {
 	Build       string     `json:"build"`
 	DataDir     string     `json:"dataDir"`
 	Problems    []string   `json:"problems"`
+	Running     bool       `json:"running"`
+	PIDs        []int      `json:"pids,omitempty"`
+}
+
+// ClientProcessStatus 记录单侧客户端实时进程状态。
+type ClientProcessStatus struct {
+	Running bool  `json:"running"`
+	PIDs    []int `json:"pids,omitempty"`
 }
 
 // BackendView 是一套后端。
@@ -661,6 +672,8 @@ type State struct {
 	SelectedCNModels []string `json:"selectedCNModels,omitempty"`
 	// CuratedCNModels 是国内默认精选推荐模型 ID 列表。
 	CuratedCNModels []string `json:"curatedCNModels,omitempty"`
+	// Clients 记录国内端与国际端客户端进程实时运行感知。
+	Clients map[string]ClientProcessStatus `json:"clients,omitempty"`
 }
 
 // CheckView 是 doctor 的单项结论。
@@ -741,11 +754,21 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		st.QuotaWarn = quotaWarnText(st.Quota)
 	}
 
-	// 逐档位探测安装。
+	// 逐档位探测安装与实时进程。
 	found := map[variant.ID]bool{}
+	st.Clients = make(map[string]ClientProcessStatus)
+	for _, b := range variant.All() {
+		procStat := clientproc.Inspect(b.WinExecutableName)
+		st.Clients[string(b.ID)] = ClientProcessStatus{
+			Running: procStat.Running,
+			PIDs:    procStat.PIDs,
+		}
+	}
+
 	for _, b := range variant.All() {
 		inst := probe.Detect(b.ID, "")
 		found[b.ID] = inst.Found
+		procStat := st.Clients[string(b.ID)]
 		st.Installs = append(st.Installs, InstallView{
 			ID:          b.ID,
 			DisplayName: b.DisplayName,
@@ -756,6 +779,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 			Build:       shortBuild(inst.Build),
 			DataDir:     inst.DataDir,
 			Problems:    inst.Problems,
+			Running:     procStat.Running,
+			PIDs:        procStat.PIDs,
 		})
 	}
 
@@ -781,6 +806,18 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, st)
+}
+
+func (s *Server) handleClientsStatus(w http.ResponseWriter, r *http.Request) {
+	out := make(map[string]ClientProcessStatus)
+	for _, b := range variant.All() {
+		procStat := clientproc.Inspect(b.WinExecutableName)
+		out[string(b.ID)] = ClientProcessStatus{
+			Running: procStat.Running,
+			PIDs:    procStat.PIDs,
+		}
+	}
+	writeJSON(w, map[string]any{"clients": out})
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {

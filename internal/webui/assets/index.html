@@ -2525,8 +2525,52 @@
 </div>
     <div data-page="switch" hidden>
   <div id="banner"></div>
+
+  <!-- 双端自动化控制中枢顶栏 -->
+  <section class="card" style="padding:16px 20px;margin-bottom:16px;border:1px solid rgba(255,255,255,0.08);background:linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);border-radius:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h2 style="margin:0;font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;">
+            <svg class="ico-sm" style="color:var(--brand)" aria-hidden="true"><use href="#i-swap"/></svg>
+            双端自动化控制中枢 (Dual Client Auto Control Hub)
+          </h2>
+          <span class="pill ok" id="hub-proxy-status">🟢 本地代理中枢在线</span>
+        </div>
+        <p class="hint" style="margin:6px 0 0 0;font-size:12px;color:var(--ink-2);max-width:680px;line-height:1.5;">
+          实时感知国内端（CodeBuddy）与国际端（WorkBuddy AI）进程与存活，支持自适应智能双开（未运行则启动，已开单侧则自动补开另一侧）、单端独立重启与退出。
+        </p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button id="btn-smart-both" class="primary" style="padding:8px 16px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,0.25);">
+          <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
+          <span id="btn-smart-both-label">⚡ 智能自适应双开</span>
+        </button>
+        <button id="btn-refresh-proc" class="ghost" title="刷新客户端进程状态">
+          <svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>
+          <span>刷新状态</span>
+        </button>
+      </div>
+    </div>
+    
+    <!-- 实时存活状态栏 -->
+    <div id="hub-status-strip" style="display:flex;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.06);flex-wrap:wrap;align-items:center;font-size:12px;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="color:var(--ink-3)">国内版 (CodeBuddy):</span>
+        <span id="hub-stat-cn" class="pill ghost">⚪ 检测中…</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="color:var(--ink-3)">国际版 (WorkBuddy AI):</span>
+        <span id="hub-stat-intl" class="pill ghost">⚪ 检测中…</span>
+      </div>
+      <div style="margin-left:auto;color:var(--ink-3);font-size:11.5px;">
+        提示：双开时两侧各自独立占用不同数据目录，互不冲突。
+      </div>
+    </div>
+  </section>
+
   <section>
-    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-server"/></svg>本机安装</h2>
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-server"/></svg>客户端双端卡片控制台</h2>
     <div class="grid2" id="installs"></div>
     <p class="hint" id="host-note"></p>
   </section>
@@ -2543,8 +2587,47 @@
         </span>
       </label>
       <div class="row" style="margin-top:10px">
-        <button id="btn-both"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>双开两侧</button>
+        <button id="btn-both"><svg class="ico ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>强制双开两侧</button>
         <span class="hint" style="margin:0">两侧各用各的安装同时启动（不是切换）——国内客户端管小程序远程控制，国际客户端用国际模型，互不干扰。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 代理架构与双向通道全景说明 -->
+  <section id="sec-proxy-arch" style="margin-top:16px;">
+    <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-layers"/></svg>大模型双向代理转发架构全景</h2>
+    <div class="card" style="padding:16px 20px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);border-radius:10px">
+      <div style="font-size:12.5px;color:var(--ink-2);margin-bottom:12px;line-height:1.5;">
+        用户架构解惑：<strong>“现在的代理转发是分成两部分还是融合在一起呢？”</strong><br>
+        <strong>核心结论：底层核心高度融合，业务通道完全隔离。</strong>
+      </div>
+      <div class="grid2" style="gap:12px;">
+        <div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px 14px;">
+          <div style="font-weight:600;font-size:12.5px;color:var(--accent);display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <svg class="ico-sm" aria-hidden="true"><use href="#i-up"/></svg>
+            <span>通道一：国内端 ➔ 国际限免模型 (正向代理)</span>
+          </div>
+          <div style="font-size:11.5px;color:var(--ink-2);line-height:1.5;">
+            • <strong>业务目标</strong>：让国内客户端免积分调用国际限免顶级大模型<br>
+            • <strong>承载模型</strong>：DeepSeek-V4.1-Flash、Step-5-Preview、Hy3 等 0.00x 费率模型<br>
+            • <strong>实现机制</strong>：写入 <code>~/.workbuddy/models.json</code>，请求指向本机 <code>127.0.0.1:2239</code>，经 wbmux 伪装认证后扣国际免费额度池。
+          </div>
+        </div>
+        <div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px 14px;">
+          <div style="font-weight:600;font-size:12.5px;color:var(--brand);display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <svg class="ico-sm" aria-hidden="true"><use href="#i-download"/></svg>
+            <span>通道二：国际端 ➔ 国内专属模型 (反向代理)</span>
+          </div>
+          <div style="font-size:11.5px;color:var(--ink-2);line-height:1.5;">
+            • <strong>业务目标</strong>：让国际客户端直接使用 MiniMax、GLM、Kimi 等国内王牌模型<br>
+            • <strong>承载模型</strong>：默认 6 款核心精选（支持自选开关），避免全量 36 个灌入杂乱<br>
+            • <strong>实现机制</strong>：写入 <code>~/.workbuddy-ai/models.json</code>，经 wbmux 统一反向代理鉴权直通国内接口，不与国际模型抢命名空间。
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:6px;">
+        <svg class="ico-sm" aria-hidden="true"><use href="#i-check"/></svg>
+        <span>两套客户端各自拥有独立的数据目录（~/.workbuddy vs ~/.workbuddy-ai）与互斥锁，双开运行时互不干扰。</span>
       </div>
     </div>
   </section>
@@ -3429,40 +3512,146 @@
     }
   }
 
-  // ---------- 渲染：本机安装 ----------
+  // ---------- 渲染：双端控制台卡片 ----------
 
   function renderInstalls() {
     var box = document.getElementById("installs");
+    if (!box) return;
     clear(box);
 
-    state.installs.forEach(function (inst) {
+    (state.installs || []).forEach(function (inst) {
       var isHost = inst.id === state.hostId;
-      var card = el("div", { class: "card" });
+      var card = el("div", { class: "card", style: "display:flex;flex-direction:column;justify-content:space-between;gap:12px;padding:16px;background:var(--g2);border:1px solid rgba(255,255,255,0.06);border-radius:10px;" });
 
-      var head = el("div", { class: "card-head" }, [
-        el("span", { class: "card-title", text: inst.displayName }),
-        inst.found
-          ? pill(isHost ? "当前宿主" : "已安装", isHost ? "ok" : "info")
-          : pill("未安装", "ghost")
+      var proc = (state.clients && state.clients[inst.id]) || { running: !!inst.running, pids: inst.pids || [] };
+      var isRunning = !!proc.running;
+
+      var titleText = inst.id === "cn" ? "🇨🇳 国内版 (CodeBuddy)" : (inst.id === "intl" ? "🌐 国际版 (WorkBuddy AI)" : inst.displayName);
+      var badges = [];
+      if (isRunning) {
+        var pidDesc = (proc.pids && proc.pids.length) ? (" · PID " + proc.pids.join(",")) : "";
+        badges.push(pill("🟢 运行中" + pidDesc, "ok"));
+      } else {
+        badges.push(pill("⚪ 未启动", "ghost"));
+      }
+
+      if (inst.found) {
+        if (isHost) badges.push(pill("当前宿主", "info"));
+        else badges.push(pill("已安装", "ghost"));
+      } else {
+        badges.push(pill("未安装", "bad"));
+      }
+
+      var head = el("div", { class: "card-head", style: "margin-bottom:2px;" }, [
+        el("span", { class: "card-title", style: "font-size:14px;font-weight:600;", text: titleText }),
+        el("div", { style: "display:flex;gap:6px;align-items:center;" }, badges)
       ]);
-      card.appendChild(head);
+
+      var topPart = el("div", { style: "display:flex;flex-direction:column;gap:8px;" }, [head]);
 
       if (!inst.found) {
-        card.appendChild(el("div", { class: "path", text: (inst.problems || []).join("；") || "未在本机找到。" }));
+        topPart.appendChild(el("div", { class: "path", style: "margin-top:4px;", text: (inst.problems || []).join("；") || "未在本机找到该版本安装。" }));
+        card.appendChild(topPart);
         box.appendChild(card);
         return;
       }
 
       var meta = [];
       if (inst.version) meta.push(inst.version + (inst.build ? " (" + inst.build + ")" : ""));
-      if (inst.source) meta.push("定位方式：" + inst.source);
-      card.appendChild(el("div", { class: "card-sub", text: meta.join("　") }));
+      if (inst.source) meta.push("定位：" + inst.source);
+      topPart.appendChild(el("div", { class: "card-sub", text: meta.join("　") }));
 
-      card.appendChild(el("dl", { class: "kv", style: "margin-top:9px" }, [
-        el("dt", { text: "主程序" }), el("dd", { text: inst.executable }),
-        el("dt", { text: "数据目录" }), el("dd", { text: inst.dataDir })
-      ]));
+      var kvDl = el("dl", { class: "kv", style: "margin-top:6px;" }, [
+        el("dt", { text: "主程序" }), el("dd", { text: inst.executable, title: inst.executable }),
+        el("dt", { text: "数据目录" }), el("dd", { text: inst.dataDir, title: inst.dataDir })
+      ]);
+      topPart.appendChild(kvDl);
 
+      // 模型通道与代理状态提示
+      var chanBox = el("div", {
+        style: "background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:8px 10px;font-size:11.5px;margin-top:4px;"
+      });
+      if (inst.id === "cn") {
+        chanBox.innerHTML =
+          '<div style="font-weight:600;color:var(--accent);display:flex;align-items:center;gap:5px;margin-bottom:3px;">' +
+            ICO("up", "ico-sm") + '<span>正向代理通道：国际限免大模型注入</span>' +
+          '</div>' +
+          '<div style="color:var(--ink-2);line-height:1.4;">' +
+            '通过 ~/.workbuddy/models.json 注入国际版 0 费率模型（如 DeepSeek-V4.1-Flash），经 127.0.0.1:2239 代理路由，微信远控正常运行。' +
+          '</div>';
+      } else {
+        chanBox.innerHTML =
+          '<div style="font-weight:600;color:var(--brand);display:flex;align-items:center;gap:5px;margin-bottom:3px;">' +
+            ICO("download", "ico-sm") + '<span>反向代理通道：国内专享精选模型注入</span>' +
+          '</div>' +
+          '<div style="color:var(--ink-2);line-height:1.4;">' +
+            '通过 ~/.workbuddy-ai/models.json 精选注入 MiniMax-M2.5、GLM-5.1、Kimi 等 6 款核心模型，直连国内大模型接口。' +
+          '</div>';
+      }
+      topPart.appendChild(chanBox);
+      card.appendChild(topPart);
+
+      // 底部操作按钮群
+      var actions = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);" });
+
+      if (isRunning) {
+        var btnRestart = el("button", {
+          class: "primary",
+          style: "padding:5px 11px;font-size:12px;",
+          title: "关闭该端后以最新环境重新启动（不影响另一侧客户端）"
+        }, [
+          el("svg", { class: "ico ico-sm", style: "width:12px;height:12px;" }, [el("use", { href: "#i-reload" })]),
+          el("span", { text: "重启该端生效" })
+        ]);
+        btnRestart.addEventListener("click", function () { restartSide(inst.id); });
+        actions.appendChild(btnRestart);
+
+        var btnTerm = el("button", {
+          class: "danger ghost",
+          style: "padding:5px 10px;font-size:12px;",
+          title: "仅退出该端客户端进程（保留另一侧）"
+        }, [
+          el("svg", { class: "ico ico-sm", style: "width:12px;height:12px;" }, [el("use", { href: "#i-x" })]),
+          el("span", { text: "退出该端" })
+        ]);
+        btnTerm.addEventListener("click", function () { terminateSide(inst.id); });
+        actions.appendChild(btnTerm);
+      } else {
+        var btnLaunch = el("button", {
+          class: "primary",
+          style: "padding:5px 12px;font-size:12px;",
+          title: "启动该版本客户端"
+        }, [
+          el("svg", { class: "ico ico-sm", style: "width:12px;height:12px;" }, [el("use", { href: "#i-play" })]),
+          el("span", { text: "启动此客户端" })
+        ]);
+        btnLaunch.addEventListener("click", function () { launchSide(inst.id); });
+        actions.appendChild(btnLaunch);
+      }
+
+      var btnCfg = el("button", {
+        class: "ghost",
+        style: "padding:5px 9px;font-size:12px;",
+        title: "前往额度与模型页配置"
+      }, [
+        el("svg", { class: "ico ico-sm", style: "width:12px;height:12px;" }, [el("use", { href: "#i-sliders" })]),
+        el("span", { text: "模型与额度" })
+      ]);
+      btnCfg.addEventListener("click", function () { showPage("status"); });
+      actions.appendChild(btnCfg);
+
+      var btnFolder = el("button", {
+        class: "ghost",
+        style: "padding:5px 9px;font-size:12px;",
+        title: "在文件资源管理器中打开数据目录"
+      }, [
+        el("svg", { class: "ico ico-sm", style: "width:12px;height:12px;" }, [el("use", { href: "#i-folder" })]),
+        el("span", { text: "打开目录" })
+      ]);
+      btnFolder.addEventListener("click", function () { openClientFolder(inst.dataDir); });
+      actions.appendChild(btnFolder);
+
+      card.appendChild(actions);
       box.appendChild(card);
     });
   }
@@ -4906,7 +5095,10 @@
     }
     if (page === "log") loadProxyLog(true);
     if (page === "growth") loadDomesticGrowth(false);
-    if (page === "switch") loadClientUpdateState();
+    if (page === "switch") {
+      loadClientUpdateState();
+      refreshClientProcStatus();
+    }
     // 签到**不在切页时重发写请求**。
     //
     // 打开界面时已经签过一遍（loadCheckin(true)，见启动段）。切回来再发一次
@@ -5014,28 +5206,176 @@
     });
   }
 
-  function launchBoth() {
+  function openClientFolder(path) {
+    if (!path) return;
+    api("/api/open-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path })
+    }).catch(function (err) {
+      toast("打开目录失败: " + err.message, "bad");
+    });
+  }
+
+  function launchSide(id) {
+    if (busy) return;
+    busy = true;
+    toast("正在启动 " + sideLabel(id) + " 客户端…", "info");
+    api("/api/launch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: id, native: true })
+    }).then(function (pv) {
+      toast("已启动 " + pv.targetName + " 客户端。", "ok");
+      refreshClientProcStatus();
+    }).catch(function (e) {
+      toast("启动失败: " + e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  function restartSide(id) {
+    if (busy) return;
+    var name = sideLabel(id);
+    if (!confirm("会先关闭正在运行的【" + name + "】客户端，然后重新启动它。\n\n" +
+                 "注意：仅重启该端，绝不影响另一侧并行运行的客户端！\n请确认当前对话或任务已保存。要继续吗？")) return;
+    busy = true;
+    toast("正在重启 " + name + " 客户端…", "info");
+    api("/api/restart-client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: id, native: true })
+    }).then(function (pv) {
+      var closed = pv.killed ? ("已关闭 " + pv.killed + " 个旧进程，") : "";
+      toast(closed + "已重新启动 " + pv.targetName + " 客户端，最新模型配置已生效。", "ok");
+      refreshClientProcStatus();
+    }).catch(function (e) {
+      toast("重启失败: " + e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  function terminateSide(id) {
+    if (busy) return;
+    var name = sideLabel(id);
+    if (!confirm("确定要仅退出【" + name + "】客户端进程吗？\n\n注意：另一侧客户端将保持运行，不受影响。")) return;
+    busy = true;
+    api("/api/terminate-client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: id })
+    }).then(function (res) {
+      toast("已退出 " + name + "（关闭了 " + (res.killed || 0) + " 个进程）。", "ok");
+      refreshClientProcStatus();
+    }).catch(function (e) {
+      toast("关闭客户端失败: " + e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  function refreshClientProcStatus() {
+    return api("/api/clients/status").then(function (res) {
+      if (res && res.clients) {
+        state.clients = res.clients;
+        if (state.installs) {
+          state.installs.forEach(function (inst) {
+            var c = res.clients[inst.id];
+            if (c) {
+              inst.running = c.running;
+              inst.pids = c.pids;
+            }
+          });
+        }
+      }
+      renderInstalls();
+      syncControlHub();
+    }).catch(function () {});
+  }
+
+  function syncControlHub() {
+    var cnStat = (state && state.clients && state.clients.cn) || { running: false, pids: [] };
+    var intlStat = (state && state.clients && state.clients.intl) || { running: false, pids: [] };
+
+    var elCn = document.getElementById("hub-stat-cn");
+    if (elCn) {
+      if (cnStat.running) {
+        elCn.className = "pill ok";
+        elCn.textContent = "🟢 运行中" + ((cnStat.pids && cnStat.pids.length) ? (" · PID " + cnStat.pids.join(",")) : "");
+      } else {
+        elCn.className = "pill ghost";
+        elCn.textContent = "⚪ 未启动";
+      }
+    }
+
+    var elIntl = document.getElementById("hub-stat-intl");
+    if (elIntl) {
+      if (intlStat.running) {
+        elIntl.className = "pill ok";
+        elIntl.textContent = "🟢 运行中" + ((intlStat.pids && intlStat.pids.length) ? (" · PID " + intlStat.pids.join(",")) : "");
+      } else {
+        elIntl.className = "pill ghost";
+        elIntl.textContent = "⚪ 未启动";
+      }
+    }
+
+    var btnLabel = document.getElementById("btn-smart-both-label");
+    if (btnLabel) {
+      if (cnStat.running && intlStat.running) {
+        btnLabel.textContent = "两端均在运行中 (点击重新检测)";
+      } else if (cnStat.running && !intlStat.running) {
+        btnLabel.textContent = "⚡ 智能补开国际版 (国内端在跑)";
+      } else if (!cnStat.running && intlStat.running) {
+        btnLabel.textContent = "⚡ 智能补开国内版 (国际端在跑)";
+      } else {
+        btnLabel.textContent = "⚡ 智能自适应双开";
+      }
+    }
+  }
+
+  function launchBoth(force) {
     if (busy) return;
     busy = true;
     var btn = document.getElementById("btn-both");
-    if (btn) { btn.disabled = true; btn.textContent = "正在双开…"; }
+    var smartBtn = document.getElementById("btn-smart-both");
+    var smartLabel = document.getElementById("btn-smart-both-label");
+    if (btn) { btn.disabled = true; btn.textContent = "正在处理…"; }
+    if (smartBtn) { smartBtn.disabled = true; }
+    if (smartLabel) smartLabel.textContent = "正在处理…";
+
     api("/api/launch-both", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}"
+      body: JSON.stringify({ force: !!force })
     }).then(function (res) {
-      var ok = [], bad = [];
+      var launched = [], already = [], bad = [];
       (res.results || []).forEach(function (r) {
-        (r.ok ? ok : bad).push(sideLabel(r.side) + (r.ok ? "" : "（" + r.err + "）"));
+        var label = sideLabel(r.side);
+        if (r.alreadyRunning) {
+          already.push(label + "（PID " + ((r.pids && r.pids.length) ? r.pids.join(",") : "活动") + " 已在运行）");
+        } else if (r.ok) {
+          launched.push(label);
+        } else {
+          bad.push(label + "（" + r.err + "）");
+        }
       });
-      if (!bad.length) toast("两侧都已启动：" + ok.join("、"), "ok");
-      else if (!ok.length) toast("双开失败：" + bad.join("、"), "bad");
-      else toast("部分成功：" + ok.join("、") + "；失败：" + bad.join("、"), "warn");
+      if (bad.length === 0) {
+        if (launched.length > 0 && already.length > 0) {
+          toast("智能自适应完成：已补开 " + launched.join("、") + "；" + already.join("、"), "ok");
+        } else if (launched.length > 0) {
+          toast("双端均已启动：" + launched.join("、"), "ok");
+        } else {
+          toast("双端均已在运行中：" + already.join("、"), "info");
+        }
+      } else if (launched.length === 0 && already.length === 0) {
+        toast("双开失败：" + bad.join("、"), "bad");
+      } else {
+        toast("部分成功：" + launched.concat(already).join("、") + "；失败：" + bad.join("、"), "warn");
+      }
+      refreshClientProcStatus();
     }).catch(function (e) {
       toast("双开失败：" + e.message, "bad");
     }).then(function () {
       busy = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = ICO("layers", "ico-sm") + "双开两侧"; }
+      if (btn) { btn.disabled = false; btn.innerHTML = ICO("layers", "ico-sm") + "强制双开两侧"; }
+      if (smartBtn) { smartBtn.disabled = false; }
+      syncControlHub();
     });
   }
 
@@ -9621,9 +9961,19 @@
   document.getElementById("btn-inject").addEventListener("click", runInject);
   var btnInjectCN = document.getElementById("btn-inject-cn-intl");
   if (btnInjectCN) btnInjectCN.addEventListener("click", runInjectCNToIntl);
-  document.getElementById("btn-both").addEventListener("click", launchBoth);
+  document.getElementById("btn-both").addEventListener("click", function () { launchBoth(true); });
+  var btnSmartBoth = document.getElementById("btn-smart-both");
+  if (btnSmartBoth) btnSmartBoth.addEventListener("click", function () { launchBoth(false); });
+  var btnRefreshProc = document.getElementById("btn-refresh-proc");
+  if (btnRefreshProc) {
+    btnRefreshProc.addEventListener("click", function () {
+      refreshClientProcStatus().then(function () {
+        toast("客户端实时进程状态已刷新", "ok");
+      });
+    });
+  }
   var btnHeroBoth = document.getElementById("btn-hero-both");
-  if (btnHeroBoth) btnHeroBoth.addEventListener("click", launchBoth);
+  if (btnHeroBoth) btnHeroBoth.addEventListener("click", function () { launchBoth(false); });
   var btnHeroRestart = document.getElementById("btn-hero-restart");
   if (btnHeroRestart) btnHeroRestart.addEventListener("click", restartClient);
   document.getElementById("btn-quit").addEventListener("click", quit);
@@ -9888,6 +10238,7 @@
     renderBackends();
     renderBanner();
     renderChatProxy(st);
+    syncControlHub();
     if (target) loadPreview();
 
     // 搬运的默认方向是"从另一侧搬向宿主档位"：两台都装着时，用户想要的

@@ -4,6 +4,31 @@ package clientproc
 
 import "fmt"
 
+// Status 包含某个镜像的进程运行状态与 PID 列表。
+type Status struct {
+	Running bool  `json:"running"`
+	PIDs    []int `json:"pids,omitempty"`
+}
+
+var inspectHook func(execName string) (Status, bool)
+
+// SetInspectHookForTest 注册测试专用的进程探测钩子，返回清理函数。
+func SetInspectHookForTest(hook func(execName string) (Status, bool)) func() {
+	prev := inspectHook
+	inspectHook = hook
+	return func() { inspectHook = prev }
+}
+
+// Inspect 在非 Windows 平台如果未设置钩子则一律返回未运行。
+func Inspect(execName string) Status {
+	if inspectHook != nil {
+		if st, ok := inspectHook(execName); ok {
+			return st
+		}
+	}
+	return Status{Running: false}
+}
+
 // Terminate 在非 Windows 平台不支持。
 //
 // 客户端只有 Windows 版；这里给明确的失败而不是让代码在编译期消失，
