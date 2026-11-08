@@ -3232,7 +3232,7 @@
   var busy = false;
   var selectedIntlModels = [];
   var selectedCNModels = [];
-  var curatedCNModels = ["minimax-m2.5", "glm-5.1", "kimi-k2.6", "hy3", "deepseek-v4-flash", "hunyuan-chat"];
+  var curatedCNModels = ["hy4free", "hy3", "deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3", "minimax-m2.5", "kimi-k2.6"];
   // selectedFromState 标记"已选模型"是否已经由 /api/state 初始化过。
   // /api/state 读本地配置、毫秒级返回；/api/usage 要拉双端账单，
   // 实测能到 20s+。两者之间的空档里任何一次重画都会把勾选状态显示成 0，
@@ -9132,7 +9132,7 @@
         class: "btn-m-action",
         style: "padding:2px 8px;font-size:11px",
         text: "恢复精选 (6款)",
-        title: "重置为默认官方核心精选推荐模型（MiniMax-M2.5, GLM-5.1, Kimi-K2.6, 混元3.0, DeepSeek-V4-Flash 等）"
+        title: "重置为默认官方核心精选推荐模型（Hy4, Hy3, DeepSeek-V4.1-Flash, GLM-5.3, MiniMax, Kimi 等）"
       });
       btnResetCurated.addEventListener("click", function () {
         if (btnResetCurated.disabled) return;
@@ -11571,36 +11571,35 @@
   }
   updateTelemetryBadge();
   setInterval(updateTelemetryBadge, 60000);
-  // 静默初始化成长任务中心状态与侧边栏徽章
-  loadDomesticGrowth(true);
 
-  // ---------- 大模型出站代理策略交互 ----------
   function renderChatProxy(st) {
+    var s = (st && st.settings) || {};
+    var addr = s.chatProxyAddr || "";
+    var desc = s.proxyDescribe || (addr ? addr : "纯直连");
+    var sysProxy = s.detectedProxyAddr || "";
+
     var ipt = document.getElementById("ipt-chat-proxy-port");
     var badge = document.getElementById("chat-proxy-status-badge");
     var descEl = document.getElementById("chat-proxy-describe");
     var btnFillSys = document.getElementById("btn-fill-sys-proxy");
-    if (!ipt) return;
-    var settings = (st && st.settings) || {};
-    var addr = settings.chatProxyAddr || "";
-    var desc = settings.proxyDescribe || "纯直连";
-    var sysProxy = settings.detectedProxyAddr || "";
-    ipt.value = addr;
-    if (descEl) descEl.textContent = desc;
 
-    if (addr) {
-      if (badge) {
-        badge.textContent = "🌐 代理模式已启用 (" + addr + ")";
-        badge.style.background = "rgba(59,130,246,0.15)";
-        badge.style.color = "#3b82f6";
-      }
-    } else {
-      if (badge) {
-        badge.textContent = "⚡ 纯直连防断连模式 (推荐)";
+    if (ipt && !ipt.matches(":focus")) {
+      ipt.value = addr;
+    }
+    if (badge) {
+      if (addr) {
+        badge.className = "growth-task-tag";
+        badge.style.background = "rgba(245,158,11,0.18)";
+        badge.style.color = "#fbbf24";
+        badge.textContent = "⚡ 已配置转发代理 (" + addr + ")";
+      } else {
+        badge.className = "growth-task-tag";
         badge.style.background = "rgba(34,197,94,0.15)";
         badge.style.color = "#22c55e";
+        badge.textContent = "⚡ 纯直连防断连模式 (推荐)";
       }
     }
+    if (descEl) descEl.textContent = desc;
 
     if (btnFillSys) {
       if (sysProxy && sysProxy !== addr) {

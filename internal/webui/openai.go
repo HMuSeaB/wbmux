@@ -127,6 +127,13 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 		model := strings.TrimPrefix(m, custommodels.IDPrefixCN)
 		model = strings.TrimSpace(model)
 		if model != "" {
+			if strings.EqualFold(model, "hy4") || strings.EqualFold(model, "hy4free") {
+				return upstreamRoute{
+					Label:         "国际后端",
+					Model:         "hy4free",
+					TargetVariant: variant.Intl,
+				}
+			}
 			return upstreamRoute{
 				Label:         "国内后端",
 				Model:         model,

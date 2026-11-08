@@ -267,8 +267,17 @@ func TestListExportableModels(t *testing.T) {
 	if m, ok := splitMap["wbmux-cn-glm-5.3"]; !ok || m.Channel != "cn" || !m.Selected {
 		t.Errorf("split mode: wbmux-cn-glm-5.3 missing: %+v", m)
 	}
+	if m, ok := splitMap["wbmux-cn-hy4free"]; !ok || m.Channel != "cn" || !m.Selected {
+		t.Errorf("split mode: wbmux-cn-hy4free missing: %+v", m)
+	}
 	if m, ok := splitMap["wbmux-cn-hy3"]; !ok || m.Channel != "cn" || !m.Selected {
 		t.Errorf("split mode: wbmux-cn-hy3 missing: %+v", m)
+	}
+	if m, ok := splitMap["wbmux-cn-deepseek-v4.1-flash"]; !ok || m.Channel != "cn" || !m.Selected {
+		t.Errorf("split mode: wbmux-cn-deepseek-v4.1-flash missing: %+v", m)
+	}
+	if m, ok := splitMap["wbmux-cn-glm-5.3-flash"]; !ok || m.Channel != "cn" || !m.Selected {
+		t.Errorf("split mode: wbmux-cn-glm-5.3-flash missing: %+v", m)
 	}
 	if m, ok := splitMap["hy3"]; !ok || m.Channel != "intl" || !m.Selected {
 		t.Errorf("split mode: intl hy3 missing: %+v", m)

@@ -40,15 +40,17 @@ var CoreIntlPaidModels = []CuratedModelDef{
 	{ID: "glm-5.3", Name: "GLM-5.3 (订阅优先 0.69x · 1M)", Category: "intl", Channel: "intl", Selected: true},
 }
 
-// CoreCNModels 国内专享核心款（全面升级为 GLM-5.3 系列）。
+// CoreCNModels 国内专享核心款（全面对齐官方国内客户端真实模型清单与费率）。
 var CoreCNModels = []CuratedModelDef{
+	{ID: "hy4free", Name: "Hy4 (官方限免 0.00x · 1M 上下文)", Category: "free", Channel: "cn", Selected: true},
+	{ID: "hy3", Name: "Hy3 (官方限免 0.00x · 192k)", Category: "free", Channel: "cn", Selected: true},
+	{ID: "deepseek-v4.1-flash", Name: "DeepSeek-V4.1-Flash (夜间折扣 0.11x · 1M)", Category: "cn", Channel: "cn", Selected: true},
+	{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash (订阅优先 0.08x · 1M)", Category: "cn", Channel: "cn", Selected: true},
+	{ID: "glm-5.3", Name: "GLM-5.3 (订阅优先 0.69x · 1M)", Category: "cn", Channel: "cn", Selected: true},
+	{ID: "glm-5.2", Name: "GLM-5.2 (夜间折扣 0.79x · 1M)", Category: "cn", Channel: "cn", Selected: false},
 	{ID: "minimax-m2.5", Name: "MiniMax-M2.5 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "glm-5.3", Name: "GLM-5.3 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash (国内专享)", Category: "cn", Channel: "cn", Selected: true},
 	{ID: "kimi-k2.6", Name: "Kimi-K2.6 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "hy3", Name: "混元 3.0 (国内包月 · 极速)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "deepseek-v4-flash", Name: "DeepSeek-V4-Flash (国内专享)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "hunyuan-chat", Name: "混元聊天 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
+	{ID: "hunyuan-chat", Name: "混元聊天 (国内包月)", Category: "cn", Channel: "cn", Selected: false},
 }
 
 // ListExportableModels 根据当前配置、实时可用模型与选择模式（merged 或 split），
@@ -157,15 +159,13 @@ func listExportableModelsMerged(cfg *config.Config, accounts map[string]*usage.L
 		}
 	}
 
-	// 聚合模式下国内独占款：MiniMax, Kimi, DeepSeek-V4-Flash, 混元聊天
+	// 聚合模式下国内独占款：MiniMax, Kimi
 	exclusiveCNModels := []struct {
 		id   string
 		name string
 	}{
 		{"minimax-m2.5", "MiniMax-M2.5 (国内包月)"},
 		{"kimi-k2.6", "Kimi-K2.6 (国内包月)"},
-		{"deepseek-v4-flash", "DeepSeek-V4-Flash (国内专享)"},
-		{"hunyuan-chat", "混元聊天 (国内包月)"},
 	}
 	for _, item := range exclusiveCNModels {
 		sel := curatedSet[strings.ToLower(item.id)]
@@ -307,3 +307,4 @@ func appendBYOKModels(list []ExportModel, cfg *config.Config) []ExportModel {
 	}
 	return list
 }
+

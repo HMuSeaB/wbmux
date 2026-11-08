@@ -417,14 +417,17 @@ func (c Config) ChatProxyURL() (*url.URL, error) {
 // DefaultCuratedCNModels 是国内端默认精选推荐反向注入的模型 ID 白名单。
 // 仅包含最强、最稳定且最具代表性的核心大模型，避免一次性将 30+ 款模型全量塞入国际端导致界面混乱。
 var DefaultCuratedCNModels = []string{
-	"minimax-m2.5",
-	"glm-5.3",
-	"glm-5.3-flash",
-	"glm-5.1",
-	"kimi-k2.6",
+	"hy4free",
 	"hy3",
-	"deepseek-v4-flash",
+	"deepseek-v4.1-flash",
+	"glm-5.3-flash",
+	"glm-5.3",
+	"glm-5.2",
+	"minimax-m2.5",
+	"kimi-k2.6",
 	"hunyuan-chat",
+	"deepseek-v4-flash",
+	"glm-5.1",
 }
 
 // IsCuratedCNModel 判断一个国内模型 ID 是否属于默认精选推荐白名单。

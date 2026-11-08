@@ -425,6 +425,7 @@ func TestResolveRoute(t *testing.T) {
 		{"高频限免简写 hy4", "hy4", "hy4free", "国际后端", "", variant.Intl},
 		{"高频特惠简写 ds4.1flash", "ds4.1flash", "deepseek-v4.1-flash-sg", "国际后端", "", variant.Intl},
 		{"高频特惠简写 glm5.3 flash", "glm5.3 flash", "glm-5.3-flash", "国际后端", "", variant.Intl},
+		{"国内通道请求限免 hy4free", "wbmux-cn-hy4free", "hy4free", "国际后端", "", variant.Intl},
 	}
 	for _, c := range cases {
 		got := resolveRoute(c.in, providers)
