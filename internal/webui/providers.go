@@ -3,10 +3,13 @@ package webui
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/HMuSeaB/wbmux/internal/ccswitch"
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
 // errAbort 表示"这次改动被业务规则拒绝"，对应的 HTTP 状态码由调用方决定
@@ -200,4 +203,168 @@ func cleanModels(in []string) []string {
 		out = append(out, m)
 	}
 	return out
+}
+
+// handleCCSwitchPreview 探测并预览 cc-switch 数据库中的模型提供方配置。
+func (s *Server) handleCCSwitchPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+	customPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	dbPath, exists := ccswitch.DetectDB(customPath)
+	if !exists {
+		writeJSON(w, map[string]any{
+			"ok":    false,
+			"found": false,
+			"path":  dbPath,
+			"note":  "未检测到 cc-switch 数据库文件（路径：" + dbPath + "）",
+		})
+		return
+	}
+
+	items, err := ccswitch.PreviewFromDB(s.probe(), dbPath)
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"ok":    false,
+			"found": true,
+			"path":  dbPath,
+			"error": "读取数据库失败：" + err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"ok":    true,
+		"found": true,
+		"path":  dbPath,
+		"count": len(items),
+		"items": items,
+	})
+}
+
+// handleCCSwitchApply 将选中的 cc-switch 提供方批量导入为 BYOK 提供方，并立即同步生效。
+func (s *Server) handleCCSwitchApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	var req struct {
+		Items     []ccswitch.ImportItem `json:"items"`
+		Overwrite bool                  `json:"overwrite"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求解析失败："+err.Error())
+		return
+	}
+	if len(req.Items) == 0 {
+		writeErr(w, http.StatusBadRequest, "未选择任何要导入的提供方条目")
+		return
+	}
+
+	var added, updated int
+	err := s.updateConfig(func(cfg *config.Config) error {
+		a, u, err := ccswitch.ApplyImport(cfg, req.Items, req.Overwrite)
+		if err != nil {
+			return err
+		}
+		added = a
+		updated = u
+		return nil
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "保存配置失败："+err.Error())
+		return
+	}
+
+	// 重新注入到两端客户端
+	_, syncNote, _ := s.syncInto()
+	_, cnSyncNote, _ := s.syncCNIntoIntl()
+
+	cfg, _ := config.Load()
+	views := make([]providerView, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		views = append(views, toView(p))
+	}
+
+	note := fmt.Sprintf("成功导入 %d 个新提供方，更新 %d 个已有提供方", added, updated)
+	writeJSON(w, map[string]any{
+		"ok":         true,
+		"added":      added,
+		"updated":    updated,
+		"total":      len(views),
+		"note":       note,
+		"syncNote":   syncNote,
+		"cnSyncNote": cnSyncNote,
+		"providers":  views,
+	})
+}
+
+// handleCCSwitchExportPreview 探测 cc-switch 并准备导出 WorkBuddy/wbmux 模型配置的清单与预设。
+func (s *Server) handleCCSwitchExportPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
+		return
+	}
+	customPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	dbPath, exists := ccswitch.DetectDB(customPath)
+
+	cfg, _ := config.Load()
+
+	var accounts map[string]*usage.LiveAccount
+	if s.liveAccountsFn != nil {
+		accounts = s.liveAccountsFn(s.probe())
+	}
+
+	models := ccswitch.ListExportableModels(&cfg, accounts)
+
+	baseURL := "http://" + s.Addr()
+	if s.Addr() == "" {
+		baseURL = "http://127.0.0.1:23333"
+	}
+
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"found":    exists,
+		"path":     dbPath,
+		"baseURL":  baseURL,
+		"token":    s.token,
+		"models":   models,
+		"appTypes": []string{"claude", "claude-desktop", "opencode", "codex"},
+	})
+}
+
+// handleCCSwitchExportApply 将选中的 WorkBuddy 模型一键导出写入到 cc-switch (cc-switch.db)。
+func (s *Server) handleCCSwitchExportApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+
+	var req ccswitch.ExportRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求解析失败："+err.Error())
+		return
+	}
+
+	if req.BaseURL == "" {
+		req.BaseURL = "http://" + s.Addr()
+	}
+	if req.Token == "" {
+		req.Token = s.token
+	}
+
+	inserted, err := ccswitch.ExportToCCSwitch(s.probe(), req)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "导出至 cc-switch 失败："+err.Error())
+		return
+	}
+
+	note := fmt.Sprintf("成功将 %d 个配置项一键导入到 cc-switch！您可在 Claude Code、OpenCode 或 Codex 中一键切换", inserted)
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"inserted": inserted,
+		"note":     note,
+	})
 }

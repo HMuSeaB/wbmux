@@ -146,6 +146,7 @@ type sqliteResult struct {
 	Inserted []string `json:"inserted"`
 	Skipped  []string `json:"skipped"`
 	Changed  []int    `json:"changed"`
+	Changes  []int    `json:"changes"`
 	// Result 是 query 模式查到的行，每行是一个"列名 → 值"的字典。
 	// 之所以用字典而不是结构体：调用方要读的表各不相同，
 	// 写死结构体会漏字段，漏了还不容易发现。
@@ -455,6 +456,33 @@ func DeleteRows(probe *variant.Probe, id variant.ID, dbPath string, tables []str
 		return nil, err
 	}
 	return res.Changed, nil
+}
+
+// UpsertDB 执行一批参数化的 INSERT OR REPLACE INTO / REPLACE INTO 语句。
+// 只允许操作 tables 白名单中的表，整批在一个事务内执行，失败整体回滚。
+func UpsertDB(probe *variant.Probe, id variant.ID, dbPath string, tables []string, stmts []Statement) ([]int, error) {
+	if len(stmts) == 0 {
+		return nil, nil
+	}
+	rt, err := detectRuntime(probe, id)
+	if err != nil {
+		return nil, err
+	}
+	if !fileExists(dbPath) {
+		return nil, fmt.Errorf("数据库不存在：%s", dbPath)
+	}
+	res, err := runSQLite(rt, sqliteSpec{
+		Mode:          "upsert",
+		DBPath:        dbPath,
+		LibPath:       rt.libPath,
+		NativeBinding: rt.nativeBinding,
+		Statements:    stmts,
+		Tables:        tables,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Changes, nil
 }
 
 // writeRows 写入会话索引行。已存在的 id 一律跳过，绝不覆盖。

@@ -275,7 +275,13 @@ func (s *Server) syncInto() (int, string, error) {
 
 	var intlErr string
 	var intl []usage.LiveModel
-	if live := usage.LiveAccounts(s.probe())[string(variant.Intl)]; live != nil && live.OK {
+	var accounts map[string]*usage.LiveAccount
+	if s.liveAccountsFn != nil {
+		accounts = s.liveAccountsFn(s.probe())
+	} else {
+		accounts = usage.LiveAccounts(s.probe())
+	}
+	if live := accounts[string(variant.Intl)]; live != nil && live.OK {
 		intl = live.Models
 	} else if live != nil && live.Err != "" {
 		intlErr = live.Err

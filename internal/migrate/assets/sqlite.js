@@ -212,6 +212,45 @@ function main() {
       return emit({ changed: changed });
     }
 
+    // upsert：整批在一个事务里按表名写入/替换记录（受 tables 白名单保护）
+    if (spec.mode === 'upsert') {
+      const stmts = spec.statements || [];
+      if (!Array.isArray(stmts) || stmts.length === 0) {
+        return fail('upsert 模式缺少 statements');
+      }
+      const allowed = new Set((spec.tables || []).map(t => String(t).toLowerCase()));
+      if (allowed.size === 0) return fail('upsert 模式必须给出 tables 白名单');
+
+      const changes = [];
+      const run = db.transaction(() => {
+        for (const st of stmts) {
+          const sql = String(st.sql || '').trim();
+          const stripped = sql
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/--[^\n]*/g, ' ')
+            .trim();
+          if (!/^(?:insert\s+(?:or\s+replace\s+)?into|replace\s+into)\b/i.test(stripped)) {
+            throw new Error('upsert 模式只允许 INSERT OR REPLACE INTO / REPLACE INTO，收到：' + stripped.slice(0, 40));
+          }
+          if (/;\s*\S/.test(stripped.replace(/;\s*$/, ''))) {
+            throw new Error('upsert 模式一次只能跑一条语句');
+          }
+          const m = /^(?:insert\s+(?:or\s+replace\s+)?into|replace\s+into)\s+([A-Za-z_][A-Za-z0-9_]*)/i.exec(stripped);
+          if (!m || !allowed.has(m[1].toLowerCase())) {
+            throw new Error('表 ' + (m ? m[1] : '?') + ' 不在允许写入的名单里');
+          }
+          const info = db.prepare(sql).run(...(st.params || []));
+          changes.push(info.changes);
+        }
+      });
+      try {
+        run();
+      } catch (e) {
+        return fail('写入失败（已整体回滚）：' + e.message);
+      }
+      return emit({ changes: changes });
+    }
+
     // delete：按 id 删会话行（含它挂着的子表）。
     //
     // # 为什么单独一个模式而不是复用 update
