@@ -23,6 +23,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
 	"github.com/HMuSeaB/wbmux/internal/modelradar"
+	"github.com/HMuSeaB/wbmux/internal/models"
 	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -164,22 +165,9 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 }
 
 // resolveModelAlias 针对用户日常高频简写别名（如 hy4、ds4.1flash）映射到对应的官方完整 ID。
+// 统一代理至中央模型注册中心 models.ResolveAlias。
 func resolveModelAlias(m string) string {
-	cleanLower := strings.ToLower(strings.TrimSpace(m))
-	compact := strings.ReplaceAll(strings.ReplaceAll(cleanLower, " ", ""), "_", "-")
-	switch compact {
-	case "hy4", "hy-4":
-		return "hy4free"
-	case "ds4.1flash", "ds4.1-flash", "ds4.1":
-		return "deepseek-v4.1-flash-sg"
-	case "glm5.3flash", "glm5.3-flash", "glm-5.3flash":
-		return "glm-5.3-flash"
-	case "glm5.3", "glm-5.3":
-		return "glm-5.3"
-	case "glm5.2", "glm-5.2":
-		return "glm-5.2"
-	}
-	return m
+	return models.ResolveAlias(m)
 }
 
 // isAutoFreeAlias 检查模型名是否属于虚拟智能优选别名。

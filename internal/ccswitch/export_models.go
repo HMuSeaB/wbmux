@@ -6,6 +6,7 @@ import (
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/custommodels"
+	"github.com/HMuSeaB/wbmux/internal/models"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
@@ -27,31 +28,28 @@ type CuratedModelDef struct {
 	Selected bool
 }
 
-// CoreFreeModels 当前限时免费核心款。
-var CoreFreeModels = []CuratedModelDef{
-	{ID: "hy4free", Name: "Hy4 (官方限免 0.00x · 1M 上下文)", Category: "free", Channel: "intl", Selected: true},
-	{ID: "hy3", Name: "Hy3 (官方限免 0.00x · 192k 思考模型)", Category: "free", Channel: "intl", Selected: true},
+func toCuratedDefs(list []models.ModelDef) []CuratedModelDef {
+	out := make([]CuratedModelDef, len(list))
+	for i, m := range list {
+		out[i] = CuratedModelDef{
+			ID:       m.ID,
+			Name:     m.Label,
+			Category: m.Category,
+			Channel:  m.Channel,
+			Selected: m.Selected,
+		}
+	}
+	return out
 }
 
-// CoreIntlPaidModels 当前花积分的高频特惠核心款（以官方 GLM-5.3 与 DeepSeek 真实上线版本为主）。
-var CoreIntlPaidModels = []CuratedModelDef{
-	{ID: "deepseek-v4.1-flash-sg", Name: "DeepSeek-V4.1-Flash (夜间折扣 0.11x · 1M)", Category: "intl", Channel: "intl", Selected: true},
-	{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash (订阅优先 0.08x · 1M)", Category: "intl", Channel: "intl", Selected: true},
-	{ID: "glm-5.3", Name: "GLM-5.3 (订阅优先 0.69x · 1M)", Category: "intl", Channel: "intl", Selected: true},
-}
+// CoreFreeModels 当前限时免费核心款（统一代理自 models.CoreFreeList()）。
+var CoreFreeModels = toCuratedDefs(models.CoreFreeList())
 
-// CoreCNModels 国内专享核心款（全面对齐官方国内客户端真实模型清单与费率）。
-var CoreCNModels = []CuratedModelDef{
-	{ID: "hy4free", Name: "Hy4 (官方限免 0.00x · 1M 上下文)", Category: "free", Channel: "cn", Selected: true},
-	{ID: "hy3", Name: "Hy3 (官方限免 0.00x · 192k)", Category: "free", Channel: "cn", Selected: true},
-	{ID: "deepseek-v4.1-flash", Name: "DeepSeek-V4.1-Flash (夜间折扣 0.11x · 1M)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash (订阅优先 0.08x · 1M)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "glm-5.3", Name: "GLM-5.3 (订阅优先 0.69x · 1M)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "glm-5.2", Name: "GLM-5.2 (夜间折扣 0.79x · 1M)", Category: "cn", Channel: "cn", Selected: false},
-	{ID: "minimax-m2.5", Name: "MiniMax-M2.5 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "kimi-k2.6", Name: "Kimi-K2.6 (国内包月)", Category: "cn", Channel: "cn", Selected: true},
-	{ID: "hunyuan-chat", Name: "混元聊天 (国内包月)", Category: "cn", Channel: "cn", Selected: false},
-}
+// CoreIntlPaidModels 当前花积分的高频特惠核心款（统一代理自 models.CoreIntlPaidList()）。
+var CoreIntlPaidModels = toCuratedDefs(models.CoreIntlPaidList())
+
+// CoreCNModels 国内专享核心款（统一代理自 models.CoreCNList()）。
+var CoreCNModels = toCuratedDefs(models.CoreCNList())
 
 // ListExportableModels 根据当前配置、实时可用模型与选择模式（merged 或 split），
 // 生成导出到 cc-switch 的候选模型列表。
@@ -159,21 +157,14 @@ func listExportableModelsMerged(cfg *config.Config, accounts map[string]*usage.L
 		}
 	}
 
-	// 聚合模式下国内独占款：MiniMax, Kimi
-	exclusiveCNModels := []struct {
-		id   string
-		name string
-	}{
-		{"minimax-m2.5", "MiniMax-M2.5 (国内包月)"},
-		{"kimi-k2.6", "Kimi-K2.6 (国内包月)"},
-	}
-	for _, item := range exclusiveCNModels {
-		sel := curatedSet[strings.ToLower(item.id)]
+	// 聚合模式下国内独占款：统一由 models.ExclusiveCNList() 提供
+	for _, item := range models.ExclusiveCNList() {
+		sel := curatedSet[strings.ToLower(item.ID)]
 		list = append(list, ExportModel{
-			ID:       custommodels.IDPrefixCN + item.id,
-			Name:     item.name,
-			Category: "cn",
-			Channel:  "cn",
+			ID:       custommodels.IDPrefixCN + item.ID,
+			Name:     item.Label,
+			Category: item.Category,
+			Channel:  item.Channel,
 			Selected: sel,
 		})
 	}

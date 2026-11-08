@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/HMuSeaB/wbmux/internal/models"
 )
 
 // DirName 是设置目录名。
@@ -415,29 +417,11 @@ func (c Config) ChatProxyURL() (*url.URL, error) {
 }
 
 // DefaultCuratedCNModels 是国内端默认精选推荐反向注入的模型 ID 白名单。
-// 仅包含最强、最稳定且最具代表性的核心大模型，避免一次性将 30+ 款模型全量塞入国际端导致界面混乱。
-var DefaultCuratedCNModels = []string{
-	"hy4free",
-	"hy3",
-	"deepseek-v4.1-flash",
-	"glm-5.3-flash",
-	"glm-5.3",
-	"glm-5.2",
-	"minimax-m2.5",
-	"kimi-k2.6",
-	"hunyuan-chat",
-	"deepseek-v4-flash",
-	"glm-5.1",
-}
+// 统一代理自中央模型注册中心 models.DefaultCuratedCNIDs()，彻底消灭信源碎片化。
+var DefaultCuratedCNModels = models.DefaultCuratedCNIDs()
 
 // IsCuratedCNModel 判断一个国内模型 ID 是否属于默认精选推荐白名单。
 func IsCuratedCNModel(modelID string) bool {
-	lower := strings.ToLower(strings.TrimSpace(modelID))
-	for _, id := range DefaultCuratedCNModels {
-		if strings.ToLower(id) == lower {
-			return true
-		}
-	}
-	return false
+	return models.IsCuratedCN(modelID)
 }
 
