@@ -418,6 +418,8 @@ func (c Config) ChatProxyURL() (*url.URL, error) {
 // 仅包含最强、最稳定且最具代表性的核心大模型，避免一次性将 30+ 款模型全量塞入国际端导致界面混乱。
 var DefaultCuratedCNModels = []string{
 	"minimax-m2.5",
+	"glm-5.3",
+	"glm-5.3-flash",
 	"glm-5.1",
 	"kimi-k2.6",
 	"hy3",

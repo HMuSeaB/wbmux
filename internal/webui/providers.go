@@ -319,7 +319,11 @@ func (s *Server) handleCCSwitchExportPreview(w http.ResponseWriter, r *http.Requ
 		accounts = usage.LiveAccounts(s.probe())
 	}
 
-	models := ccswitch.ListExportableModels(&cfg, accounts)
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	if mode == "" {
+		mode = "merged"
+	}
+	models := ccswitch.ListExportableModels(&cfg, accounts, mode)
 
 	baseURL := "http://" + s.Addr()
 	if s.Addr() == "" {
@@ -332,6 +336,7 @@ func (s *Server) handleCCSwitchExportPreview(w http.ResponseWriter, r *http.Requ
 		"path":     dbPath,
 		"baseURL":  baseURL,
 		"token":    s.token,
+		"mode":     mode,
 		"models":   models,
 		"appTypes": []string{"claude", "claude-desktop", "opencode", "codex"},
 	})

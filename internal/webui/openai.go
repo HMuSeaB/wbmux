@@ -167,6 +167,10 @@ func resolveModelAlias(m string) string {
 		return "deepseek-v4.1-flash-sg"
 	case "glm5.3flash", "glm5.3-flash", "glm-5.3flash":
 		return "glm-5.3-flash"
+	case "glm5.3", "glm-5.3":
+		return "glm-5.3"
+	case "glm5.2", "glm-5.2":
+		return "glm-5.2"
 	}
 	return m
 }

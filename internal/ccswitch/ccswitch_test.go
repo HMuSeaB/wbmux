@@ -248,14 +248,48 @@ func TestListExportableModels(t *testing.T) {
 		t.Errorf("obsolete gpt-4o should NOT be present")
 	}
 
-	// 5. 验证国内精选模型
-	if m, ok := foundMap["wbmux-cn-glm-5.1"]; !ok || m.Category != "cn" || !m.Selected {
-		t.Errorf("wbmux-cn-glm-5.1 model missing or invalid: %+v", m)
+	// 5. 验证国内精选模型（升级为 GLM-5.3）
+	if m, ok := foundMap["wbmux-cn-minimax-m2.5"]; !ok || m.Category != "cn" || !m.Selected {
+		t.Errorf("wbmux-cn-minimax-m2.5 model missing or invalid: %+v", m)
 	}
 
 	// 6. 验证 BYOK
 	if m, ok := foundMap["wbmux-byok-p1-step-5-preview"]; !ok || m.Category != "byok" || m.Selected {
 		t.Errorf("BYOK model missing or invalid: %+v", m)
+	}
+
+	// 7. 验证分端模式 (split mode)
+	splitModels := ListExportableModels(cfg, nil, "split")
+	splitMap := make(map[string]ExportModel)
+	for _, m := range splitModels {
+		splitMap[m.ID] = m
+	}
+	if m, ok := splitMap["wbmux-cn-glm-5.3"]; !ok || m.Channel != "cn" || !m.Selected {
+		t.Errorf("split mode: wbmux-cn-glm-5.3 missing: %+v", m)
+	}
+	if m, ok := splitMap["wbmux-cn-hy3"]; !ok || m.Channel != "cn" || !m.Selected {
+		t.Errorf("split mode: wbmux-cn-hy3 missing: %+v", m)
+	}
+	if m, ok := splitMap["hy3"]; !ok || m.Channel != "intl" || !m.Selected {
+		t.Errorf("split mode: intl hy3 missing: %+v", m)
+	}
+}
+
+func TestFormatProviderName(t *testing.T) {
+	cases := []struct {
+		m    ExportModel
+		want string
+	}{
+		{ExportModel{ID: "wbmux-cn-glm-5.3", Name: "GLM-5.3", Channel: "cn"}, "WorkBuddy (国内) / GLM-5.3"},
+		{ExportModel{ID: "hy4free", Name: "Hy4", Channel: "intl"}, "WorkBuddy (国际) / Hy4"},
+		{ExportModel{ID: "auto-free", Name: "智能免积分", Channel: "auto"}, "WorkBuddy / 智能免积分"},
+		{ExportModel{ID: "wbmux-byok-p1-step", Name: "step", Channel: "byok"}, "WorkBuddy (BYOK) / step"},
+	}
+	for _, c := range cases {
+		got := formatProviderName(c.m)
+		if got != c.want {
+			t.Errorf("formatProviderName(%+v) = %q, want %q", c.m, got, c.want)
+		}
 	}
 }
 

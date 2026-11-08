@@ -4719,52 +4719,91 @@
       ]);
       body.appendChild(appTypesWrap);
 
-      // 3. 选择要导出的模型清单 (Models)
-      var modelsList = res.models || [];
+      // 3. 选择要导出的模型清单 (Models，支持聚合模式与分端模式可选)
+      var currentMode = res.mode || "merged";
+      var scrollBox = el("div", { style: "max-height:180px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:8px 10px;background:var(--g1);display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:6px;transition:opacity 0.2s" });
       var modelChecks = [];
+
+      function renderModels(list) {
+        clear(scrollBox);
+        modelChecks = [];
+        list.forEach(function (m) {
+          var chk = el("input", { type: "checkbox", value: m.id, checked: !!m.selected });
+          chk._default = !!m.selected;
+          chk._item = m;
+          modelChecks.push(chk);
+
+          var tagClass = "ghost";
+          var tagText = "BYOK";
+          if (m.category === "auto") {
+            tagClass = "ok"; tagText = "免积分";
+          } else if (m.category === "free") {
+            tagClass = "ok"; tagText = "官方限免";
+          } else if (m.category === "intl") {
+            tagClass = "warn"; tagText = "国际特惠";
+          } else if (m.category === "cn") {
+            tagClass = "info"; tagText = "国内专享";
+          }
+
+          var tagPill = el("span", {
+            class: "pill " + tagClass,
+            style: "font-size:10px;padding:1px 5px",
+            text: tagText
+          });
+
+          var lbl = el("label", { class: "check", style: "margin:0;font-size:12px;display:flex;align-items:center;gap:6px" }, [
+            chk,
+            el("span", { style: "overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: m.name }),
+            tagPill
+          ]);
+          scrollBox.appendChild(lbl);
+        });
+      }
+
+      function switchMode(newMode) {
+        if (currentMode === newMode) return;
+        currentMode = newMode;
+        btnModeMerged.className = "btn-sub " + (newMode === "merged" ? "active" : "ghost");
+        btnModeSplit.className = "btn-sub " + (newMode === "split" ? "active" : "ghost");
+        scrollBox.style.opacity = "0.4";
+        api("/api/providers/export/cc-switch/preview?mode=" + newMode).then(function (nextRes) {
+          scrollBox.style.opacity = "1";
+          renderModels(nextRes.models || []);
+        });
+      }
+
+      var btnModeMerged = el("button", {
+        type: "button",
+        class: "btn-sub active",
+        style: "padding:1px 8px;font-size:11px;cursor:pointer",
+        text: "✨ 聚合精选",
+        onclick: function() { switchMode("merged"); }
+      });
+      var btnModeSplit = el("button", {
+        type: "button",
+        class: "btn-sub ghost",
+        style: "padding:1px 8px;font-size:11px;cursor:pointer",
+        text: "🌐 分端独立",
+        onclick: function() { switchMode("split"); }
+      });
+      var modePills = el("div", {
+        style: "display:inline-flex;background:var(--g3);padding:2px;border-radius:var(--r-sm);gap:2px;align-items:center"
+      }, [btnModeMerged, btnModeSplit]);
+
       var modelsWrap = el("div", {}, [
         el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" }, [
-          el("div", { style: "font-size:12px;font-weight:600;color:var(--ink-1)", text: "2. 要导入的模型清单 (勾选将生成对应 Provider 卡片)" }),
-          el("div", { style: "display:flex;gap:8px" }, [
+          el("div", { style: "font-size:12px;font-weight:600;color:var(--ink-1);display:flex;align-items:center;gap:8px" }, [
+            "2. 要导入的模型清单",
+            modePills
+          ]),
+          el("div", { style: "display:flex;gap:6px" }, [
             el("button", { type: "button", class: "ghost", style: "font-size:11px;padding:2px 6px", text: "全选", onclick: function() { modelChecks.forEach(function(c) { c.checked = true; }); } }),
             el("button", { type: "button", class: "ghost", style: "font-size:11px;padding:2px 6px", text: "重置精选", onclick: function() { modelChecks.forEach(function(c) { c.checked = !!c._default; }); } })
           ])
-        ])
+        ]),
+        scrollBox
       ]);
-
-      var scrollBox = el("div", { style: "max-height:180px;overflow-y:auto;border:1px solid var(--g4);border-radius:var(--r-sm);padding:8px 10px;background:var(--g1);display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:6px" });
-      modelsList.forEach(function (m) {
-        var chk = el("input", { type: "checkbox", value: m.id, checked: !!m.selected });
-        chk._default = !!m.selected;
-        chk._item = m;
-        modelChecks.push(chk);
-
-        var tagClass = "ghost";
-        var tagText = "BYOK";
-        if (m.category === "auto") {
-          tagClass = "ok"; tagText = "免积分";
-        } else if (m.category === "free") {
-          tagClass = "ok"; tagText = "官方限免";
-        } else if (m.category === "intl") {
-          tagClass = "warn"; tagText = "国际特惠";
-        } else if (m.category === "cn") {
-          tagClass = "info"; tagText = "国内专享";
-        }
-
-        var tagPill = el("span", {
-          class: "pill " + tagClass,
-          style: "font-size:10px;padding:1px 5px",
-          text: tagText
-        });
-
-        var lbl = el("label", { class: "check", style: "margin:0;font-size:12px;display:flex;align-items:center;gap:6px" }, [
-          chk,
-          el("span", { style: "overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: m.name }),
-          tagPill
-        ]);
-        scrollBox.appendChild(lbl);
-      });
-      modelsWrap.appendChild(scrollBox);
+      renderModels(res.models || []);
       body.appendChild(modelsWrap);
 
       // 4. 网关与授权凭据参数
@@ -4820,7 +4859,8 @@
             appTypes: selectedApps,
             models: selectedModels,
             baseURL: bUrl,
-            token: tok
+            token: tok,
+            mode: currentMode
           })
         }).then(function (applyRes) {
           closeModal();
