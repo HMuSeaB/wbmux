@@ -370,19 +370,104 @@ func safeModelSlug(id string) string {
 	return strings.Trim(s, "-")
 }
 
+// exportProviderID 生成导出至 cc-switch 的标准 provider id，防止 wbmux-wbmux- 重复前缀。
+func exportProviderID(modelID string) string {
+	slug := safeModelSlug(modelID)
+	if !strings.HasPrefix(slug, "wbmux-") {
+		return "wbmux-" + slug
+	}
+	return slug
+}
+
 // ListExportableModels 根据当前配置与实时可用模型，生成导出到 cc-switch 的候选模型列表。
+// 彻底去除虚假模型占位，精准对齐用户日常四大核心高频模型（hy4free、hy3、deepseek-v4.1-flash-sg、glm-5.3-flash）。
 func ListExportableModels(cfg *config.Config, accounts map[string]*usage.LiveAccount) []ExportModel {
 	var list []ExportModel
+	addedMap := make(map[string]bool)
 
 	// 1. 智能免积分优选
 	list = append(list, ExportModel{
 		ID:       "auto-free",
-		Name:     "智能免积分优选 (Auto-Free)",
+		Name:     "智能免积分优选 (Auto-Free · 最速限免)",
 		Category: "auto",
 		Selected: true,
 	})
+	addedMap["auto-free"] = true
 
-	// 2. 国内端核心精选
+	// 2. 官方限免模型 (0.00x，免积分，Category: "free")
+	// 无论 live 探针是否在线，都确保 hy4free 与 hy3 这两款用户主力限免在列并默认精选
+	coreFreeModels := []struct {
+		id   string
+		name string
+	}{
+		{"hy4free", "Hy4 (官方限免 0.00x · 1M 上下文)"},
+		{"hy3", "Hy3 (官方限免 0.00x · 192k 思考模型)"},
+	}
+	for _, m := range coreFreeModels {
+		list = append(list, ExportModel{
+			ID:       m.id,
+			Name:     m.name,
+			Category: "free",
+			Selected: true,
+		})
+		addedMap[strings.ToLower(m.id)] = true
+	}
+
+	// 动态追加实时探测中发现的其他限免模型（FreeNow 且非重复）
+	if accounts != nil {
+		if intlAcc, ok := accounts["intl"]; ok && intlAcc != nil {
+			for _, m := range intlAcc.Models {
+				if m.FreeNow && !addedMap[strings.ToLower(m.ID)] {
+					list = append(list, ExportModel{
+						ID:       m.ID,
+						Name:     fmt.Sprintf("%s (官方限免 0.00x)", m.Name),
+						Category: "free",
+						Selected: true,
+					})
+					addedMap[strings.ToLower(m.ID)] = true
+				}
+			}
+		}
+	}
+
+	// 3. 国际高频特惠模型 (花积分，Category: "intl")
+	// 用户高频核心款：DeepSeek-V4.1-Flash (0.11x) 与 GLM-5.3-Flash (0.08x)
+	coreIntlPaid := []struct {
+		id   string
+		name string
+	}{
+		{"deepseek-v4.1-flash-sg", "DeepSeek-V4.1-Flash (国际高质 · 0.11x · 1M)"},
+		{"glm-5.3-flash", "GLM-5.3-Flash (国际特惠 · 0.08x · 1M)"},
+	}
+	for _, m := range coreIntlPaid {
+		if !addedMap[strings.ToLower(m.id)] {
+			list = append(list, ExportModel{
+				ID:       m.id,
+				Name:     m.name,
+				Category: "intl",
+				Selected: true,
+			})
+			addedMap[strings.ToLower(m.id)] = true
+		}
+	}
+
+	// 用户在配置中选中的其他国际付费高级模型
+	if cfg != nil && len(cfg.SelectedIntlModels) > 0 {
+		for _, customIntl := range cfg.SelectedIntlModels {
+			low := strings.ToLower(customIntl)
+			if !addedMap[low] {
+				list = append(list, ExportModel{
+					ID:       customIntl,
+					Name:     fmt.Sprintf("%s (国际自选)", customIntl),
+					Category: "intl",
+					Selected: true,
+				})
+				addedMap[low] = true
+			}
+		}
+	}
+
+	// 4. 国内端核心专享 (Category: "cn")
 	curatedSet := make(map[string]bool)
 	for _, m := range config.DefaultCuratedCNModels {
 		curatedSet[strings.ToLower(m)] = true
@@ -416,21 +501,7 @@ func ListExportableModels(cfg *config.Config, accounts map[string]*usage.LiveAcc
 		})
 	}
 
-	// 3. 国际端限免模型
-	list = append(list, ExportModel{
-		ID:       "deepseek-chat",
-		Name:     "DeepSeek-Chat (国际限免/官方)",
-		Category: "intl",
-		Selected: true,
-	})
-	list = append(list, ExportModel{
-		ID:       "gpt-4o",
-		Name:     "GPT-4o (国际高级)",
-		Category: "intl",
-		Selected: false,
-	})
-
-	// 4. 用户自备 BYOK
+	// 5. 用户自备 BYOK (Category: "byok")
 	if cfg != nil {
 		for _, p := range cfg.Providers {
 			for _, m := range p.Models {
@@ -481,7 +552,7 @@ func ExportToCCSwitch(probe *variant.Probe, req ExportRequest) (int, error) {
 		switch appType {
 		case "claude", "claude-desktop":
 			for _, m := range req.Models {
-				id := fmt.Sprintf("wbmux-%s", safeModelSlug(m.ID))
+				id := exportProviderID(m.ID)
 				name := fmt.Sprintf("WorkBuddy / %s", m.Name)
 				envConfig := map[string]any{
 					"env": map[string]any{

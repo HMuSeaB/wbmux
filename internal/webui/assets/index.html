@@ -4739,10 +4739,22 @@
         chk._item = m;
         modelChecks.push(chk);
 
+        var tagClass = "ghost";
+        var tagText = "BYOK";
+        if (m.category === "auto") {
+          tagClass = "ok"; tagText = "免积分";
+        } else if (m.category === "free") {
+          tagClass = "ok"; tagText = "官方限免";
+        } else if (m.category === "intl") {
+          tagClass = "warn"; tagText = "国际特惠";
+        } else if (m.category === "cn") {
+          tagClass = "info"; tagText = "国内专享";
+        }
+
         var tagPill = el("span", {
-          class: "pill " + (m.category === "auto" ? "ok" : (m.category === "cn" ? "info" : "ghost")),
+          class: "pill " + tagClass,
           style: "font-size:10px;padding:1px 5px",
-          text: m.category === "auto" ? "免积分" : (m.category === "cn" ? "国内专享" : (m.category === "intl" ? "国际限免" : "BYOK"))
+          text: tagText
         });
 
         var lbl = el("label", { class: "check", style: "margin:0;font-size:12px;display:flex;align-items:center;gap:6px" }, [

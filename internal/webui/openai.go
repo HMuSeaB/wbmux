@@ -145,13 +145,30 @@ func resolveRoute(clientModel string, providers []config.Provider) upstreamRoute
 		}
 	}
 
+	modelID := resolveModelAlias(normalized)
+
 	// 认不出来 → 内置国际后端（外部工具直连时用的就是官方 id，
 	// 也可能带着我们注入的 wbmux-intl- 前缀，交给 normalizeModelName 剥）。
 	return upstreamRoute{
 		Label:         "国际后端",
-		Model:         normalized,
+		Model:         modelID,
 		TargetVariant: variant.Intl,
 	}
+}
+
+// resolveModelAlias 针对用户日常高频简写别名（如 hy4、ds4.1flash）映射到对应的官方完整 ID。
+func resolveModelAlias(m string) string {
+	cleanLower := strings.ToLower(strings.TrimSpace(m))
+	compact := strings.ReplaceAll(strings.ReplaceAll(cleanLower, " ", ""), "_", "-")
+	switch compact {
+	case "hy4", "hy-4":
+		return "hy4free"
+	case "ds4.1flash", "ds4.1-flash", "ds4.1":
+		return "deepseek-v4.1-flash-sg"
+	case "glm5.3flash", "glm5.3-flash", "glm-5.3flash":
+		return "glm-5.3-flash"
+	}
+	return m
 }
 
 // isAutoFreeAlias 检查模型名是否属于虚拟智能优选别名。

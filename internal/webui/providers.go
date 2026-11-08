@@ -315,6 +315,8 @@ func (s *Server) handleCCSwitchExportPreview(w http.ResponseWriter, r *http.Requ
 	var accounts map[string]*usage.LiveAccount
 	if s.liveAccountsFn != nil {
 		accounts = s.liveAccountsFn(s.probe())
+	} else {
+		accounts = usage.LiveAccounts(s.probe())
 	}
 
 	models := ccswitch.ListExportableModels(&cfg, accounts)

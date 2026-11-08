@@ -196,3 +196,84 @@ func TestExportToCCSwitchLive(t *testing.T) {
 	}
 	t.Logf("ExportToCCSwitch inserted %d providers into cc-switch.db", inserted)
 }
+
+func TestListExportableModels(t *testing.T) {
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{
+				ID:     "p1",
+				Name:   "StepFun",
+				Models: []string{"step-5-preview"},
+			},
+		},
+		SelectedIntlModels: []string{"deepseek-v4.1-flash-sg", "glm-5.3-flash"},
+	}
+
+	models := ListExportableModels(cfg, nil)
+	if len(models) == 0 {
+		t.Fatalf("expected non-empty models")
+	}
+
+	foundMap := make(map[string]ExportModel)
+	for _, m := range models {
+		foundMap[m.ID] = m
+	}
+
+	// 1. 验证智能免积分
+	if m, ok := foundMap["auto-free"]; !ok || m.Category != "auto" || !m.Selected {
+		t.Errorf("auto-free model missing or invalid: %+v", m)
+	}
+
+	// 2. 验证用户高频限免模型 hy4free 和 hy3
+	if m, ok := foundMap["hy4free"]; !ok || m.Category != "free" || !m.Selected {
+		t.Errorf("hy4free model missing or invalid: %+v", m)
+	}
+	if m, ok := foundMap["hy3"]; !ok || m.Category != "free" || !m.Selected {
+		t.Errorf("hy3 model missing or invalid: %+v", m)
+	}
+
+	// 3. 验证用户高频花积分特惠模型 ds4.1flash 和 glm5.3 flash
+	if m, ok := foundMap["deepseek-v4.1-flash-sg"]; !ok || m.Category != "intl" || !m.Selected {
+		t.Errorf("deepseek-v4.1-flash-sg model missing or invalid: %+v", m)
+	}
+	if m, ok := foundMap["glm-5.3-flash"]; !ok || m.Category != "intl" || !m.Selected {
+		t.Errorf("glm-5.3-flash model missing or invalid: %+v", m)
+	}
+
+	// 4. 验证杜绝旧虚假模型占位
+	if _, ok := foundMap["deepseek-chat"]; ok {
+		t.Errorf("obsolete deepseek-chat should NOT be present")
+	}
+	if _, ok := foundMap["gpt-4o"]; ok {
+		t.Errorf("obsolete gpt-4o should NOT be present")
+	}
+
+	// 5. 验证国内精选模型
+	if m, ok := foundMap["wbmux-cn-glm-5.1"]; !ok || m.Category != "cn" || !m.Selected {
+		t.Errorf("wbmux-cn-glm-5.1 model missing or invalid: %+v", m)
+	}
+
+	// 6. 验证 BYOK
+	if m, ok := foundMap["wbmux-byok-p1-step-5-preview"]; !ok || m.Category != "byok" || m.Selected {
+		t.Errorf("BYOK model missing or invalid: %+v", m)
+	}
+}
+
+func TestExportProviderID(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"auto-free", "wbmux-auto-free"},
+		{"hy4free", "wbmux-hy4free"},
+		{"wbmux-cn-glm-5.1", "wbmux-cn-glm-5-1"},
+		{"wbmux-byok-p1-step-5-preview", "wbmux-byok-p1-step-5-preview"},
+		{"deepseek-v4.1-flash-sg", "wbmux-deepseek-v4-1-flash-sg"},
+	}
+	for _, c := range cases {
+		got := exportProviderID(c.in)
+		if got != c.want {
+			t.Errorf("exportProviderID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
