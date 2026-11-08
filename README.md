@@ -244,6 +244,16 @@ Anthropic 官方均是），透传不做协议转换，流式响应原样转发�
 - 尊重 `web_search` 工具声明里的 `max_uses`（结果条数）与
   `allowed_domains` / `blocked_domains`（域名过滤，blocked 优先）。
 
+### 🔀 一键导出配置至 cc-switch (Claude Code / OpenCode / Codex)
+
+`wbmux` 原生集成了本地知名 AI 提供商切换工具 [cc-switch](https://github.com/farion99/cc-switch) 的无缝桥接能力：
+
+* **非侵入式数据库直写**：自动定位本机 `~/.cc-switch/cc-switch.db`，一键将本地 WorkBuddy 高性价比模型与限免大模型直接写入提供商数据库；
+* **双模式架构支持**：
+  * **✨ 聚合精选模式 (Merged)**：在单一 `WorkBuddy` 供应源下汇聚智能免积分优选（`Auto-Free`）、Hy4、Hy3、DeepSeek-V4.1-Flash、GLM-5.3-Flash 等核心模型；
+  * **🌐 分端独立模式 (Split)**：按国内版（`WorkBuddy CN`）与国际版（`WorkBuddy Intl`）拆分为两个独立提供方，双端额度与鉴权清晰隔离；
+* **四大主流客户端覆盖**：支持一键勾选同步配置至 **Claude Code (CLI)**、**Claude Desktop**、**OpenCode** 与 **Codex**，终端内随心秒级切换。
+
 
 ---
 
