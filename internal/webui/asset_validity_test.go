@@ -51,7 +51,26 @@ func TestIndexHTMLValidity(t *testing.T) {
 		}
 	}
 
-	// 4. 提取聚合后的 <script> 块并进行语法健全度校验
+	// 4. 提取聚合后的 <style> 块并进行语法与嵌套防呆校验
+	reStyle := regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style>`)
+	styleMatches := reStyle.FindAllStringSubmatch(htmlStr, -1)
+	if len(styleMatches) != 1 {
+		t.Fatalf("聚合 HTML 中的 <style> 标签数量异常: 预期 1 个，实际发现 %d 个", len(styleMatches))
+	}
+	styleBody := styleMatches[0][1]
+	if strings.Contains(styleBody, "<style") || strings.Contains(styleBody, "</style>") {
+		t.Fatalf("style 块内存在非法嵌套的 <style> 标签，会导致浏览器 CSS 解析器抛弃 :root 规则")
+	}
+	if strings.Count(styleBody, "{") != strings.Count(styleBody, "}") {
+		t.Errorf("style 块花括号不平衡: '{'=%d, '}'=%d", strings.Count(styleBody, "{"), strings.Count(styleBody, "}"))
+	}
+	for _, reqVar := range []string{"--g0:", "--g1:", "--ink:", ".sidebar", "background: var(--g1)"} {
+		if !strings.Contains(styleBody, reqVar) {
+			t.Errorf("style 块缺少关键变量或规则声明: %q", reqVar)
+		}
+	}
+
+	// 5. 提取聚合后的 <script> 块并进行语法健全度校验
 	reScript := regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)
 	matches := reScript.FindAllStringSubmatch(htmlStr, -1)
 	if len(matches) == 0 {
