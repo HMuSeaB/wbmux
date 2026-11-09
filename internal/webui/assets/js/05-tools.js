@@ -363,14 +363,22 @@
     var cnStat = (state && state.clients && state.clients.cn) || { running: false, pids: [] };
     var intlStat = (state && state.clients && state.clients.intl) || { running: false, pids: [] };
 
+    function fmtPids(pids) {
+      if (!pids || !pids.length) return "";
+      if (pids.length <= 2) return " · PID " + pids.join(",");
+      return " · PID " + pids[0] + " (+" + (pids.length - 1) + ")";
+    }
+
     var elCn = document.getElementById("hub-stat-cn");
     if (elCn) {
       if (cnStat.running) {
         elCn.className = "pill ok";
-        elCn.textContent = "🟢 运行中" + ((cnStat.pids && cnStat.pids.length) ? (" · PID " + cnStat.pids.join(",")) : "");
+        elCn.textContent = "🟢 运行中" + fmtPids(cnStat.pids);
+        if (cnStat.pids && cnStat.pids.length) elCn.title = "PID 清单: " + cnStat.pids.join(", ");
       } else {
         elCn.className = "pill ghost";
         elCn.textContent = "⚪ 未启动";
+        elCn.removeAttribute("title");
       }
     }
 
@@ -378,10 +386,12 @@
     if (elIntl) {
       if (intlStat.running) {
         elIntl.className = "pill ok";
-        elIntl.textContent = "🟢 运行中" + ((intlStat.pids && intlStat.pids.length) ? (" · PID " + intlStat.pids.join(",")) : "");
+        elIntl.textContent = "🟢 运行中" + fmtPids(intlStat.pids);
+        if (intlStat.pids && intlStat.pids.length) elIntl.title = "PID 清单: " + intlStat.pids.join(", ");
       } else {
         elIntl.className = "pill ghost";
         elIntl.textContent = "⚪ 未启动";
+        elIntl.removeAttribute("title");
       }
     }
 

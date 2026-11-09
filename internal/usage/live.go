@@ -48,6 +48,12 @@ func netrouteClient() *http.Client {
 // **本包只发只读请求**。签到（daily-checkin 等改状态的操作）刻意不在这里，
 // 见 internal/checkin —— 混在一起的话，一个"刷新面板"的动作就可能把状态改了。
 
+// LiveContextWindow 描述官方接口返回的上下文阶梯配置。
+type LiveContextWindow struct {
+	DefaultLength    int   `json:"defaultLength"`
+	SupportedLengths []int `json:"supportedLengths"`
+}
+
 // LiveModel 是官方接口返回的实时模型条目。
 type LiveModel struct {
 	ID      string  `json:"id"`
@@ -61,6 +67,8 @@ type LiveModel struct {
 	// MaxOutput 是单次回复上限（maxOutputTokens）。注入国内客户端时要用：
 	// 缺了它客户端只能按默认值估，会出现"明明能放 1M 却提前压缩上下文"。
 	MaxOutput int `json:"maxOutput,omitempty"`
+	// ContextWindow 是官方配置中的分段阶梯（如 [300000, 1000000]）。
+	ContextWindow *LiveContextWindow `json:"contextWindow,omitempty"`
 	// Tools / Images 是官方的能力开关（supportsToolCall / supportsImages）。
 	// 注入国内客户端时必须如实带上：客户端按 supportsToolCall 决定要不要
 	// 在请求体里带 tools，写 false 就等于把模型的工具能力关掉。
@@ -601,7 +609,12 @@ func fetchLiveModels(endpoint string, cred credential.Credential, id variant.ID)
 		if _, ok := byID[m.ID]; ok {
 			return
 		}
-		lm := LiveModel{ID: m.ID, Name: m.Name, RateRaw: m.Credits}
+		lm := LiveModel{
+			ID:            m.ID,
+			Name:          m.Name,
+			RateRaw:       m.Credits,
+			ContextWindow: m.ContextWindow,
+		}
 		if mm := creditsRateRe.FindStringSubmatch(m.Credits); mm != nil {
 			lm.Rate = parseRateNumber(mm[1])
 		}
@@ -630,6 +643,9 @@ func fetchLiveModels(endpoint string, cred credential.Credential, id variant.ID)
 			}
 			lm.Tools = lm.Tools || m.SupportsToolCall
 			lm.Images = lm.Images || m.SupportsImages
+			if lm.ContextWindow == nil && m.ContextWindow != nil {
+				lm.ContextWindow = m.ContextWindow
+			}
 			byID[m.ID] = lm
 		}
 	}
@@ -724,8 +740,9 @@ type liveModelRaw struct {
 	// 能力开关。官方配置里确实带这两个键（实测 2026-09-27：
 	// deepseek-v4.1-flash 与两个限时免费混元模型都是 true），
 	// 是"这个后端模型支不支持工具/图片"的权威来源，别靠猜。
-	SupportsToolCall bool `json:"supportsToolCall"`
-	SupportsImages   bool `json:"supportsImages"`
+	SupportsToolCall bool               `json:"supportsToolCall"`
+	SupportsImages   bool               `json:"supportsImages"`
+	ContextWindow    *LiveContextWindow `json:"contextWindow,omitempty"`
 }
 
 // livePromoRaw 对应 modelPromotions 的原文结构（只取界面要用的字段）。

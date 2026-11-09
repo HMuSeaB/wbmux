@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/models"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 )
 
@@ -258,7 +259,20 @@ func Sync(modelsJSONPath, chatURL, apiKey string, intl []usage.LiveModel, provid
 		// 与 defaultLength，否则用户在客户端切换上下文长度（Context）时会被判定为非法值并立刻静默重置为 null（导致"调了跟没调一样"）。
 		if m.Ctx > 0 {
 			entry["maxInputTokens"] = m.Ctx
-			entry["contextWindow"] = buildContextWindowDoc(m.Ctx)
+			if m.ContextWindow != nil && len(m.ContextWindow.SupportedLengths) >= 2 {
+				defLen := m.ContextWindow.DefaultLength
+				if defLen <= 0 {
+					defLen = m.ContextWindow.SupportedLengths[0]
+				}
+				entry["contextWindow"] = map[string]any{
+					"defaultLength":    defLen,
+					"supportedLengths": m.ContextWindow.SupportedLengths,
+				}
+			} else if def := models.FindByID(m.ID); def != nil && len(def.SupportedLengths) >= 2 {
+				entry["contextWindow"] = def.ContextWindowDoc()
+			} else {
+				entry["contextWindow"] = buildContextWindowDoc(m.Ctx)
+			}
 		}
 		if m.MaxOutput > 0 {
 			entry["maxOutputTokens"] = m.MaxOutput
@@ -506,13 +520,16 @@ func buildContextWindowDoc(maxInputTokens int) map[string]any {
 	var supported []int
 	switch {
 	case maxInputTokens >= 1000000:
-		// 1M 级别（如 DeepSeek-V4.1-Flash、Hy4 等）：
-		// 严格 3 档（128K 日常轻快 / 200K 适中扩展 / 1M 满血超长），
-		// 对应前端 default / moderate / extraLong
-		supported = []int{128000, 200000, maxInputTokens}
+		// 1M 级别（如 DeepSeek-V4.1-Flash、Hy4、GLM-5.3 等）：
+		// 严格对齐官方客户端标准：[300000, 1000000]（300K / 1M）
+		supported = []int{300000, maxInputTokens}
+	case maxInputTokens >= 500000:
+		// 500k 级别（如 Grok-4.7）：
+		// 严格对齐官方客户端标准：[200000, 500000]（200K / 500K）
+		supported = []int{200000, maxInputTokens}
 	case maxInputTokens >= 300000:
-		// 300k~500k 级别
-		supported = []int{128000, 200000, maxInputTokens}
+		// 300k~400k 级别
+		supported = []int{128000, maxInputTokens}
 	case maxInputTokens >= 190000:
 		// 192k~256k 级别（如 Hy3 的 192k）
 		supported = []int{64000, 128000, maxInputTokens}
@@ -651,8 +668,12 @@ func SyncCNIntoIntl(modelsJSONPath, chatURL, apiKey string, cnModels []usage.Liv
 			"supportsToolCall":  m.Tools,
 			"supportsImages":    m.Images,
 			"supportsReasoning": false,
-			"maxInputTokens":    ctxTokens,
-			"contextWindow":     buildContextWindowDoc(ctxTokens),
+		}
+		entry["maxInputTokens"] = ctxTokens
+		if def := models.FindByID(m.ID); def != nil && len(def.SupportedLengths) >= 2 {
+			entry["contextWindow"] = def.ContextWindowDoc()
+		} else {
+			entry["contextWindow"] = buildContextWindowDoc(ctxTokens)
 		}
 		if m.MaxOutput > 0 {
 			entry["maxOutputTokens"] = m.MaxOutput

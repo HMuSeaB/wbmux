@@ -237,8 +237,9 @@
 
   /* ---------- 通用小组件 ---------- */
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .grid2 > * { min-width: 0; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 
   /* 卡：不再描边，靠背景抬一层。这样 section > card 是"平面上的深浅"，
      而不是"盒子里的盒子"。 */
@@ -247,6 +248,9 @@
     border: 1px solid transparent;
     border-radius: var(--r-md);
     padding: 13px 15px;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: hidden;
   }
   .card.selectable { cursor: pointer; transition: background .12s, border-color .12s; }
   .card.selectable:hover { background: var(--g3); }
@@ -257,7 +261,7 @@
   .card.disabled { opacity: .45; cursor: not-allowed; }
   .card-head {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; margin-bottom: 7px;
+    gap: 8px; margin-bottom: 7px; flex-wrap: wrap;
   }
   .card-title { font-weight: 600; font-size: 13.5px; color: var(--ink); }
   .card-sub { color: var(--ink-3); font-size: 11.5px; font-family: var(--mono); }

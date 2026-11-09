@@ -68,8 +68,19 @@
       var titleText = inst.id === "cn" ? "🇨🇳 国内版 (CodeBuddy)" : (inst.id === "intl" ? "🌐 国际版 (WorkBuddy AI)" : inst.displayName);
       var badges = [];
       if (isRunning) {
-        var pidDesc = (proc.pids && proc.pids.length) ? (" · PID " + proc.pids.join(",")) : "";
-        badges.push(pill("🟢 运行中" + pidDesc, "ok"));
+        var pidDesc = "";
+        if (proc.pids && proc.pids.length) {
+          if (proc.pids.length <= 2) {
+            pidDesc = " · PID " + proc.pids.join(",");
+          } else {
+            pidDesc = " · PID " + proc.pids[0] + " (+" + (proc.pids.length - 1) + ")";
+          }
+        }
+        var runPill = pill("🟢 运行中" + pidDesc, "ok");
+        if (proc.pids && proc.pids.length) {
+          runPill.title = "已探测到 " + proc.pids.length + " 个相关进程 PID: " + proc.pids.join(", ");
+        }
+        badges.push(runPill);
       } else {
         badges.push(pill("⚪ 未启动", "ghost"));
       }
@@ -81,9 +92,9 @@
         badges.push(pill("未安装", "bad"));
       }
 
-      var head = el("div", { class: "card-head", style: "margin-bottom:2px;" }, [
-        el("span", { class: "card-title", style: "font-size:14px;font-weight:600;", text: titleText }),
-        el("div", { style: "display:flex;gap:6px;align-items:center;" }, badges)
+      var head = el("div", { class: "card-head", style: "margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;" }, [
+        el("span", { class: "card-title", style: "font-size:14px;font-weight:600;white-space:nowrap;", text: titleText }),
+        el("div", { style: "display:flex;gap:6px;align-items:center;flex-wrap:wrap;" }, badges)
       ]);
 
       var topPart = el("div", { style: "display:flex;flex-direction:column;gap:8px;" }, [head]);

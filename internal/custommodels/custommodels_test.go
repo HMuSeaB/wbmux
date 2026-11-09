@@ -850,3 +850,78 @@ func TestSyncCNIntoIntl(t *testing.T) {
 		t.Errorf("勾选的 glm-5.1 必须被注入")
 	}
 }
+
+// TestSyncOfficialContextWindowLadder 验证从官方配置读取或模型库对齐后的上下文阶梯准确写入 models.json：
+// 1. DeepSeek-V4.1-Flash 必须为 [300000, 1000000]，默认 300000 (300K)
+// 2. Grok-4.7 必须为 [200000, 500000]，默认 200000 (200K)
+func TestSyncOfficialContextWindowLadder(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "models.json")
+
+	intlModels := []usage.LiveModel{
+		{
+			ID:      "deepseek-v4.1-flash-sg",
+			Name:    "Deepseek-V4.1-Flash",
+			Ctx:     1000000,
+			FreeNow: true,
+			Tools:   true,
+			ContextWindow: &usage.LiveContextWindow{
+				DefaultLength:    300000,
+				SupportedLengths: []int{300000, 1000000},
+			},
+		},
+		{
+			ID:    "grok-4.7",
+			Name:  "Grok-4.7",
+			Ctx:   500000,
+			Tools: true,
+		},
+	}
+
+	added, err := Sync(path, "http://127.0.0.1:35907/v1/chat/completions", "tok", intlModels, nil, []string{"grok-4.7"})
+	if err != nil {
+		t.Fatalf("Sync 失败: %v", err)
+	}
+	if added != 2 {
+		t.Fatalf("期望注入 2 个模型，实际: %d", added)
+	}
+
+	raw, _ := os.ReadFile(path)
+	var doc modelsDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("反序列化 models.json 失败: %v", err)
+	}
+
+	foundDS := false
+	foundGrok := false
+	for _, m := range doc.Models {
+		if m["id"] == "wbmux-intl-deepseek-v4.1-flash-sg" {
+			foundDS = true
+			cw := m["contextWindow"].(map[string]any)
+			lengths := cw["supportedLengths"].([]any)
+			if len(lengths) != 2 || int(lengths[0].(float64)) != 300000 || int(lengths[1].(float64)) != 1000000 {
+				t.Errorf("DeepSeek contextWindow supportedLengths 期望 [300000, 1000000]，实际: %v", lengths)
+			}
+			if int(cw["defaultLength"].(float64)) != 300000 {
+				t.Errorf("DeepSeek contextWindow defaultLength 期望 300000，实际: %v", cw["defaultLength"])
+			}
+		}
+		if m["id"] == "wbmux-intl-grok-4.7" {
+			foundGrok = true
+			cw := m["contextWindow"].(map[string]any)
+			lengths := cw["supportedLengths"].([]any)
+			if len(lengths) != 2 || int(lengths[0].(float64)) != 200000 || int(lengths[1].(float64)) != 500000 {
+				t.Errorf("Grok contextWindow supportedLengths 期望 [200000, 500000]，实际: %v", lengths)
+			}
+			if int(cw["defaultLength"].(float64)) != 200000 {
+				t.Errorf("Grok contextWindow defaultLength 期望 200000，实际: %v", cw["defaultLength"])
+			}
+		}
+	}
+	if !foundDS {
+		t.Errorf("未找到注入的 DeepSeek 模型条目")
+	}
+	if !foundGrok {
+		t.Errorf("未找到注入的 Grok 模型条目")
+	}
+}
