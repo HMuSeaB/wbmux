@@ -1,6 +1,7 @@
-  // ---------- ZCode 会话（只读） ----------
-  // 读的是 ZCode 的库，导出的是 Markdown。全程不写 ZCode 的任何数据。
+  // ---------- ZCode 会话 ----------
+  // 读的是 ZCode 的库，支持直接导出 Markdown、直接导入 WorkBuddy，以及一键删除原会话（自动备份）。
   var zcLoaded = false;
+  var currentZCodeId = null;
 
   function loadZCode(force) {
     var box = document.getElementById("zc-list");
@@ -17,34 +18,74 @@
     });
   }
 
+  function renderZCodeEmpty() {
+    currentZCodeId = null;
+    var view = document.getElementById("zc-view");
+    clear(view);
+    view.appendChild(el("div", { class: "card", style: "padding:36px 20px;text-align:center;color:var(--ink-2);background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.12);border-radius:10px" }, [
+      el("div", { style: "font-size:32px;margin-bottom:12px" }, ["💬"]),
+      el("div", { style: "font-size:14px;font-weight:600;color:var(--ink-1);margin-bottom:6px" }, ["请在左侧点击查看会话详情"]),
+      el("div", { style: "font-size:12px;line-height:1.6;max-width:380px;margin:0 auto" }, [
+        "点击任意会话即可在右侧预览完整消息流。",
+        el("br"),
+        "支持一键直接导入 WorkBuddy（国内端/国际端）或导出为 Markdown 文件。",
+        el("br"),
+        "勾选顶部「导出/导入后自动删除」可实现一键迁移/归档并清理 ZCode 原库（删前自动快照备份）。"
+      ])
+    ]));
+  }
+
   function renderZCodeList(r) {
     var box = document.getElementById("zc-list");
     clear(box);
     if (!r.available) {
       box.appendChild(el("p", { class: "hint", text: r.note || "本机没有 ZCode 的会话库。" }));
+      renderZCodeEmpty();
       return;
     }
     var list = r.sessions || [];
     if (!list.length) {
       box.appendChild(el("p", { class: "hint", text: "ZCode 里还没有会话。" }));
+      renderZCodeEmpty();
       return;
     }
     var card = el("div", { class: "card" });
     card.appendChild(el("div", { class: "card-head" }, [
-      el("span", { class: "card-title", text: "会话（" + list.length + "）" })
+      el("span", { class: "card-title", id: "zc-list-title", text: "会话（" + list.length + "）" })
     ]));
     list.forEach(function (s) {
-      var row = el("div", { class: "zc-row" }, [
+      var row = el("div", { class: "zc-row", "data-id": s.id }, [
         el("div", { class: "zc-title", text: s.title }),
         el("div", { class: "zc-meta", text: (s.when || "") + " · " + (s.directory || "") })
       ]);
-      row.onclick = function () { showZCode(s); };
+      row.onclick = function () {
+        document.querySelectorAll(".zc-row").forEach(function (el) { el.classList.remove("active"); });
+        row.classList.add("active");
+        showZCode(s);
+      };
       card.appendChild(row);
     });
     box.appendChild(card);
+    renderZCodeEmpty();
+  }
+
+  function removeZCodeItem(id) {
+    var row = document.querySelector('.zc-row[data-id="' + id + '"]');
+    if (row && row.parentNode) {
+      row.parentNode.removeChild(row);
+    }
+    var titleEl = document.getElementById("zc-list-title");
+    if (titleEl) {
+      var remaining = document.querySelectorAll(".zc-row").length;
+      titleEl.textContent = "会话（" + remaining + "）";
+    }
+    if (currentZCodeId === id) {
+      renderZCodeEmpty();
+    }
   }
 
   function showZCode(s) {
+    currentZCodeId = s.id;
     var view = document.getElementById("zc-view");
     clear(view);
     view.appendChild(el("p", { class: "hint", text: "读取中…" }));
@@ -57,6 +98,7 @@
   }
 
   function renderZCodeView(tr) {
+    currentZCodeId = tr.sessionId;
     var view = document.getElementById("zc-view");
     clear(view);
     var card = el("div", { class: "card" });
@@ -66,12 +108,28 @@
     ]));
     card.appendChild(el("div", { class: "path", text: tr.directory || "" }));
 
-    var actions = el("div", { class: "row", style: "margin-top:10px" }, [
-      el("button", { class: "ghost", onclick: function () { exportZCode(tr.sessionId, false); } }),
-      el("button", { class: "ghost", onclick: function () { importZCode(tr.sessionId, tr.title); } }),
+    var actions = el("div", { class: "row", style: "margin-top:12px; gap:8px; flex-wrap:wrap" }, [
+      el("button", {
+        class: "primary",
+        style: "font-size:12px; padding:5px 12px",
+        onclick: function () { importZCodeDirect(tr.sessionId, tr.title, "cn"); }
+      }, ["📥 直接导入国内版 WB"]),
+      el("button", {
+        class: "primary",
+        style: "font-size:12px; padding:5px 12px; background:#0ea5e9",
+        onclick: function () { importZCodeDirect(tr.sessionId, tr.title, "intl"); }
+      }, ["🌐 直接导入国际版 WB"]),
+      el("button", {
+        class: "ghost",
+        style: "font-size:12px; padding:5px 12px",
+        onclick: function () { exportZCode(tr.sessionId, false); }
+      }, ["📄 导出 Markdown"]),
+      el("button", {
+        class: "ghost",
+        style: "font-size:12px; padding:5px 12px; color:#f87171; border-color:rgba(248,113,113,0.35)",
+        onclick: function () { deleteZCode(tr.sessionId, tr.title); }
+      }, ["🗑️ 彻底删除此会话"]),
     ]);
-    actions.children[0].textContent = "导出 Markdown";
-    actions.children[1].textContent = "导入到 WorkBuddy…";
     card.appendChild(actions);
 
     var body = el("div", { class: "zc-body" });
@@ -92,17 +150,22 @@
 
   function exportZCode(id, withReasoning) {
     var note = document.getElementById("zc-note");
+    var delSource = document.getElementById("zc-delete-source") && document.getElementById("zc-delete-source").checked;
     note.textContent = "导出中…";
     api("/api/zcode/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: id,
-        withReasoning: withReasoning || document.getElementById("zc-reasoning").checked
+        withReasoning: withReasoning || document.getElementById("zc-reasoning").checked,
+        deleteSource: delSource
       })
     }).then(function (r) {
       note.textContent = "";
       toast(r.note || ("已导出到 " + r.path), "ok");
+      if (r.deleted) {
+        removeZCodeItem(id);
+      }
     }).catch(function (e) {
       note.textContent = "";
       toast("导出失败：" + e.message, "bad");
@@ -111,40 +174,60 @@
 
   document.getElementById("btn-zc-load").addEventListener("click", function () { loadZCode(true); });
 
-  // 导入到 WorkBuddy：写操作，所以先问一次要导到哪、并让服务端给出说明文案。
-  function importZCode(id, title) {
-    var to = prompt("导入到哪一档？（cn = 国内，intl = 国际）\n\n" +
-      "注意：目标档位的客户端要**完全退出**——它握着会话列表的缓存，\n" +
-      "边跑边写会看不到新条目。", "cn");
-    if (to === null) return;
-    to = String(to).trim().toLowerCase();
-    if (to !== "cn" && to !== "intl") { toast("只能填 cn 或 intl", "bad"); return; }
+  // 直接导入到 WorkBuddy（国内端/国际端）
+  function importZCodeDirect(id, title, toSide) {
+    var sideName = toSide === "intl" ? "国际版 (WorkBuddy AI)" : "国内版 (WorkBuddy)";
+    var delSource = document.getElementById("zc-delete-source") && document.getElementById("zc-delete-source").checked;
+    var extraNotice = delSource ? "\n⚠️ 注意：已勾选「导入后自动删除 ZCode 原会话」，导入成功后原会话将被彻底清理（会自动创建数据库备份）。" : "";
+
+    var proceed = confirm("准备导入到「" + sideName + "」：\n\n" +
+      "⚠️ 必须确认：目标档位的客户端已【完全退出】（右键托盘彻底关闭）！\n" +
+      "（客户端在后台运行时握着内存缓存，边跑边写会导致新会话不出现或被回写覆盖）。" +
+      extraNotice + "\n\n点击【确定】继续导入。");
+    if (!proceed) return;
 
     var note = document.getElementById("zc-note");
-    note.textContent = "准备导入…";
-    // 第一次不带 confirm：拿服务端写的说明文案来问，避免前端自己编一遍。
+    note.textContent = "导入中…";
     api("/api/zimport", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: id, to: to })
+      body: JSON.stringify({
+        id: id,
+        to: toSide,
+        confirm: true,
+        deleteSource: delSource,
+        withReasoning: document.getElementById("zc-reasoning").checked
+      })
     }).then(function (r) {
       note.textContent = "";
-      if (!confirm((r.note || "确认导入？") + "\n\n继续？")) return;
-      note.textContent = "导入中…";
-      return api("/api/zimport", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: id, to: to, confirm: true,
-          withReasoning: document.getElementById("zc-reasoning").checked
-        })
-      }).then(function (r2) {
-        note.textContent = "";
-        toast(r2.note || "已导入", "ok");
-      });
+      toast(r.note || "已成功导入到 WorkBuddy", "ok");
+      if (r.deleted) {
+        removeZCodeItem(id);
+      }
     }).catch(function (e) {
       note.textContent = "";
       toast("导入失败：" + e.message, "bad");
+    });
+  }
+
+  // 彻底删除 ZCode 会话
+  function deleteZCode(id, title) {
+    var proceed = confirm("⚠️ 危险操作确认：\n\n确定要从 ZCode 数据库中彻底删除会话「" + (title || id) + "」吗？\n\n系统将在执行前自动创建完整的数据库快照备份，以便随时恢复。\n\n点击【确定】执行删除。");
+    if (!proceed) return;
+
+    var note = document.getElementById("zc-note");
+    note.textContent = "正在删除原会话…";
+    api("/api/zcode/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, confirm: true })
+    }).then(function (r) {
+      note.textContent = "";
+      toast(r.note || "已从 ZCode 成功删除该会话", "ok");
+      removeZCodeItem(id);
+    }).catch(function (e) {
+      note.textContent = "";
+      toast("删除失败：" + e.message, "bad");
     });
   }
 
@@ -156,7 +239,14 @@
       el.hidden = el.dataset.page !== page;
     });
     document.querySelectorAll(".nav-item").forEach(function (n) {
-      n.classList.toggle("active", n.dataset.page === page);
+      var on = n.dataset.page === page;
+      n.classList.toggle("active", on);
+      // 目标页在收起的折叠组里时自动展开——否则点了菜单却看不到选中项，
+      // 看起来像"没反应"。
+      if (on) {
+        var grp = n.closest(".nav-group.collapsible.collapsed");
+        if (grp) grp.classList.remove("collapsed");
+      }
     });
     // 切进来先拉一次，别让用户对着空页面等下一个刷新周期。
     if (page === "status") {
@@ -202,6 +292,37 @@
   }
   document.querySelectorAll(".nav-item").forEach(function (n) {
     n.addEventListener("click", function () { showPage(n.dataset.page); });
+  });
+
+  // 可折叠导航分组：低频页默认收起，状态记在 localStorage。
+  // 默认值读 data-default-collapsed，只有显式写 1 才收起——
+  // 新增分组时忘写属性也不会把页面变没了。
+  document.querySelectorAll(".nav-group.collapsible").forEach(function (g) {
+    var title = g.querySelector(".nav-group-title");
+    if (!title) return;
+    var key = "wbmux.nav." + (g.dataset.group || "group");
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    if (saved === null) {
+      saved = g.dataset.defaultCollapsed === "1" ? "1" : "0";
+    }
+    g.classList.toggle("collapsed", saved === "1");
+    title.addEventListener("click", function () {
+      var collapse = !g.classList.contains("collapsed");
+      g.classList.toggle("collapsed", collapse);
+      try { localStorage.setItem(key, collapse ? "1" : "0"); } catch (e) {}
+    });
+  });
+
+  // 「更多操作」下拉：点外面收起；点完里面任一动作也收起——
+  // 动作会改下面的页面内容，下拉还挂着会挡住结果。
+  document.querySelectorAll(".hero-more").forEach(function (d) {
+    document.addEventListener("click", function (ev) {
+      if (d.open && !d.contains(ev.target)) d.open = false;
+    });
+    d.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { d.open = false; });
+    });
   });
 
   function runProbe() {

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>wbmux · 嵌入面板</title>
+<style>
+  :root {
+    --bg: #0d1017; --card: #161a23; --card-2: #1c212b;
+    --border: rgba(255,255,255,0.08);
+    --ink-0: #e6e8ee; --ink-1: #c3c9d4; --ink-2: #9aa3b2; --ink-3: #6b7484;
+    --brand: #2dd4bf; --brand-dim: rgba(45,212,191,0.14);
+    --ok: #34d399; --bad: #f87171; --warn: #ebb23a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink-0);
+    font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    padding: 12px;
+  }
+  code { font-family: "Cascadia Code", Consolas, monospace; }
+
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .logo-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--brand); flex: none; }
+  .brand { font-weight: 700; font-size: 15px; letter-spacing: 0.3px; }
+  .live-pill {
+    font-size: 10.5px; color: var(--ok); background: rgba(52,211,153,0.12);
+    border: 1px solid rgba(52,211,153,0.25); border-radius: 999px; padding: 1px 8px;
+  }
+  .head a {
+    margin-left: auto; color: var(--ink-2); text-decoration: none; font-size: 11.5px;
+    padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);
+  }
+  .head a:hover { color: var(--brand); border-color: rgba(45,212,191,0.4); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+  }
+  .card-title { font-size: 11px; color: var(--ink-3); font-weight: 600; margin-bottom: 8px; letter-spacing: 0.5px; }
+
+  .clients { display: flex; flex-direction: column; gap: 6px; }
+  .client-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .client-row .name { color: var(--ink-1); }
+  .client-row .pid { color: var(--ink-3); font-size: 10.5px; font-family: Consolas, monospace; }
+  .st { margin-left: auto; font-size: 11px; display: flex; align-items: center; gap: 5px; }
+  .st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+  .st.on { color: var(--ok); } .st.on::before { background: var(--ok); }
+  .st.off { color: var(--ink-3); }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card-2); color: var(--ink-0);
+    padding: 8px 10px; font-size: 12px; line-height: 1.4; text-align: left;
+    transition: border-color .15s, background .15s;
+  }
+  button:hover:not(:disabled) { border-color: rgba(45,212,191,0.45); }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  button .sub { display: block; font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
+  button.primary {
+    background: linear-gradient(135deg, #14b8a6, #0d9488); color: #04211d;
+    border: none; font-weight: 650;
+  }
+  button.primary .sub { color: rgba(4,33,29,0.65); }
+  button.wide { grid-column: 1 / -1; text-align: center; }
+
+  .endpoint { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .endpoint code {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 11px; color: var(--brand); background: rgba(45,212,191,0.07);
+    padding: 5px 8px; border-radius: 6px;
+  }
+  .endpoint button { flex: none; padding: 4px 10px; font-size: 11px; }
+  .ep-label { font-size: 11px; color: var(--ink-2); margin-top: 8px; }
+  .ep-label:first-of-type { margin-top: 0; }
+
+  .foot { color: var(--ink-3); font-size: 10.5px; text-align: center; margin-top: 4px; }
+
+  .toast {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 50;
+    background: #1f2937; border: 1px solid rgba(45,212,191,0.4); color: var(--ink-0);
+    border-radius: 8px; padding: 9px 12px; font-size: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  }
+  .toast.bad { border-color: rgba(248,113,113,0.5); }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <span class="logo-dot"></span>
+  <span class="brand">wbmux</span>
+  <span class="live-pill" id="live">本机代理在线</span>
+  <a id="full-link" href="#" target="_blank" rel="noopener">完整面板 ↗</a>
+</div>
+
+<div class="card">
+  <div class="card-title">客户端状态</div>
+  <div class="clients">
+    <div class="client-row">
+      <span class="name">国内版 WorkBuddy</span>
+      <span class="pid" id="cn-pid"></span>
+      <span class="st off" id="cn-st">检测中</span>
+    </div>
+    <div class="client-row">
+      <span class="name">国际版 WorkBuddy AI</span>
+      <span class="pid" id="intl-pid"></span>
+      <span class="st off" id="intl-st">检测中</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">高频操作</div>
+  <div class="actions">
+    <button class="primary" id="btn-inject">
+      注入免费模型 → 国内端
+      <span class="sub">国际限免大模型一键灌入</span>
+    </button>
+    <button id="btn-inject-back">
+      反向注入 → 国际端
+      <span class="sub">国内专属模型 (GLM/Kimi 等)</span>
+    </button>
+    <button id="btn-both">
+      智能双开客户端
+      <span class="sub">未开则启动，已开补另一侧</span>
+    </button>
+    <button id="btn-restart">
+      重启国内客户端
+      <span class="sub">让新注入的模型生效</span>
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">本机端点（点击复制）</div>
+  <div class="ep-label">OpenAI 兼容 Base URL</div>
+  <div class="endpoint">
+    <code id="ep-openai"></code>
+    <button data-copy="ep-openai">复制</button>
+  </div>
+  <div class="ep-label">免费联网搜索（Anthropic 协议）</div>
+  <div class="endpoint">
+    <code id="ep-search"></code>
+    <button data-copy="ep-search">复制</button>
+  </div>
+</div>
+
+<div class="foot">本机回环免密调用 · 完整功能请打开完整面板</div>
+
+<script>
+(function () {
+  var TOKEN = new URLSearchParams(location.search).get("t") || "";
+  document.getElementById("full-link").href = "/?t=" + encodeURIComponent(TOKEN);
+
+  document.getElementById("ep-openai").textContent = location.origin + "/v1";
+  document.getElementById("ep-search").textContent = location.origin + "/v1/search/messages";
+
+  function toast(msg, bad) {
+    var t = document.createElement("div");
+    t.className = "toast" + (bad ? " bad" : "");
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, bad ? 6000 : 3200);
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "X-Wbmux-Token": TOKEN }, opts.headers || {});
+    return fetch(path, opts).then(function (res) {
+      return res.json().catch(function () { return { error: "响应无法解析" }; }).then(function (data) {
+        if (!res.ok) throw new Error(data && data.error ? data.error : "HTTP " + res.status);
+        return data;
+      });
+    });
+  }
+  function post(path, body) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    });
+  }
+
+  function setClient(side, stat) {
+    var st = document.getElementById(side + "-st");
+    var pid = document.getElementById(side + "-pid");
+    if (stat && stat.running) {
+      st.className = "st on";
+      st.textContent = "运行中";
+      pid.textContent = (stat.pids && stat.pids.length) ? "PID " + stat.pids[0] : "";
+    } else {
+      st.className = "st off";
+      st.textContent = "未运行";
+      pid.textContent = "";
+    }
+  }
+  function refreshStatus() {
+    api("/api/clients/status").then(function (res) {
+      var c = (res && res.clients) || {};
+      setClient("cn", c.cn);
+      setClient("intl", c.intl);
+    }).catch(function () {});
+  }
+  refreshStatus();
+  setInterval(refreshStatus, 10000);
+
+  function bind(id, fn) {
+    var btn = document.getElementById(id);
+    btn.addEventListener("click", function () {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      var done = function () { btn.disabled = false; };
+      fn(done, btn);
+    });
+  }
+
+  bind("btn-inject", function (done) {
+    post("/api/inject-custom-models").then(function (res) {
+      toast((res.note || "注入完成") + "（新增 " + (res.added || 0) + " 个），重启国内端后生效");
+      done();
+    }).catch(function (e) { toast("注入失败：" + e.message, true); done(); });
+  });
+
+  bind("btn-inject-back", function (done) {
+    post("/api/inject-cn-into-intl").then(function (res) {
+      toast((res.note || "反向注入完成") + "（共 " + (res.added || 0) + " 个）");
+      done();
+    }).catch(function (e) { toast("反向注入失败：" + e.message, true); done(); });
+  });
+
+  bind("btn-both", function (done) {
+    post("/api/launch-both").then(function (res) {
+      var parts = (res.results || []).map(function (r) {
+        var name = r.side === "cn" ? "国内" : "国际";
+        if (r.alreadyRunning) return name + "已在跑";
+        return name + (r.ok ? "已启动" : "失败:" + (r.err || "?"));
+      });
+      toast(parts.join("；") || "双开完成");
+      refreshStatus();
+      done();
+    }).catch(function (e) { toast("双开失败：" + e.message, true); done(); });
+  });
+
+  bind("btn-restart", function (done) {
+    if (!confirm("会先关闭再重启国内客户端。\n当前对话与未保存内容可能中断，继续吗？")) { done(); return; }
+    post("/api/restart-client", { target: "cn", native: true }).then(function (pv) {
+      toast("已重启国内客户端" + (pv.killed ? "（关闭旧进程 " + pv.killed + " 个）" : ""));
+      refreshStatus();
+      done();
+    }).catch(function (e) { toast("重启失败：" + e.message, true); done(); });
+  });
+
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var text = document.getElementById(btn.getAttribute("data-copy")).textContent;
+      function ok() { toast("已复制：" + text); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(ok, function () { fallback(); });
+      } else { fallback(); }
+      function fallback() {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); ok(); } catch (e) { toast("复制失败，请手动选择", true); }
+        ta.remove();
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

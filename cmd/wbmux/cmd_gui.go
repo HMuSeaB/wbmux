@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,9 +14,10 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/autoupdate"
 	"github.com/HMuSeaB/wbmux/internal/browser"
 	"github.com/HMuSeaB/wbmux/internal/config"
-	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/console"
+	"github.com/HMuSeaB/wbmux/internal/inject"
 	"github.com/HMuSeaB/wbmux/internal/instance"
+	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/tray"
 	"github.com/HMuSeaB/wbmux/internal/update"
 	"github.com/HMuSeaB/wbmux/internal/version"
@@ -243,6 +245,19 @@ func cmdGUI(args []string) error {
 	}
 	defer srv.Shutdown()
 	guiLog("服务已启动 addr=%s", srv.Addr())
+
+	// 常驻把嵌入面板推进 WorkBuddy：客户端重启、面板升级、令牌轮换都会
+	// 被每 3 秒一次的巡检自动补上。客户端没带调试端口时静默跳过。
+	go func() {
+		ictx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-srv.Done()
+			cancel()
+		}()
+		inject.RunDaemon(ictx, inject.DefaultCDPPort, func() string {
+			return embedURLFrom(srv.URL())
+		})
+	}()
 
 	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，
 	// 第一眼看它是走代理还是直连、有没有跳过不可用的代理。

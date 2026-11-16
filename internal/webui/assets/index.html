@@ -43,8 +43,8 @@
         <div class="nav-item" data-page="workspace"><svg class="ico" aria-hidden="true"><use href="#i-folder"/></svg>工作区</div>
       </div>
 
-      <div class="nav-group">
-        <div class="nav-group-title">辅助工具箱</div>
+      <div class="nav-group collapsible" data-group="toolbox" data-default-collapsed="1">
+        <div class="nav-group-title">辅助工具箱<span class="nav-group-caret">▾</span></div>
         <div class="nav-item" data-page="growth"><svg class="ico" aria-hidden="true"><use href="#i-gift"/></svg>成长与福利中心<span class="nav-badge" id="nav-growth-badge" style="background:rgba(235,178,58,0.2);color:#ebb23a">+1950c</span></div>
         <div class="nav-item" data-page="checkin"><svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>每日签到<span class="nav-badge" id="nav-checkin-badge">自动</span></div>
         <div class="nav-item" data-page="zcode"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</div>
@@ -87,30 +87,35 @@
           </div>
         </div>
         <div class="hero-desc">
-          将国际端限时免费的顶级模型（DeepSeek-V4.1-Flash / Step-5-Preview / Hy3 等 0.00x 费率）一键注入国内客户端自定义模型清单。<br>
-          国内客户端继续使用小程序远程控制，同时零成本享受国际大模型。注入后点击重启客户端即可生效。
+          把国际端限时免费模型（DeepSeek-V4.1-Flash / Step-5-Preview / Hy3）一键注入国内客户端，
+          零成本用国际大模型。注入后重启客户端生效。
         </div>
         <div class="hero-actions">
           <button class="btn-hero" id="btn-inject" title="把国际限时免费模型注入国内客户端（经本机代理转发、扣国际额度）">
             <svg class="ico ico-sm" aria-hidden="true"><use href="#i-up"/></svg>
             一键注入免费模型到国内端
           </button>
-          <button class="ghost" id="btn-inject-cn-intl" title="把国内端专属模型（MiniMax、GLM-5.1、Kimi、DeepSeek 等）反向注入到国际客户端（~/.workbuddy-ai/models.json）">
-            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-download"/></svg>
-            反向注入国内模型到国际端
-          </button>
           <button class="ghost" id="btn-hero-restart" title="重启国内客户端使新注入的模型生效">
             <svg class="ico ico-sm" aria-hidden="true"><use href="#i-reload"/></svg>
             重启客户端生效
           </button>
-          <button class="ghost" id="btn-hero-both" title="两侧各用各的安装同时启动（国内管小程序，国际用模型）">
-            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-swap"/></svg>
-            双开两侧客户端
-          </button>
-          <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证通路与扣费">
-            <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
-            一键测试通路
-          </button>
+          <details class="hero-more">
+            <summary>更多操作</summary>
+            <div class="hero-more-body">
+              <button class="ghost" id="btn-inject-cn-intl" title="把国内端专属模型（MiniMax、GLM-5.1、Kimi、DeepSeek 等）反向注入到国际客户端（~/.workbuddy-ai/models.json）">
+                <svg class="ico ico-sm" aria-hidden="true"><use href="#i-download"/></svg>
+                反向注入国内模型到国际端
+              </button>
+              <button class="ghost" id="btn-hero-both" title="两侧各用各的安装同时启动（国内管小程序，国际用模型）">
+                <svg class="ico ico-sm" aria-hidden="true"><use href="#i-swap"/></svg>
+                双开两侧客户端
+              </button>
+              <button class="ghost" id="btn-probe" title="两侧各发一条最小消息，验证通路与扣费">
+                <svg class="ico ico-sm" aria-hidden="true"><use href="#i-play"/></svg>
+                一键测试通路
+              </button>
+            </div>
+          </details>
           <span class="hint" id="usage-note" style="margin:0"></span>
         </div>
         <div id="probe-body" style="margin-top:10px"></div>
@@ -738,17 +743,19 @@
   <section>
     <h2><svg class="ico-sm" aria-hidden="true"><use href="#i-box"/></svg>ZCode 会话</h2>
     <p class="sub">
-      把 ZCode 的历史对话<strong>读出来</strong>（只读，ZCode 的数据一个字节都不动），
-      可以在这里翻看内容，也可以导出成 Markdown 存档或喂给别的会话。
-      正文取自 ZCode 的 <code>message</code> / <code>part</code> 两张表；
-      子代理会话排在后面并带标记。也可以<strong>导入到 WorkBuddy</strong>，
-      那样在客户端的会话列表里就能直接看到它。
+      把 ZCode 的历史对话<strong>读出来</strong>，
+      可以在这里翻看内容，也可以导出成 Markdown 存档或一键<strong>直接导入到 WorkBuddy</strong>（国内端 / 国际端）。
+      支持导出/导入完成后<strong>自动清理删除 ZCode 原会话</strong>（删前自动进行完整数据库快照备份）。
     </p>
-    <div class="row" style="margin-top:14px">
-      <button id="btn-zc-load">读取列表</button>
+    <div class="row" style="margin-top:14px; flex-wrap:wrap; gap:12px; align-items:center">
+      <button id="btn-zc-load" class="primary">读取/刷新列表</button>
       <label class="check" style="margin:0">
         <input type="checkbox" id="zc-reasoning">
-        <span>导出时带思考过程</span>
+        <span>包含思考过程</span>
+      </label>
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="zc-delete-source">
+        <span style="color:#f87171;font-weight:600">导出/导入后自动删除 ZCode 原会话 (自动快照备份)</span>
       </label>
       <span class="hint" id="zc-note" style="margin:0"></span>
     </div>

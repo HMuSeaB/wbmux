@@ -1,0 +1,143 @@
+package inject
+
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
+
+// PanelVersion 是注入脚本的版本号。
+//
+// 守护进程靠它判断"页面里那套面板是不是当前这版"：脚本改动后把版本 +1，
+// 客户端里已注入的旧面板会在 3 秒内被自动替换，不需要用户刷新窗口。
+const PanelVersion = "1"
+
+// TagFor 返回某个 embed 地址对应的注入标记。
+//
+// 标记里带上完整 URL 有两个作用：一是面板升级（版本号变）能触发重注入；
+// 二是 wbmux 重启后令牌会变，旧 iframe 指向的地址失效——标记对不上，
+// 守护就会把新令牌的地址重新推一遍，用户无感。
+func TagFor(embedURL string) string {
+	return PanelVersion + "|" + embedURL
+}
+
+// panelScriptTemplate 是注入到 WorkBuddy 渲染进程的挂载脚本。
+//
+// 布局约束（改之前先读）：
+//   - 胶囊放在顶栏右侧（right:160px 避开窗口控制按钮）；
+//   - 顶栏在 Electron 里是窗口拖拽区，**必须显式 no-drag**，否则真实鼠标
+//     点击会被系统当成拖动标题栏吞掉——CDP 模拟点击能触发，用户点却没反应，
+//     2026-11-16 实测踩过这个坑；
+//   - 弹层关闭时必须是 display:none + pointer-events:none，只设透明度会留下
+//     一块"隐形玻璃板"挡住下面的编辑区；
+//   - 重注入前先调用上一版的 cleanup，移除旧节点与事件监听（幂等）。
+const panelScriptTemplate = `(() => {
+  const EMBED_URL = %%EMBED_JSON%%;
+  const TAG = %%TAG_JSON%%;
+
+  if (window.__wbmuxPanelCleanup) { try { window.__wbmuxPanelCleanup(); } catch (e) {} }
+  ['wbmux-probe', 'wbmux-probe-card', 'wbmux-panel-badge', 'wbmux-panel-pop'].forEach(id => {
+    const n = document.getElementById(id);
+    if (n) n.remove();
+  });
+
+  const badge = document.createElement('div');
+  badge.id = 'wbmux-panel-badge';
+  badge.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#2dd4bf;display:inline-block"></span> wbmux';
+  Object.assign(badge.style, {
+    position: 'fixed', top: '7px', right: '160px', zIndex: 99998,
+    display: 'flex', alignItems: 'center', gap: '6px',
+    background: '#1c212b', color: '#c3c9d4',
+    border: '1px solid rgba(45,212,191,0.35)', borderRadius: '999px',
+    padding: '3px 12px', font: '600 11.5px/1.5 system-ui, sans-serif',
+    cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto',
+  });
+  // 顶栏是窗口拖拽区：不写这两行，真实鼠标点不到（CDP 模拟点击却能）
+  badge.style.setProperty('-webkit-app-region', 'no-drag');
+  badge.style.setProperty('app-region', 'no-drag');
+  badge.title = 'wbmux 本机工作区面板';
+
+  const pop = document.createElement('div');
+  pop.id = 'wbmux-panel-pop';
+  Object.assign(pop.style, {
+    position: 'fixed', top: '42px', right: '16px', zIndex: 99999,
+    width: '400px', height: '600px', maxHeight: 'calc(100vh - 60px)',
+    borderRadius: '12px', overflow: 'hidden',
+    border: '1px solid rgba(45,212,191,0.25)',
+    boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
+    background: '#0d1017',
+    display: 'none', pointerEvents: 'none',
+  });
+  pop.style.setProperty('-webkit-app-region', 'no-drag');
+
+  const frame = document.createElement('iframe');
+  frame.src = EMBED_URL;
+  frame.setAttribute('allow', 'clipboard-write');
+  Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#0d1017' });
+  pop.appendChild(frame);
+
+  let open = false;
+  function setOpen(v) {
+    open = v;
+    pop.style.display = v ? 'block' : 'none';
+    pop.style.pointerEvents = v ? 'auto' : 'none';
+    badge.style.borderColor = v ? '#2dd4bf' : 'rgba(45,212,191,0.35)';
+  }
+  function onDocClick(ev) {
+    if (!open) return;
+    const t = ev.target;
+    if (pop.contains(t) || badge.contains(t)) return;
+    setOpen(false);
+  }
+  function onKey(ev) { if (ev.key === 'Escape' && open) setOpen(false); }
+
+  badge.addEventListener('click', () => setOpen(!open));
+  document.addEventListener('click', onDocClick, true);
+  document.addEventListener('keydown', onKey, true);
+
+  window.__wbmuxPanelCleanup = () => {
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
+    badge.remove();
+    pop.remove();
+    delete window.__wbmuxPanelCleanup;
+    delete window.__wbmuxPanelVersion;
+  };
+
+  document.body.appendChild(badge);
+  document.body.appendChild(pop);
+  window.__wbmuxPanelVersion = TAG;
+  return { ok: true, badgeMounted: !!document.getElementById('wbmux-panel-badge') };
+})()`
+
+// Inject 把面板推入页面。幂等：重复调用会用新脚本替换旧实例。
+func Inject(c *Client, embedURL string, timeout time.Duration) (bool, error) {
+	embedJSON, err := json.Marshal(embedURL)
+	if err != nil {
+		return false, err
+	}
+	tagJSON, err := json.Marshal(TagFor(embedURL))
+	if err != nil {
+		return false, err
+	}
+	script := strings.ReplaceAll(panelScriptTemplate, "%%EMBED_JSON%%", string(embedJSON))
+	script = strings.ReplaceAll(script, "%%TAG_JSON%%", string(tagJSON))
+
+	raw, err := c.Evaluate(script, timeout)
+	if err != nil {
+		return false, err
+	}
+	var out struct {
+		OK           bool `json:"ok"`
+		BadgeMounted bool `json:"badgeMounted"`
+	}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	return out.OK && out.BadgeMounted, nil
+}
+
+// InstalledTag 返回页面中已注入面板的标记；没有则空串。
+func InstalledTag(c *Client, timeout time.Duration) (string, error) {
+	return c.EvalString(`(window.__wbmuxPanelVersion || '')`, timeout)
+}

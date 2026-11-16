@@ -57,6 +57,8 @@ func dispatch(args []string) error {
 		return cmdCheckin(rest)
 	case "sessions", "sess":
 		return cmdSessions(rest)
+	case "inject":
+		return cmdInject(rest)
 	case "shortcut":
 		return cmdShortcut(rest)
 	case "config", "cfg":
@@ -134,6 +136,7 @@ func printHelp(u *ui) {
   list             列出本机探测到的安装与可用后端
   export <后端>    只生成合并配置，不启动
   migrate          把一侧的会话/技能/记忆搬到另一侧
+  inject           把嵌入式面板注入正在运行的 WorkBuddy（客户端需带调试端口启动）
   checkin          查签到状态；「checkin claim」领今天的积分
   config           查看或修改设置
   version          打印版本
