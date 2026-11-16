@@ -157,3 +157,19 @@ func (c *Client) EvalString(expression string, timeout time.Duration) (string, e
 	}
 	return s, nil
 }
+
+// EvalBool 执行表达式并按布尔取值（undefined / 解析失败一律视为 false）。
+func (c *Client) EvalBool(expression string, timeout time.Duration) (bool, error) {
+	raw, err := c.Evaluate(expression, timeout)
+	if err != nil {
+		return false, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, nil
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return false, nil
+	}
+	return b, nil
+}

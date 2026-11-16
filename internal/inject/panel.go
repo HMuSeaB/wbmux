@@ -2,6 +2,7 @@ package inject
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -10,7 +11,9 @@ import (
 //
 // 守护进程靠它判断"页面里那套面板是不是当前这版"：脚本改动后把版本 +1，
 // 客户端里已注入的旧面板会在 3 秒内被自动替换，不需要用户刷新窗口。
-const PanelVersion = "1"
+//
+// v3：面板 iframe 的地址带上版本号，脚本升级时强制重载（否则旧页面会一直留在弹层里）。
+const PanelVersion = "3"
 
 // TagFor 返回某个 embed 地址对应的注入标记。
 //
@@ -34,6 +37,7 @@ func TagFor(embedURL string) string {
 const panelScriptTemplate = `(() => {
   const EMBED_URL = %%EMBED_JSON%%;
   const TAG = %%TAG_JSON%%;
+  const VERSION = %%VERSION_JSON%%;
 
   if (window.__wbmuxPanelCleanup) { try { window.__wbmuxPanelCleanup(); } catch (e) {} }
   ['wbmux-probe', 'wbmux-probe-card', 'wbmux-panel-badge', 'wbmux-panel-pop'].forEach(id => {
@@ -43,7 +47,9 @@ const panelScriptTemplate = `(() => {
 
   const badge = document.createElement('div');
   badge.id = 'wbmux-panel-badge';
-  badge.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#2dd4bf;display:inline-block"></span> wbmux';
+  badge.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#2dd4bf;display:inline-block"></span>'
+    + '<span>wbmux</span>'
+    + '<span id="wbmux-panel-stats" style="color:#8b93a1;font-weight:500;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">连接中…</span>';
   Object.assign(badge.style, {
     position: 'fixed', top: '7px', right: '160px', zIndex: 99998,
     display: 'flex', alignItems: 'center', gap: '6px',
@@ -71,7 +77,8 @@ const panelScriptTemplate = `(() => {
   pop.style.setProperty('-webkit-app-region', 'no-drag');
 
   const frame = document.createElement('iframe');
-  frame.src = EMBED_URL;
+  // 带版本参数：面板页升级后 src 变化，iframe 会重新请求，不会留在旧页面上。
+  frame.src = EMBED_URL + (EMBED_URL.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(VERSION);
   frame.setAttribute('allow', 'clipboard-write');
   Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#0d1017' });
   pop.appendChild(frame);
@@ -95,6 +102,17 @@ const panelScriptTemplate = `(() => {
   document.addEventListener('click', onDocClick, true);
   document.addEventListener('keydown', onKey, true);
 
+  // 指标更新入口：守护进程每轮通过 CDP 调它，把最新数字推进胶囊。
+  // 走函数而不是直接改 DOM，是为了让"面板是否还在"由页面自己判断——
+  // 用户刷新过窗口时这里自然返回 false，守护下一轮就会重新注入。
+  window.__wbmuxPanelStats = (text, level) => {
+    const el = document.getElementById('wbmux-panel-stats');
+    if (!el) return false;
+    el.textContent = text;
+    el.style.color = level === 'bad' ? '#f87171' : (level === 'warn' ? '#ebb23a' : '#8b93a1');
+    return true;
+  };
+
   window.__wbmuxPanelCleanup = () => {
     document.removeEventListener('click', onDocClick, true);
     document.removeEventListener('keydown', onKey, true);
@@ -102,6 +120,7 @@ const panelScriptTemplate = `(() => {
     pop.remove();
     delete window.__wbmuxPanelCleanup;
     delete window.__wbmuxPanelVersion;
+    delete window.__wbmuxPanelStats;
   };
 
   document.body.appendChild(badge);
@@ -122,6 +141,11 @@ func Inject(c *Client, embedURL string, timeout time.Duration) (bool, error) {
 	}
 	script := strings.ReplaceAll(panelScriptTemplate, "%%EMBED_JSON%%", string(embedJSON))
 	script = strings.ReplaceAll(script, "%%TAG_JSON%%", string(tagJSON))
+	versionJSON, err := json.Marshal(PanelVersion)
+	if err != nil {
+		return false, err
+	}
+	script = strings.ReplaceAll(script, "%%VERSION_JSON%%", string(versionJSON))
 
 	raw, err := c.Evaluate(script, timeout)
 	if err != nil {
@@ -140,4 +164,22 @@ func Inject(c *Client, embedURL string, timeout time.Duration) (bool, error) {
 // InstalledTag 返回页面中已注入面板的标记；没有则空串。
 func InstalledTag(c *Client, timeout time.Duration) (string, error) {
 	return c.EvalString(`(window.__wbmuxPanelVersion || '')`, timeout)
+}
+
+// UpdateStats 把指标文字推进胶囊。
+//
+// level 只影响文字颜色："warn" 黄、"bad" 红、其它保持灰。
+// 页面里没有胶囊（用户刷新过窗口）时返回 false，不当作错误——
+// 守护下一轮会重新注入。
+func UpdateStats(c *Client, text, level string, timeout time.Duration) (bool, error) {
+	textJSON, err := json.Marshal(text)
+	if err != nil {
+		return false, err
+	}
+	levelJSON, err := json.Marshal(level)
+	if err != nil {
+		return false, err
+	}
+	expr := fmt.Sprintf(`(window.__wbmuxPanelStats && window.__wbmuxPanelStats(%s, %s)) || false`, textJSON, levelJSON)
+	return c.EvalBool(expr, timeout)
 }

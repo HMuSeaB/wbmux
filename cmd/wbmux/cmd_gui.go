@@ -256,7 +256,7 @@ func cmdGUI(args []string) error {
 		}()
 		inject.RunDaemon(ictx, inject.DefaultCDPPort, func() string {
 			return embedURLFrom(srv.URL())
-		})
+		}, embedStatsText)
 	}()
 
 	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，

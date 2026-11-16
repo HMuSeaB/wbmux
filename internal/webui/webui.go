@@ -290,6 +290,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/sessions", s.handleSessionsPage)
 	mux.HandleFunc("/embed", s.handleEmbedPage)
 	mux.HandleFunc("/api/state", s.guard(s.handleState))
+	mux.HandleFunc("/api/embed/stats", s.guard(s.handleEmbedStats))
 	mux.HandleFunc("/api/clients/status", s.guard(s.handleClientsStatus))
 	mux.HandleFunc("/api/doctor", s.guard(s.handleDoctor))
 	mux.HandleFunc("/api/preview", s.guard(s.handlePreview))

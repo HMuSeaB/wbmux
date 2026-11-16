@@ -116,6 +116,14 @@ graph LR
 * **零运行时依赖**：无 Node.js、Python 或外部动态库依赖，双击即可运行；
 * **全内嵌现代化 WebUI**：前端静态资源通过 Go `embed` 编译进单一可执行文件，极低资源占用。
 
+### 7. 🪟 客户端内嵌面板（可选）
+
+`wbmux gui` 常驻时，可以把一份紧凑面板直接挂进 WorkBuddy 顶栏——看状态、注入模型、
+复制端点都不必再切浏览器。全程走本地调试端口，**不改客户端任何文件**，刷新窗口即还原。
+
+首次使用需用 `tools/windows/restart-workbuddy-cdp.bat` 启动客户端（带调试端口），
+之后由 wbmux 守护自动维持。完整说明见 [docs/INJECT.md](docs/INJECT.md)。
+
 ---
 
 ## 🚀 快速上手
