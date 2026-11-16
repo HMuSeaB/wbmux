@@ -254,7 +254,7 @@ func cmdGUI(args []string) error {
 			<-srv.Done()
 			cancel()
 		}()
-		inject.RunDaemon(ictx, inject.DefaultCDPPort, func() string {
+		inject.RunDaemon(ictx, inject.DefaultCDPPorts, func() string {
 			return embedURLFrom(srv.URL())
 		}, embedStatsText)
 	}()

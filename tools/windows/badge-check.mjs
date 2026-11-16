@@ -1,5 +1,7 @@
 // badge-check.mjs — read the capsule text and tag from WorkBuddy.
-const targets = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+// Usage: node badge-check.mjs [cdpPort]   (default 9222; 国际版用 9223)
+const cdpPort = Number(process.argv[2] || 9222);
+const targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json/list`)).json();
 const page = targets.find(t => t.type === 'page' && t.url.includes('renderer/index.html'))
   || targets.find(t => t.type === 'page');
 if (!page) throw new Error('no page target');

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/inject"
@@ -23,27 +24,31 @@ func embedURLFrom(full string) string {
 	return u.Scheme + "://" + u.Host + "/embed?t=" + url.QueryEscape(u.Query().Get("t"))
 }
 
-// cmdInject 一次性把面板注入当前运行的 WorkBuddy。
+// cmdInject 一次性把面板注入当前运行的客户端。
 //
-// 前提：客户端必须带 --remote-debugging-port 启动（见 tools/windows
-// 下的重启脚本）。图形界面常驻时不需要手动跑这个命令——守护进程每
-// 3 秒会自己补注入，客户每次重启都能自动恢复。
+// 默认依次尝试国内版（9222）与国际版（9223）两个端口——用户可能只开了其中一个。
+// 图形界面常驻时不需要手动跑这个命令：守护每 3 秒会自己补注入，
+// 客户端每次重启都能自动恢复。
 func cmdInject(args []string) error {
 	f := newFlags()
-	portStr := f.String("cdp", fmt.Sprint(inject.DefaultCDPPort))
+	portStr := f.String("cdp", "")
 	f.Alias("h", "help")
 	help := f.Bool("help", false)
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if *help {
-		fmt.Println("用法: wbmux inject [--cdp 9222]\n\n把嵌入面板注入到正在运行的 WorkBuddy 客户端。")
+		fmt.Println("用法: wbmux inject [--cdp 9222|9223]\n\n把嵌入面板注入到正在运行的客户端；--cdp 不填时两个端口都试。")
 		return nil
 	}
 
-	var port int
-	if _, err := fmt.Sscanf(*portStr, "%d", &port); err != nil || port <= 0 || port > 65535 {
-		return fmt.Errorf("--cdp 需要 1-65535 的端口号，收到 %q", *portStr)
+	ports := inject.DefaultCDPPorts
+	if *portStr != "" {
+		p, err := strconv.Atoi(*portStr)
+		if err != nil || p <= 0 || p > 65535 {
+			return fmt.Errorf("--cdp 需要 1-65535 的端口号，收到 %q", *portStr)
+		}
+		ports = []int{p}
 	}
 
 	info, ok := instance.Lookup()
@@ -56,25 +61,36 @@ func cmdInject(args []string) error {
 	}
 
 	u := newUI(os.Stdout)
-	c, err := inject.Dial(port, 3*time.Second)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
-	injected, err := inject.Inject(c, embed, 6*time.Second)
-	if err != nil {
-		return err
-	}
-	if injected {
-		u.ok("面板已注入 WorkBuddy 顶栏右侧")
+	var lastErr error
+	for _, port := range ports {
+		c, err := inject.Dial(port, 3*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		injected, err := inject.Inject(c, embed, 6*time.Second)
+		if err != nil {
+			lastErr = err
+			c.Close()
+			continue
+		}
+		if !injected {
+			// 端口通、但脚本没回挂载结果：多半界面还在加载。
+			u.warn(fmt.Sprintf("端口 %d 已连上，但没找到挂载结果——客户端可能还在加载，稍后再试", port))
+			c.Close()
+			return nil
+		}
+		u.ok(fmt.Sprintf("面板已注入（调试端口 %d）", port))
 		u.kv("面板地址", embed)
 		u.info("刷新客户端窗口即消失；不修改客户端任何文件")
-	} else {
-		u.warn("注入脚本跑了，但没找到挂载结果——客户端界面可能还在加载，稍后再试")
+		if tag, tagErr := inject.InstalledTag(c, 2*time.Second); tagErr == nil && tag != "" {
+			u.kv("注入标记", tag)
+		}
+		c.Close()
+		return nil
 	}
-	if tag, err := inject.InstalledTag(c, 2*time.Second); err == nil && tag != "" {
-		u.kv("注入标记", tag)
+	if lastErr == nil {
+		lastErr = errors.New("没有找到可注入的客户端页面")
 	}
-	return nil
+	return lastErr
 }
