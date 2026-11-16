@@ -187,8 +187,15 @@ func TestBuildProducesExpectedArgsAndEnv(t *testing.T) {
 	if plan.Variant != variant.Intl {
 		t.Errorf("Variant = %q", plan.Variant)
 	}
-	if len(plan.Args) != 1 || plan.Args[0] != UserDataDirFlag+"="+dataDir {
+	// 第一条永远是数据目录；后面可能跟一个调试端口参数（端口空闲时）。
+	if len(plan.Args) == 0 || plan.Args[0] != UserDataDirFlag+"="+dataDir {
 		t.Errorf("Args = %v", plan.Args)
+	}
+	// 剔除调试端口后应当只剩数据目录一条。
+	for _, a := range plan.Args {
+		if a != plan.Args[0] && !strings.HasPrefix(a, "--remote-debugging-port=") {
+			t.Errorf("出现意料之外的参数: %v", plan.Args)
+		}
 	}
 	if plan.ConfigPath != cfg {
 		t.Errorf("ConfigPath = %q", plan.ConfigPath)

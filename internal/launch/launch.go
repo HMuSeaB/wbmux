@@ -6,6 +6,7 @@ package launch
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,9 +118,50 @@ func Build(opts Options) (Plan, error) {
 		ConfigPath: opts.ConfigPath,
 		DataDir:    dataDir,
 		Env:        env,
-		Args:       []string{UserDataDirFlag + "=" + dataDir},
+		Args:       buildArgs(target.ID, dataDir),
 		Stripped:   stripped,
 	}, nil
+}
+
+// DebugPort 返回某个档位启动客户端时应附带的本地调试端口。
+//
+// 为什么默认带：Chromium 的调试端口只能在启动时开启，错过这一次就要用户
+// 再关一次客户端——而"从 wbmux 里启动客户端"本来就是最自然的路径。
+// 带上它，面板注入（internal/inject）才不需要用户额外跑脚本。
+//
+// 国内版与国际版分开，双开时不会互相抢端口。
+func DebugPort(id variant.ID) int {
+	if id == variant.Intl {
+		return 9223
+	}
+	return 9222
+}
+
+// buildArgs 拼装传给客户端的参数。
+//
+// 调试端口只在能被绑定时才加：端口被别的程序占着时，Chromium 会因为
+// 绑不上而降低启动可靠性——注入是附加功能，绝不能反过来挡住客户端本体。
+func buildArgs(id variant.ID, dataDir string) []string {
+	return buildArgsWithPort(dataDir, DebugPort(id))
+}
+
+// buildArgsWithPort 是 buildArgs 的可注入版本，便于测试覆盖两个分支。
+func buildArgsWithPort(dataDir string, port int) []string {
+	args := []string{UserDataDirFlag + "=" + dataDir}
+	if portFree(port) {
+		args = append(args, fmt.Sprintf("--remote-debugging-port=%d", port))
+	}
+	return args
+}
+
+// portFree 判断回环端口是否还能绑定。只做瞬时探测，不长期占用。
+func portFree(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // CleanEnv 剥离会干扰后端选择的互斥变量，但不注入新值。

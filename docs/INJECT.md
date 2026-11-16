@@ -30,7 +30,10 @@
 | 条件 | 怎么满足 |
 |---|---|
 | **wbmux 在跑** | 启动 `wbmux.exe gui`（托盘常驻）。它每 3 秒巡检一次调试端口 |
-| **客户端带调试端口启动** | 用 `tools\windows\restart-workbuddy-cdp.bat` 启动客户端，它会带上 `--remote-debugging-port=9222` |
+| **客户端带调试端口启动** | **从 wbmux 里启动客户端即可**（面板按钮 / 「双开两侧客户端」/ `wbmux run`）——启动参数里已自动带上 `--remote-debugging-port`。客户端本来就在跑、又不是 wbmux 启动的，才需要用 `tools\windows\restart-workbuddy-cdp.bat` 再拉一次 |
+
+端口按档位分配：国内版 `9222`、国际版 `9223`，双开不打架。端口被别的程序占用时
+wbmux 会**自动跳过**这个参数——注入是附加功能，不能反过来挡住客户端启动。
 
 缺一个就不显示：
 
@@ -42,21 +45,22 @@
 
 ---
 
-## 第一次用：三步
+## 第一次用：两步
 
 ```text
-1. 双击 tools\windows\restart-workbuddy-cdp.bat
-   （会关闭国内版客户端，再带调试端口重新启动；国际版不受影响）
+1. 启动 wbmux.exe gui
 
-2. 启动 wbmux.exe gui
+2. 直接用它启动客户端：面板里点「重启国内客户端」，或「双开两侧客户端」，
+   或命令行 wbmux run cn —— 启动参数里自动带上调试端口
 
-3. 看客户端顶栏右侧，3 秒内出现「● wbmux」胶囊，点开即可
+   之后 3 秒内，客户端顶栏右侧出现「● wbmux」胶囊
 ```
 
-建议给 `restart-workbuddy-cdp.bat` 建一个桌面快捷方式——以后**都用它启动客户端**，
-就不用每次惦记调试参数了。
+只有一种情况需要额外动作：**客户端已经在跑，而且不是从 wbmux 启动的**。
+这时它没有调试端口，用 `tools\windows\restart-workbuddy-cdp.bat` 拉一次即可
+（之后都从 wbmux 启动，就不用再碰这个脚本了）。
 
-脚本参数：
+脚本参数（备用）：
 
 | 参数 | 作用 |
 |---|---|
