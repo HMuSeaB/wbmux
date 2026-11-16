@@ -14,11 +14,21 @@
     --ok: #34d399; --bad: #f87171; --warn: #ebb23a;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
     background: var(--bg); color: var(--ink-0);
     font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    padding: 12px;
+    padding: 12px; overflow-y: auto;
   }
+  /* 弹层内滚动条要细，别把 400px 的面板再挤窄 */
+  body::-webkit-scrollbar { width: 6px; }
+  body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 3px; }
+  body::-webkit-scrollbar-track { background: transparent; }
+
+  /* 可折叠卡片（端点区默认收起，给最近请求腾出高度） */
+  details.card > summary { list-style: none; cursor: pointer; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::after { content: "▾"; float: right; color: var(--ink-3); font-size: 9px; }
   code { font-family: "Cascadia Code", Consolas, monospace; }
 
   .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -52,6 +62,15 @@
   .m-val.warn { color: var(--warn); }
   .m-val.bad { color: var(--bad); }
   .m-label { display: block; font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
+
+  /* 最近请求：一行一条，只放"哪个模型 / 多大上下文 / 多快 / 多久前" */
+  .recent { display: flex; flex-direction: column; gap: 5px; }
+  .recent-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; min-width: 0; }
+  .r-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: none; }
+  .r-dot.bad { background: var(--bad); }
+  .r-model { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1); }
+  .r-meta { flex: none; color: var(--ink-3); font-size: 10.5px; font-family: Consolas, monospace; }
+  .recent-empty { color: var(--ink-3); font-size: 11px; }
   .client-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
   .client-row .name { color: var(--ink-1); }
   .client-row .pid { color: var(--ink-3); font-size: 10.5px; font-family: Consolas, monospace; }
@@ -160,8 +179,8 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="card-title">本机端点（点击复制）</div>
+<details class="card">
+  <summary class="card-title">本机端点（点击展开复制）</summary>
   <div class="ep-label">OpenAI 兼容 Base URL</div>
   <div class="endpoint">
     <code id="ep-openai"></code>
@@ -171,6 +190,13 @@
   <div class="endpoint">
     <code id="ep-search"></code>
     <button data-copy="ep-search">复制</button>
+  </div>
+</details>
+
+<div class="card">
+  <div class="card-title">最近请求</div>
+  <div class="recent" id="recent-list">
+    <div class="recent-empty">加载中…</div>
   </div>
 </div>
 
@@ -254,7 +280,53 @@
           : (last.ttftMs ? "首字 " + (last.ttftMs / 1000).toFixed(1) + "s" : "—"));
       var today = (s && s.today) || {};
       document.getElementById("m-today").textContent = today.tokens ? compact(today.tokens) : "—";
+      renderRecent((s && s.recent) || []);
     }).catch(function () {});
+  }
+
+  // 多久前：只给粗粒度，精确到分钟对这个用途没意义。
+  function ago(sec) {
+    if (!sec || sec < 60) return "刚刚";
+    if (sec < 3600) return Math.floor(sec / 60) + "m";
+    if (sec < 86400) return Math.floor(sec / 3600) + "h";
+    return Math.floor(sec / 86400) + "d";
+  }
+
+  function renderRecent(rows) {
+    var list = document.getElementById("recent-list");
+    list.textContent = "";
+    if (!rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "recent-empty";
+      empty.textContent = "还没有经过本机网关的请求";
+      list.appendChild(empty);
+      return;
+    }
+    rows.slice(0, 5).forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "recent-row";
+
+      var dot = document.createElement("span");
+      dot.className = "r-dot" + (r.ok ? "" : " bad");
+
+      var name = document.createElement("span");
+      name.className = "r-model";
+      name.textContent = r.model || "未知模型";
+      name.title = r.model || "";
+
+      var meta = document.createElement("span");
+      meta.className = "r-meta";
+      var bits = [];
+      if (r.promptTokens) bits.push(compact(r.promptTokens));
+      if (r.tokPerSec) bits.push(Math.round(r.tokPerSec) + "/s");
+      bits.push(ago(r.ageSec));
+      meta.textContent = bits.join(" · ");
+
+      row.appendChild(dot);
+      row.appendChild(name);
+      row.appendChild(meta);
+      list.appendChild(row);
+    });
   }
   loadStats();
   setInterval(loadStats, 5000);

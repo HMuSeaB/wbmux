@@ -24,9 +24,23 @@ import (
 
 // embedStatsSnapshot 是胶囊的轮询响应。
 type embedStatsSnapshot struct {
-	Last      *embedLastStats `json:"last,omitempty"`
-	Today     embedDayStats   `json:"today"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	Last      *embedLastStats    `json:"last,omitempty"`
+	Today     embedDayStats      `json:"today"`
+	Recent    []embedRecentStats `json:"recent"`
+	UpdatedAt time.Time          `json:"updatedAt"`
+}
+
+// embedRecentStats 是面板详情区里的一行。
+//
+// 只留一行放得下的字段；轮询接口带 5 条，体积约 600 字节，
+// 跟只带 1 条几乎没差别。
+type embedRecentStats struct {
+	Model        string  `json:"model"`
+	PromptTokens int     `json:"promptTokens"`
+	TotalTokens  int     `json:"totalTokens"`
+	TokPerSec    float64 `json:"tokPerSec"`
+	OK           bool    `json:"ok"`
+	AgeSec       int64   `json:"ageSec"`
 }
 
 // embedLastStats 是最近一次网关请求的摘要。
@@ -56,8 +70,26 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sum := gatewayaudit.Default().GetSummary(1)
-	out := embedStatsSnapshot{UpdatedAt: time.Now()}
+	sum := gatewayaudit.Default().GetSummary(5)
+	out := embedStatsSnapshot{UpdatedAt: time.Now(), Recent: make([]embedRecentStats, 0, 5)}
+
+	now := time.Now()
+	for _, rec := range sum.RecentRecords {
+		if len(out.Recent) >= 5 {
+			break
+		}
+		row := embedRecentStats{
+			Model:        rec.ModelRequested,
+			PromptTokens: rec.PromptTokens,
+			TotalTokens:  rec.TotalTokens,
+			OK:           rec.StatusCode >= 200 && rec.StatusCode < 300,
+			AgeSec:       int64(now.Sub(rec.Timestamp).Seconds()),
+		}
+		if rate := streamRate(rec); rate > 0 {
+			row.TokPerSec = rate
+		}
+		out.Recent = append(out.Recent, row)
+	}
 
 	// 日度统计按本地时区归档，比对日期字符串即可。
 	today := time.Now().Format("2006-01-02")
@@ -86,12 +118,20 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		}
 		// 生成速率只在流式、且确实存在生成阶段时计算；
 		// 少量 token（<20）的请求算出来的数字噪声太大，直接留 0 让前端跳过。
-		genMs := rec.DurationMs - rec.TTFTMs
-		if rec.IsStream && rec.CompletionTokens >= 20 && genMs >= 200 {
-			last.TokPerSec = math.Round(float64(rec.CompletionTokens)/float64(genMs)*1000*10) / 10
+		if rate := streamRate(rec); rate > 0 {
+			last.TokPerSec = rate
 		}
 		out.Last = last
 	}
 
 	writeJSON(w, out)
+}
+
+// streamRate 计算纯生成阶段的 token 速率；样本太小时返回 0。
+func streamRate(rec gatewayaudit.Record) float64 {
+	genMs := rec.DurationMs - rec.TTFTMs
+	if !rec.IsStream || rec.CompletionTokens < 20 || genMs < 200 {
+		return 0
+	}
+	return math.Round(float64(rec.CompletionTokens)/float64(genMs)*1000*10) / 10
 }
