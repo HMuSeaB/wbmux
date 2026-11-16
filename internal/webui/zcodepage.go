@@ -70,6 +70,7 @@ func (s *Server) handleZCodeExport(w http.ResponseWriter, r *http.Request) {
 		Dir           string `json:"dir"`
 		WithReasoning bool   `json:"withReasoning"`
 		NoTools       bool   `json:"noTools"`
+		DeleteSource  bool   `json:"deleteSource"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体无法解析："+err.Error())
@@ -105,10 +106,63 @@ func (s *Server) handleZCodeExport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	deleted := false
+	delNote := ""
+	if req.DeleteSource {
+		if rows, err := zcode.DeleteSession(s.probe(), req.ID); err != nil {
+			delNote = "；但从 ZCode 清理原会话失败：" + err.Error()
+		} else {
+			deleted = true
+			delNote = fmt.Sprintf("；已从 ZCode 删除原会话（清理了 %d 行，已自动备份）", rows)
+		}
+	}
+
 	writeJSON(w, map[string]any{
-		"path":  path,
-		"title": tr.Title,
-		"msgs":  len(tr.Msgs),
-		"note":  fmt.Sprintf("已导出 %d 条消息到 %s", len(tr.Msgs), path),
+		"path":    path,
+		"title":   tr.Title,
+		"msgs":    len(tr.Msgs),
+		"deleted": deleted,
+		"note":    fmt.Sprintf("已导出 %d 条消息到 %s%s", len(tr.Msgs), path, delNote),
 	})
 }
+
+// handleZCodeDelete 从 ZCode 数据库中彻底删除会话。
+func (s *Server) handleZCodeDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req struct {
+		ID      string `json:"id"`
+		Confirm bool   `json:"confirm"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析："+err.Error())
+		return
+	}
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 id")
+		return
+	}
+	if !req.Confirm {
+		writeJSON(w, map[string]any{
+			"needConfirm": true,
+			"note":        "这将从 ZCode 数据库中彻底删除该会话及其全部对话片段（删前会自动创建数据库备份）。是否继续？",
+		})
+		return
+	}
+
+	rows, err := zcode.DeleteSession(s.probe(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"deleted": true,
+		"rows":    rows,
+		"note":    fmt.Sprintf("已成功从 ZCode 删除该会话（清理了 %d 行记录，已自动备份数据库）", rows),
+	})
+}
+

@@ -25,6 +25,7 @@ package zcode
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -352,3 +353,82 @@ func List(probe *variant.Probe, limit int) ([]Row, error) {
 	}
 	return out, nil
 }
+
+// BackupDB 在改动 ZCode 数据库前进行整份快照备份。
+// 备份落点在 ~/.zcode/cli/db/backups/db-YYYYMMDD-HHMMSS.sqlite。
+func BackupDB(probe *variant.Probe) (string, error) {
+	dbPath, err := DBPath(probe)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		return "", fmt.Errorf("ZCode 数据库不存在：%s", dbPath)
+	}
+	dir := filepath.Join(filepath.Dir(dbPath), "backups")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建备份目录失败：%w", err)
+	}
+	dest := filepath.Join(dir, fmt.Sprintf("db-%s.sqlite", time.Now().Format("20060102-150405")))
+	src, err := os.Open(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("打开源数据库失败：%w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(dest)
+	if err != nil {
+		return "", fmt.Errorf("创建备份文件失败：%w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = os.Remove(dest)
+		return "", fmt.Errorf("复制备份数据失败：%w", err)
+	}
+	_ = dst.Sync()
+	return dest, nil
+}
+
+// DeleteSession 从 ZCode 数据库中彻底删除一个会话及其关联的所有数据（6 张表）。
+// 为保证安全，执行前会强制进行一次自动快照备份。
+func DeleteSession(probe *variant.Probe, sessionID string) (int, error) {
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		return 0, fmt.Errorf("缺少会话 id")
+	}
+	dbPath, err := DBPath(probe)
+	if err != nil {
+		return 0, err
+	}
+	if !Available(probe) {
+		return 0, fmt.Errorf("ZCode 数据库不存在")
+	}
+
+	// 1. 强制删前备份
+	if _, err := BackupDB(probe); err != nil {
+		return 0, fmt.Errorf("删除前自动备份失败，已取消删除操作：%w", err)
+	}
+
+	// 2. 级联删除 6 张表
+	tables := []string{"part", "message", "todo", "session_entry", "session_input", "session"}
+	stmts := []migrate.Statement{
+		{SQL: "DELETE FROM part WHERE session_id = ?", Params: []any{id}},
+		{SQL: "DELETE FROM message WHERE session_id = ?", Params: []any{id}},
+		{SQL: "DELETE FROM todo WHERE session_id = ?", Params: []any{id}},
+		{SQL: "DELETE FROM session_entry WHERE session_id = ?", Params: []any{id}},
+		{SQL: "DELETE FROM session_input WHERE session_id = ?", Params: []any{id}},
+		{SQL: "DELETE FROM session WHERE id = ?", Params: []any{id}},
+	}
+
+	changed, err := migrate.DeleteRows(probe, variant.CN, dbPath, tables, stmts)
+	if err != nil {
+		return 0, fmt.Errorf("执行删除失败：%w", err)
+	}
+
+	total := 0
+	for _, c := range changed {
+		total += c
+	}
+	return total, nil
+}
+

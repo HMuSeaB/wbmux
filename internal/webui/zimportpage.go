@@ -2,10 +2,12 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/sessions"
+	"github.com/HMuSeaB/wbmux/internal/zcode"
 	"github.com/HMuSeaB/wbmux/internal/zimport"
 )
 
@@ -13,7 +15,8 @@ import (
 //
 // 这是**写**操作，所以额外交代清楚：
 //   - 目标档位的客户端必须在关闭状态（zimport 会拒绝，并说明原因）；
-//   - 只增不改：新造会话 id，绝不覆盖已有的；ZCode 的数据一个字节不动。
+//   - 只增不改：新造会话 id，绝不覆盖已有的；
+//   - 若显式要求 deleteSource，导入成功后从 ZCode 级联删除原会话（删前自动备份）。
 func (s *Server) handleZImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
@@ -26,6 +29,7 @@ func (s *Server) handleZImport(w http.ResponseWriter, r *http.Request) {
 		Title         string `json:"title"`
 		WithReasoning bool   `json:"withReasoning"`
 		Confirm       bool   `json:"confirm"`
+		DeleteSource  bool   `json:"deleteSource"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体无法解析："+err.Error())
@@ -69,14 +73,27 @@ func (s *Server) handleZImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
+
+	deleted := false
+	delNote := ""
+	if req.DeleteSource {
+		if rows, err := zcode.DeleteSession(s.probe(), req.ID); err != nil {
+			delNote = "；但从 ZCode 清理原会话失败：" + err.Error()
+		} else {
+			deleted = true
+			delNote = fmt.Sprintf("；已从 ZCode 删除原会话（清理了 %d 行，已自动备份）", rows)
+		}
+	}
+
 	writeJSON(w, map[string]any{
 		"sessionId": res.SessionID,
 		"jsonlPath": res.JSONLPath,
 		"title":     res.Title,
 		"project":   res.Project,
 		"msgs":      res.Msgs,
+		"deleted":   deleted,
 		"note": "已导入到「" + v.Label() + "」。启动该档位客户端即可在会话列表里看到：" +
-			res.Title,
+			res.Title + delNote,
 		"skipped": res.Skipped,
 	})
 }

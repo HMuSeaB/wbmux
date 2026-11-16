@@ -133,3 +133,41 @@ func TestZImportEndpoint(t *testing.T) {
 		t.Errorf("仅询问时不该写文件，得到：%v", entries)
 	}
 }
+
+func TestZCodeDeleteEndpoint(t *testing.T) {
+	home := t.TempDir()
+	probe := varianttest.Probe(home)
+	srv, err := New(Options{Token: "tok", Probe: probe})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// GET 应得 405
+	rec := httptest.NewRecorder()
+	srv.handleZCodeDelete(rec, httptest.NewRequest(http.MethodGet, "/api/zcode/delete", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET 应得 405，得到 %d", rec.Code)
+	}
+
+	// 缺 id 应得 400
+	rec = httptest.NewRecorder()
+	srv.handleZCodeDelete(rec, httptest.NewRequest(http.MethodPost, "/api/zcode/delete", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("缺 id 应得 400，得到 %d", rec.Code)
+	}
+
+	// 不带 confirm 应返回 needConfirm
+	rec = httptest.NewRecorder()
+	srv.handleZCodeDelete(rec, httptest.NewRequest(http.MethodPost, "/api/zcode/delete", strings.NewReader(`{"id":"sess_abc"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("未确认应回 200 needConfirm，得到 %d", rec.Code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("响应不是 JSON：%v", err)
+	}
+	if res["needConfirm"] != true {
+		t.Errorf("期望 needConfirm 为 true，得到 %v", res)
+	}
+}
+
