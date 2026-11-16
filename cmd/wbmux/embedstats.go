@@ -24,20 +24,24 @@ func embedStatsText() (string, string) {
 		return "暂无请求", ""
 	}
 	rec := sum.RecentRecords[0]
-	parts := []string{compactTokens(rec.PromptTokens)}
 
-	// 速率只在"最近还在用"时才有意义。审计是请求级快照，
-	// 一天前那条请求算出来的 241/s 挂在这里会让人以为此刻这么快——宁可显示空闲。
-	if time.Since(rec.Timestamp) < 30*time.Minute {
-		if rec.IsStream {
-			if rate := genRate(rec.CompletionTokens, rec.DurationMs, rec.TTFTMs); rate > 0 {
-				parts = append(parts, fmt.Sprintf("%.0f/s", rate))
-			}
-		} else if rec.TTFTMs > 0 {
-			parts = append(parts, fmt.Sprintf("首字 %.1fs", float64(rec.TTFTMs)/1000))
+	// 超过 30 分钟没有新请求，上下文数字也一起失效：它属于上一次会话，
+	// 跟眼前这个窗口可能毫无关系。这时候只说"空闲"，不摆过期数据。
+	//
+	// 已知局限：用户切到客户端自带模型时，请求不经过本机网关，
+	// 这里看到的就是"最后一次代理请求"。真正的识别需要读 DOM 上的
+	// 当前模型名（见 docs/INJECT.md 的后续计划）。
+	if time.Since(rec.Timestamp) >= 30*time.Minute {
+		return "空闲", ""
+	}
+
+	parts := []string{compactTokens(rec.PromptTokens)}
+	if rec.IsStream {
+		if rate := genRate(rec.CompletionTokens, rec.DurationMs, rec.TTFTMs); rate > 0 {
+			parts = append(parts, fmt.Sprintf("%.0f/s", rate))
 		}
-	} else {
-		parts = append(parts, "空闲")
+	} else if rec.TTFTMs > 0 {
+		parts = append(parts, fmt.Sprintf("首字 %.1fs", float64(rec.TTFTMs)/1000))
 	}
 
 	// 今日用量为 0 时整段省掉——"今日 0"只会让顶栏更吵。

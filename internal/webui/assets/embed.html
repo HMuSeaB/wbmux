@@ -271,11 +271,13 @@
   function loadStats() {
     api("/api/embed/stats").then(function (s) {
       var last = (s && s.last) || {};
-      var ctx = document.getElementById("m-ctx");
-      ctx.textContent = last.promptTokens ? compact(last.promptTokens) : "—";
-      ctx.className = "m-val" + (last.promptTokens >= 512000 ? " bad" : (last.promptTokens >= 256000 ? " warn" : ""));
+      // 数据超过 30 分钟就不再代表"现在"，两格都显示为空，
+      // 避免用户以为自己此刻上下文这么大/这么快。
       var stale = (last.ageSec || 0) > 1800;
-      document.getElementById("m-rate").textContent = stale ? "空闲"
+      var ctx = document.getElementById("m-ctx");
+      ctx.textContent = stale ? "空闲" : (last.promptTokens ? compact(last.promptTokens) : "—");
+      ctx.className = "m-val" + (!stale && last.promptTokens >= 512000 ? " bad" : (!stale && last.promptTokens >= 256000 ? " warn" : ""));
+      document.getElementById("m-rate").textContent = stale ? "—"
         : (last.tokPerSec ? Math.round(last.tokPerSec) + "/s"
           : (last.ttftMs ? "首字 " + (last.ttftMs / 1000).toFixed(1) + "s" : "—"));
       var today = (s && s.today) || {};
