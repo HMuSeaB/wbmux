@@ -85,25 +85,37 @@ func prepareNative(target variant.Backend, probe *variant.Probe, opts Options) (
 		return Result{}, variant.NotFoundError(target.ID, inst)
 	}
 
+	dataDir := inst.DataDir
+	if dataDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dataDir = filepath.Join(home, target.DataFolderName)
+		} else {
+			dataDir = filepath.Join(filepath.Dir(inst.Executable), target.DataFolderName)
+		}
+	}
+
 	// 即便不注入配置，也把残留的覆盖变量剥掉，
 	// 否则用户环境里的旧值会让"原生"不再原生。
 	env, stripped := launch.CleanEnv(opts.ParentEnv)
+
+	plan := launch.Plan{
+		Variant:    target.ID,
+		Executable: inst.Executable,
+		DataDir:    dataDir,
+		Env:        env,
+		Args:       launch.BuildArgs(target.ID, dataDir),
+		Stripped:   stripped,
+	}
 
 	return Result{
 		Target:      target,
 		Host:        target,
 		Native:      true,
 		Executable:  inst.Executable,
-		DataDir:     inst.DataDir,
+		DataDir:     dataDir,
 		Stripped:    stripped,
-		CommandLine: inst.Executable,
-		plan: launch.Plan{
-			Variant:    target.ID,
-			Executable: inst.Executable,
-			DataDir:    inst.DataDir,
-			Env:        env,
-			Stripped:   stripped,
-		},
+		CommandLine: plan.CommandLine(),
+		plan:        plan,
 	}, nil
 }
 

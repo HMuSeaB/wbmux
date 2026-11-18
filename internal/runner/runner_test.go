@@ -131,6 +131,15 @@ func TestPrepareNativeModeSkipsConfig(t *testing.T) {
 	if res.Executable != env.Exe[variant.Intl] {
 		t.Errorf("主程序 = %q，期望 %q", res.Executable, env.Exe[variant.Intl])
 	}
+	// 原生模式应当附带数据目录参数，并在端口空闲时附带调试端口参数
+	if len(res.plan.Args) == 0 || !strings.HasPrefix(res.plan.Args[0], "--user-data-dir=") {
+		t.Errorf("原生模式启动计划未附带数据目录: %v", res.plan.Args)
+	}
+	for _, a := range res.plan.Args {
+		if a != res.plan.Args[0] && !strings.HasPrefix(a, "--remote-debugging-port=") {
+			t.Errorf("原生模式出现意料之外的参数: %v", res.plan.Args)
+		}
+	}
 }
 
 func TestPrepareNativeModeStripsOverrideEnv(t *testing.T) {

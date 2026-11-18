@@ -6,63 +6,119 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
+	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // embedStatsText 生成胶囊上那行指标文字与告警等级。
 //
-// 格式：`187k · 212/s · 今日 42M`
+// 格式：`187k · 212/s · 今日 42M` 或 `412k · 混元 · 今日 42M`
 //
 // 为什么上下文放在最前面：速率只是"这次快不快"，上下文才是"会不会出事"。
 // 1M 上下文的模型很容易悄悄吃满然后被截断，用户毫无感知——所以
 // 256k 起转黄、512k 转红，让它变成一眼可见的信号。
 //
-// 数据是请求级快照：tok/s 表示上一次请求首字之后的平均生成速度，
-// 不是此刻正在流的实时值（后者要改 SSE 转发链路）。
+// 双源智能融合（借鉴 chuanban 增量遥测架构）：
+//   - 经过网关的代理请求（如国际限免模型）：可获得精确的流式速率；
+//   - 国内自带直连模型（不经网关）：通过 sessiontelemetry 监听本地活跃
+//     会话日志的 rawUsage，O(1) 提取上下文 tokens 与模型名，消灭统计盲区。
 func embedStatsText() (string, string) {
 	sum := gatewayaudit.Default().GetSummary(1)
-	if len(sum.RecentRecords) == 0 {
+	var gwRec *gatewayaudit.Record
+	if len(sum.RecentRecords) > 0 {
+		gwRec = &sum.RecentRecords[0]
+	}
+
+	// 读取本地会话日志中最近的交互
+	sessMetric := sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe())
+
+	// 判定哪个更新：若本地会话记录晚于网关记录，说明当前在用国内自带模型直连
+	useLocal := false
+	if sessMetric != nil && !sessMetric.Timestamp.IsZero() {
+		if gwRec == nil {
+			useLocal = true
+		} else if sessMetric.Timestamp.After(gwRec.Timestamp.Add(2 * time.Second)) {
+			useLocal = true
+		}
+	}
+
+	if gwRec == nil && !useLocal {
 		return "暂无请求", ""
 	}
-	rec := sum.RecentRecords[0]
 
-	// 超过 30 分钟没有新请求，上下文数字也一起失效：它属于上一次会话，
-	// 跟眼前这个窗口可能毫无关系。这时候只说"空闲"，不摆过期数据。
-	//
-	// 已知局限：用户切到客户端自带模型时，请求不经过本机网关，
-	// 这里看到的就是"最后一次代理请求"。真正的识别需要读 DOM 上的
-	// 当前模型名（见 docs/INJECT.md 的后续计划）。
-	if time.Since(rec.Timestamp) >= 30*time.Minute {
+	var promptTokens int
+	var timestamp time.Time
+	var midPart string
+
+	if useLocal {
+		promptTokens = sessMetric.PromptTokens
+		timestamp = sessMetric.Timestamp
+		modelName := sessMetric.Model
+		if modelName == "" {
+			modelName = "国内自带"
+		}
+		midPart = cleanCapsuleModel(modelName)
+	} else {
+		promptTokens = gwRec.PromptTokens
+		timestamp = gwRec.Timestamp
+		if gwRec.IsStream {
+			if rate := genRate(gwRec.CompletionTokens, gwRec.DurationMs, gwRec.TTFTMs); rate > 0 {
+				midPart = fmt.Sprintf("%.0f/s", rate)
+			}
+		} else if gwRec.TTFTMs > 0 {
+			midPart = fmt.Sprintf("首字 %.1fs", float64(gwRec.TTFTMs)/1000)
+		}
+	}
+
+	// 超过 30 分钟没有新交互，显示空闲
+	if time.Since(timestamp) >= 30*time.Minute {
 		return "空闲", ""
 	}
 
-	parts := []string{compactTokens(rec.PromptTokens)}
-	if rec.IsStream {
-		if rate := genRate(rec.CompletionTokens, rec.DurationMs, rec.TTFTMs); rate > 0 {
-			parts = append(parts, fmt.Sprintf("%.0f/s", rate))
-		}
-	} else if rec.TTFTMs > 0 {
-		parts = append(parts, fmt.Sprintf("首字 %.1fs", float64(rec.TTFTMs)/1000))
+	parts := []string{compactTokens(promptTokens)}
+	if midPart != "" {
+		parts = append(parts, midPart)
 	}
 
 	// 今日用量为 0 时整段省掉——"今日 0"只会让顶栏更吵。
 	today := time.Now().Format("2006-01-02")
+	todayTokens := 0
 	for _, d := range sum.DailyStats {
 		if d.Date == today {
-			if d.TotalTokens > 0 {
-				parts = append(parts, "今日 "+compactTokens(d.TotalTokens))
-			}
+			todayTokens = d.TotalTokens
 			break
 		}
+	}
+	if useLocal && timestamp.Format("2006-01-02") == today {
+		todayTokens += sessMetric.TotalTokens
+	}
+	if todayTokens > 0 {
+		parts = append(parts, "今日 "+compactTokens(todayTokens))
 	}
 
 	level := ""
 	switch {
-	case rec.PromptTokens >= 512_000:
+	case promptTokens >= 512_000:
 		level = "bad"
-	case rec.PromptTokens >= 256_000:
+	case promptTokens >= 256_000:
 		level = "warn"
 	}
 	return strings.Join(parts, " · "), level
+}
+
+// cleanCapsuleModel 紧凑规范化顶栏胶囊上的模型名称，避免冗长厂商前缀或区服后缀挤压排版。
+func cleanCapsuleModel(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSuffix(name, "-sg")
+	name = strings.TrimSuffix(name, "-sg2")
+	name = strings.TrimSuffix(name, "-latest")
+	if len(name) > 16 {
+		name = name[:14] + ".."
+	}
+	return name
 }
 
 // genRate 计算纯生成阶段的 token 速率。

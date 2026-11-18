@@ -66,6 +66,8 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 
 // handleShortcut 在桌面创建/覆盖 wbmux.lnk（internal/shortcut）。
 // "装好后想要个双击入口"是装完/升级完的自然下一步，收进界面少一次翻目录。
+// 同时会自动扫描并修补 WorkBuddy 客户端的快捷方式，附带 --remote-debugging-port 参数，
+// 确保客户端脱离 wbmux 直接双击启动时，也能随时被注入顶栏胶囊与内嵌面板。
 func (s *Server) handleShortcut(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
@@ -76,7 +78,12 @@ func (s *Server) handleShortcut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"path": path})
+	clientRes, _ := shortcut.PatchClientShortcuts(s.probe())
+	writeJSON(w, map[string]any{
+		"path":          path,
+		"clientPatched": clientRes.Patched,
+		"clientCreated": clientRes.Created,
+	})
 }
 
 // handleUpdateTargetInfo 返回当前主程序路径与临时下载缓存目录，

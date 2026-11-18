@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
+	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 )
 
 // ---------- 嵌入胶囊的指标快照 ----------
@@ -122,6 +123,54 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			last.TokPerSec = rate
 		}
 		out.Last = last
+	}
+
+	// 双源融合：检测本地活跃会话日志（捕获国内自带模型直连）
+	sessMetric := sessiontelemetry.GetLatestSessionUsage(s.probe())
+	if sessMetric != nil && !sessMetric.Timestamp.IsZero() {
+		useLocal := false
+		if len(sum.RecentRecords) == 0 {
+			useLocal = true
+		} else if sessMetric.Timestamp.After(sum.RecentRecords[0].Timestamp.Add(2 * time.Second)) {
+			useLocal = true
+		}
+
+		if useLocal {
+			modelName := sessMetric.Model
+			if modelName == "" {
+				modelName = "国内自带模型"
+			}
+			out.Last = &embedLastStats{
+				Model:            modelName,
+				PromptTokens:     sessMetric.PromptTokens,
+				CompletionTokens: sessMetric.CompletionTokens,
+				AgeSec:           int64(time.Since(sessMetric.Timestamp).Seconds()),
+			}
+			localRow := embedRecentStats{
+				Model:        modelName + " (直连)",
+				PromptTokens: sessMetric.PromptTokens,
+				TotalTokens:  sessMetric.TotalTokens,
+				OK:           true,
+				AgeSec:       int64(time.Since(sessMetric.Timestamp).Seconds()),
+			}
+			out.Recent = append([]embedRecentStats{localRow}, out.Recent...)
+			if len(out.Recent) > 5 {
+				out.Recent = out.Recent[:5]
+			}
+			if sessMetric.Timestamp.Format("2006-01-02") == today {
+				if out.Today.Tokens == 0 {
+					out.Today.Tokens = sessMetric.TotalTokens
+					out.Today.Prompt = sessMetric.PromptTokens
+					out.Today.Completion = sessMetric.CompletionTokens
+					out.Today.Requests = 1
+				} else {
+					out.Today.Tokens += sessMetric.TotalTokens
+					out.Today.Prompt += sessMetric.PromptTokens
+					out.Today.Completion += sessMetric.CompletionTokens
+					out.Today.Requests++
+				}
+			}
+		}
 	}
 
 	writeJSON(w, out)

@@ -137,6 +137,11 @@ func DebugPort(id variant.ID) int {
 	return 9222
 }
 
+// BuildArgs 拼装传给客户端的参数（对外导出，供 runner 原生启动与覆盖启动统一复用）。
+func BuildArgs(id variant.ID, dataDir string) []string {
+	return buildArgs(id, dataDir)
+}
+
 // buildArgs 拼装传给客户端的参数。
 //
 // 调试端口只在能被绑定时才加：端口被别的程序占着时，Chromium 会因为

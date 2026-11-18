@@ -351,7 +351,11 @@
     msg.textContent = "创建中…";
     api("/api/shortcut", { method: "POST" }).then(function (r) {
       msg.textContent = "已创建";
-      toast("桌面快捷方式已就绪：" + r.path, "ok");
+      var tip = "桌面快捷方式已就绪：" + r.path;
+      if ((r.clientPatched && r.clientPatched.length > 0) || (r.clientCreated && r.clientCreated.length > 0)) {
+        tip += "（已为 WorkBuddy 快捷方式开启调试端口，双击启动即可直接使用顶栏胶囊）";
+      }
+      toast(tip, "ok");
     }).catch(function (e) {
       msg.textContent = "失败";
       toast(e.message, "bad");

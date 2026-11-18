@@ -20,10 +20,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/tray"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // ExePath 返回"可以放心写进快捷方式"的程序路径。
@@ -238,3 +240,142 @@ func createFor(exe string) (string, error) {
 	}
 	return path, nil
 }
+
+// PatchResult 汇总对客户端快捷方式的修补/补充结果。
+type PatchResult struct {
+	Patched []string `json:"patched,omitempty"` // 已追加调试端口参数的快捷方式
+	Created []string `json:"created,omitempty"` // 新创建到桌面的快捷方式
+}
+
+// PatchClientShortcuts 检查系统中的 WorkBuddy 快捷方式并自动修补调试端口参数。
+// 解决用户直接双击客户端图标启动时未开启 CDP 调试端口（导致顶栏胶囊无法注入）的痛点。
+// 若桌面尚无快捷方式，会自动创建一个带调试端口的快捷方式。
+func PatchClientShortcuts(probe *variant.Probe) (PatchResult, error) {
+	if runtime.GOOS != "windows" {
+		return PatchResult{}, nil
+	}
+	if probe == nil {
+		probe = variant.DefaultProbe()
+	}
+
+	type targetItem struct {
+		ID   variant.ID
+		Exe  string
+		Port int
+		Name string
+	}
+	var targets []targetItem
+
+	cnInst := probe.Detect(variant.CN, "")
+	if cnInst.Found && cnInst.Executable != "" {
+		targets = append(targets, targetItem{variant.CN, cnInst.Executable, 9222, "WorkBuddy"})
+	}
+
+	intlInst := probe.Detect(variant.Intl, "")
+	if intlInst.Found && intlInst.Executable != "" {
+		targets = append(targets, targetItem{variant.Intl, intlInst.Executable, 9223, "WorkBuddy AI"})
+	}
+
+	if len(targets) == 0 {
+		return PatchResult{}, nil
+	}
+
+	psQuote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+	var dirsExpr string
+	if desktopOverride != "" {
+		dirsExpr = "@(" + psQuote(desktopOverride) + ")"
+	} else {
+		dirsExpr = "@([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('CommonPrograms'))"
+	}
+
+	desktopExpr := "$desktop = [Environment]::GetFolderPath('Desktop'); "
+	if desktopOverride != "" {
+		desktopExpr = "$desktop = " + psQuote(desktopOverride) + "; "
+	}
+
+	var targetList []string
+	for _, t := range targets {
+		targetList = append(targetList, fmt.Sprintf("@{ Name = %s; Exe = %s; Port = %d }", psQuote(t.Name), psQuote(t.Exe), t.Port))
+	}
+	targetDefs := "$targets = @(" + strings.Join(targetList, ", ") + "); "
+
+	script := "$ErrorActionPreference = 'Stop'; " +
+		"trap { [Console]::Error.WriteLine($_.Exception.Message); exit 9 }; " +
+		"[Console]::OutputEncoding = [Text.Encoding]::UTF8; " +
+		"$ws = New-Object -ComObject WScript.Shell; " +
+		desktopExpr +
+		"$scanDirs = " + dirsExpr + "; " +
+		targetDefs +
+		`
+$foundOnDesktop = @{}
+
+foreach ($d in $scanDirs) {
+    if (Test-Path $d) {
+        Get-ChildItem -Path $d -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $lnkPath = $_.FullName
+                $sc = $ws.CreateShortcut($lnkPath)
+                $targetPath = $sc.TargetPath
+                foreach ($t in $targets) {
+                    if ($targetPath -and ($targetPath.ToLower() -eq $t.Exe.ToLower())) {
+                        if ($d.ToLower() -eq $desktop.ToLower()) {
+                            $foundOnDesktop[$t.Name] = $true
+                        }
+                        $arg = "--remote-debugging-port=" + $t.Port
+                        if (-not $sc.Arguments -or -not ($sc.Arguments -match "--remote-debugging-port")) {
+                            $sc.Arguments = ($sc.Arguments + " " + $arg).Trim()
+                            $sc.Save()
+                            Write-Output ("PATCHED:" + $lnkPath)
+                        }
+                    }
+                }
+            } catch {}
+        }
+    }
+}
+
+if (Test-Path $desktop) {
+    foreach ($t in $targets) {
+        if (-not $foundOnDesktop[$t.Name]) {
+            $newPath = Join-Path $desktop ($t.Name + ".lnk")
+            try {
+                $sc = $ws.CreateShortcut($newPath)
+                $sc.TargetPath = $t.Exe
+                $sc.WorkingDirectory = Split-Path $t.Exe
+                $sc.Arguments = "--remote-debugging-port=" + $t.Port
+                $sc.Description = $t.Name + " (带调试端口)"
+                $sc.Save()
+                Write-Output ("CREATED:" + $newPath)
+            } catch {}
+        }
+    }
+}
+`
+
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	hideConsole(cmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return PatchResult{}, fmt.Errorf("修补客户端快捷方式失败：%s", detail)
+	}
+
+	var res PatchResult
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "PATCHED:") {
+			res.Patched = append(res.Patched, strings.TrimPrefix(trimmed, "PATCHED:"))
+		} else if strings.HasPrefix(trimmed, "CREATED:") {
+			res.Created = append(res.Created, strings.TrimPrefix(trimmed, "CREATED:"))
+		}
+	}
+	return res, nil
+}
+

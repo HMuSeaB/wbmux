@@ -10,6 +10,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/HMuSeaB/wbmux/internal/config"
+	"github.com/HMuSeaB/wbmux/internal/variant/varianttest"
 )
 
 // TestLooksTemporary 钉住"这个 exe 位置能不能写进快捷方式"。
@@ -268,3 +269,26 @@ func TestDesktopOverrideIsHonored(t *testing.T) {
 		t.Errorf("注入的桌面里没有产物：%v", err)
 	}
 }
+
+func TestPatchClientShortcuts(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows 专属")
+	}
+	fakeDesktop := t.TempDir()
+	defer DesktopForTest(fakeDesktop)()
+
+	env := varianttest.New(t)
+
+	res, err := PatchClientShortcuts(env.Probe)
+	if err != nil {
+		t.Fatalf("PatchClientShortcuts: %v", err)
+	}
+	if len(res.Created) == 0 {
+		t.Errorf("应该在隔离桌面创建快捷方式，但 Created 为空: %+v", res)
+	}
+	createdLnk := filepath.Join(fakeDesktop, "WorkBuddy.lnk")
+	if _, err := os.Stat(createdLnk); err != nil {
+		t.Errorf("未在隔离桌面找到创建的 WorkBuddy.lnk: %v", err)
+	}
+}
+
