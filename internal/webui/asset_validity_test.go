@@ -3,9 +3,42 @@ package webui
 import (
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 )
+
+// TestEmbedHTMLThresholds 锁死胶囊与面板的同一口径：上下文告警阈值
+// （256k/512k）与 stale 分档（30/120 分钟）的唯一来源是 Go 端
+// internal/embedstats，embed.html 里的数字必须与之一致。
+// 两边各写一份硬编码是漂移过的（2026-11-19 之前就是两份），
+// 改一边忘另一边时这个测试先炸。
+func TestEmbedHTMLThresholds(t *testing.T) {
+	data, err := assets.ReadFile("assets/embed.html")
+	if err != nil {
+		t.Fatalf("assets/embed.html 缺失: %v", err)
+	}
+	htmlStr := string(data)
+	for _, want := range []string{
+		strconv.Itoa(embedstats.ContextWarnTokens),        // 256000
+		strconv.Itoa(embedstats.ContextBadTokens),         // 512000
+		strconv.Itoa(int(embedstats.AgedAfter.Seconds())), // 1800
+		strconv.Itoa(int(embedstats.IdleAfter.Seconds())), // 7200
+	} {
+		if !strings.Contains(htmlStr, want) {
+			t.Errorf("embed.html 缺少与 Go 端 internal/embedstats 一致的阈值 %q", want)
+		}
+	}
+	// 新鲜度三档与来源标注的渲染入口必须存在：删了其中一个，
+	// 面板就悄悄退回"二值 stale / 无来源"的旧行为。
+	for _, sym := range []string{"STALE_AGED_SEC", "STALE_IDLE_SEC", "sourceLabel", "setSrcLine", "visibilitychange"} {
+		if !strings.Contains(htmlStr, sym) {
+			t.Errorf("embed.html 缺少关键符号 %q", sym)
+		}
+	}
+}
 
 // TestIndexHTMLValidity 作为持续集成与防呆防护用例：
 // 检验 embedded 模块化前端资源完整性、RenderIndexPage 聚合输出以及脚本语法的健全性，
