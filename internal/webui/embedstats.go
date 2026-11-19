@@ -226,7 +226,8 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			TotalTokens:  rec.TotalTokens,
 			OK:           rec.StatusCode >= 200 && rec.StatusCode < 300,
 			AgeSec:       int64(now.Sub(rec.Timestamp).Seconds()),
-			Source:       "gateway",
+			Source:       recordSource(rec),
+			Side:         rec.Side,
 		}
 		if rate := streamRate(rec); rate > 0 {
 			row.TokPerSec = rate
@@ -260,7 +261,8 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			ContextScale:     rec.ContextScale,
 			IsStream:         rec.IsStream,
 			AgeSec:           int64(time.Since(rec.Timestamp).Seconds()),
-			Source:           "gateway",
+			Source:           recordSource(rec),
+			Side:             rec.Side,
 			Freshness:        string(embedstats.Classify(time.Since(rec.Timestamp))),
 		}
 		// 生成速率只在流式、且确实存在生成阶段时计算；
@@ -297,32 +299,9 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 				Freshness:        string(embedstats.Classify(time.Since(sessMetric.Timestamp))),
 			}
 			lastAt = sessMetric.Timestamp
-			localRow := embedRecentStats{
-				Model:        modelName,
-				PromptTokens: sessMetric.PromptTokens,
-				TotalTokens:  sessMetric.TotalTokens,
-				OK:           true,
-				AgeSec:       int64(time.Since(sessMetric.Timestamp).Seconds()),
-				Source:       "local",
-				Side:         sessMetric.Side,
-			}
-			out.Recent = append([]embedRecentStats{localRow}, out.Recent...)
-			if len(out.Recent) > 5 {
-				out.Recent = out.Recent[:5]
-			}
-			if sessMetric.Timestamp.Format("2006-01-02") == today {
-				if out.Today.Tokens == 0 {
-					out.Today.Tokens = sessMetric.TotalTokens
-					out.Today.Prompt = sessMetric.PromptTokens
-					out.Today.Completion = sessMetric.CompletionTokens
-					out.Today.Requests = 1
-				} else {
-					out.Today.Tokens += sessMetric.TotalTokens
-					out.Today.Prompt += sessMetric.PromptTokens
-					out.Today.Completion += sessMetric.CompletionTokens
-					out.Today.Requests++
-				}
-			}
+			// 直连记录已由 daemon 落进账本（ObserveLocalSession），Recent 与
+			// Today 直接读账本，不再另拼本地行、也不再把最新一条叠进今日——
+			// 否则同一条会在账本与叠加里各算一次。
 		}
 	}
 
@@ -359,6 +338,16 @@ func (s *Server) serveEmbedLast(candidate *embedLastStats, at time.Time) *embedL
 	served.AgeSec = int64(time.Since(servedAt).Seconds())
 	served.Freshness = string(embedstats.Classify(time.Since(servedAt)))
 	return served
+}
+
+// recordSource 返回账本记录的来源：直连为 "local"，网关（包括落盘在先、
+// Source 为空的老记录）为 "gateway"。Side 只从记录里取——网关记录没有
+// 档位归属，别编。
+func recordSource(rec gatewayaudit.Record) string {
+	if rec.Source != "" {
+		return rec.Source
+	}
+	return "gateway"
 }
 
 // streamRate 计算纯生成阶段的 token 速率；样本太小时返回 0。

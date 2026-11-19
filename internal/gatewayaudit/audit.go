@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,15 @@ type Record struct {
 	BodyBytes         int64     `json:"bodyBytes,omitempty"`         // 请求正文字节数
 	ModelBusyRetries  int       `json:"modelBusyRetries,omitempty"`  // 算力繁忙自动防抖重试次数 (0 表示无重试)
 	RetryDelays       []string  `json:"retryDelays,omitempty"`       // 每次退避的具体耗时轨迹 (如 ["1.52s", "2.48s"])
+	// Source 是记录来源："gateway"（经本机代理）或 "local"（直连模型，
+	// 由 daemon 巡检时从客户端会话日志里观察到）。老记录为空，读时按
+	// gateway 处理。
+	Source string `json:"source,omitempty"`
+	// Side 是直连档位："cn" | "intl"。网关记录为空——别编，网关记录
+	// 没有档位归属。
+	Side string `json:"side,omitempty"`
+	// SessionID 是直连会话 ID（P2-12）。网关记录为空。
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // DailyStats 记录单日的网关调用聚合指标。
@@ -138,8 +148,70 @@ func (a *Auditor) RecordRequest(r Record) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.recordLocked(r)
+}
 
-	// 1. 更新内存环形切片
+// LocalSessionUsage 是一条直连模型用量记录（从客户端会话 .jsonl 读到）。
+type LocalSessionUsage struct {
+	SessionID        string
+	Model            string
+	Side             string // "cn" | "intl"
+	Timestamp        time.Time
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+}
+
+// ObserveLocalSession 把一条直连用量记录落进审计账本（P2-12）。
+//
+// 全仓库唯一的直连写盘调用方是 cmd/wbmux 的 daemon 巡检（每 3 秒一次，
+// 只要客户端连着就会跑）；面板轮询在隐藏时暂停，放面板里写会断流。
+// 面板与胶囊都只读账本，自然统一口径。
+//
+// 去重键是 sessionId + timestamp + totalTokens，直接查账本本身——
+// 内存 seen 集重启就丢，第一轮询就会重复写；查账本则重启后也安全。
+// 已存在返回 false；写盘失败静默跳过（返回 false），调用方不报错。
+// IsStream=false、StatusCode=200：直连记录没有流式速率与上游状态码，
+// 别编；ContextScale 留空。
+func (a *Auditor) ObserveLocalSession(u LocalSessionUsage) bool {
+	if u.SessionID == "" || u.Timestamp.IsZero() ||
+		(u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0) {
+		return false
+	}
+	r := Record{
+		ID:               fmt.Sprintf("local-%s-%d", u.SessionID, u.Timestamp.UnixMilli()),
+		Timestamp:        u.Timestamp,
+		ModelRequested:   u.Model,
+		StatusCode:       200,
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		IsStream:         false,
+		Source:           "local",
+		Side:             u.Side,
+		SessionID:        u.SessionID,
+	}
+	if r.TotalTokens == 0 {
+		r.TotalTokens = r.PromptTokens + r.CompletionTokens
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, old := range a.records {
+		if old.Source == "local" && old.SessionID == u.SessionID &&
+			old.Timestamp.Equal(u.Timestamp) && old.TotalTokens == r.TotalTokens {
+			return false
+		}
+	}
+	a.recordLocked(r)
+	return true
+}
+
+// recordLocked 是 RecordRequest 的加锁后半段：环形队列 + 日度聚合 + 落盘。
+// 调用方必须已持有 a.mu。抽出来是为了 ObserveLocalSession 在同一把锁里
+// 先去重、再写盘——查和写之间不能让别的 goroutine 插进来，否则 3 秒巡检
+// 与 5 秒轮询会在重启后同时看到“没有”，写出两条。
+func (a *Auditor) recordLocked(r Record) {
 	if len(a.records) >= a.maxRecords {
 		copy(a.records, a.records[1:])
 		a.records[len(a.records)-1] = r
