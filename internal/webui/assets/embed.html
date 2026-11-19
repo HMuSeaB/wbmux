@@ -357,6 +357,9 @@
         span.className = "aged";
         span.textContent = "数据为 " + ago(last.ageSec) + "前 · 仅供参考";
         line.appendChild(span);
+      } else if (idle) {
+        line.style.display = "none";
+        line.textContent = "";
       } else {
         setSrcLine(last);
       }
