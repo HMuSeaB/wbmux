@@ -314,6 +314,32 @@ func TestQuotaForNilWhenHealthy(t *testing.T) {
 	}
 }
 
+// TestQuotaForLooseMatch 导出的 QuotaFor 要能对上三种写法：
+// 直连侧日志里的显示名、网关侧审计里带 -sg 后缀的名字、官方 ID 本身。
+// 对不上，胶囊的限流改写就永远触发不了。
+func TestQuotaForLooseMatch(t *testing.T) {
+	s := newQuotaTestServer(t)
+	future := time.Now().Add(time.Hour).UnixMilli()
+	s.rate.items = map[string]ProxyQuota{
+		"deepseek-v4.1-flash": {Model: "deepseek-v4.1-flash", State: "rate_limited", UntilMs: future},
+	}
+	for _, name := range []string{
+		"deepseek-v4.1-flash",    // 官方 ID 原样
+		"DeepSeek-V4.1-Flash",    // 直连侧显示名（大小写不同）
+		"deepseek-v4.1-flash-sg", // 网关侧带区服后缀
+	} {
+		if q := s.QuotaFor(name); q == nil || q.State != "rate_limited" {
+			t.Errorf("QuotaFor(%q) 应返回限流记录，得到 %+v", name, q)
+		}
+	}
+	if q := s.QuotaFor("no-such-model"); q != nil {
+		t.Errorf("不存在的模型应返回 nil，得到 %+v", q)
+	}
+	if q := s.QuotaFor(""); q != nil {
+		t.Errorf("空模型名应返回 nil，得到 %+v", q)
+	}
+}
+
 // TestQuotaForExpiredIsUsable 到了恢复时刻就该重新可用。
 //
 // 少了这一步，一个模型一旦被限流就会**永远**被挡在外面——

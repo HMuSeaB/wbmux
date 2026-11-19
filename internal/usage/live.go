@@ -358,6 +358,31 @@ func LiveAccounts(probe *variant.Probe) map[string]*LiveAccount {
 	return out
 }
 
+// LiveAccountsCached 只读内存/磁盘快照里的实时账号数据，绝不发网络请求。
+//
+// embed 轮询（5 秒一次）用它：冷启动无快照时返回空 map 而不是同步拉取，
+// 否则一次轮询就可能被官方接口拖住几秒。快照的新鲜度由 LiveAccounts
+// 的 SWR 机制负责（主面板打开时触发后台刷新），这里只消费、不触发。
+// 磁盘快照也算数据：它是上次成功拉到的那份，空着不显示比显示旧数更差——
+// 旧数至少还标着周期文案，空着则用户连"有没有包"都不知道。
+func LiveAccountsCached() map[string]*LiveAccount {
+	liveCacheInited.Do(func() {
+		liveCache.Lock()
+		loadLiveCacheDisk()
+		liveCache.Unlock()
+	})
+
+	liveCache.Lock()
+	defer liveCache.Unlock()
+	out := map[string]*LiveAccount{}
+	for _, id := range []variant.ID{variant.CN, variant.Intl} {
+		if acc, ok := liveCache.data[id]; ok && acc != nil {
+			out[string(id)] = acc
+		}
+	}
+	return out
+}
+
 // InvalidateLiveCache 使指定档位的实时账号缓存失效。在导入新凭据后调用。
 func InvalidateLiveCache(id variant.ID) {
 	liveCache.Lock()

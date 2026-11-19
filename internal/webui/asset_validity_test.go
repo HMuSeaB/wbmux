@@ -31,9 +31,9 @@ func TestEmbedHTMLThresholds(t *testing.T) {
 			t.Errorf("embed.html 缺少与 Go 端 internal/embedstats 一致的阈值 %q", want)
 		}
 	}
-	// 新鲜度三档与来源标注的渲染入口必须存在：删了其中一个，
-	// 面板就悄悄退回"二值 stale / 无来源"的旧行为。
-	for _, sym := range []string{"STALE_AGED_SEC", "STALE_IDLE_SEC", "sourceLabel", "setSrcLine", "visibilitychange"} {
+	// 新鲜度三档与来源标注、额度条的渲染入口必须存在：删了其中一个，
+	// 面板就悄悄退回"二值 stale / 无来源 / 无额度"的旧行为。
+	for _, sym := range []string{"STALE_AGED_SEC", "STALE_IDLE_SEC", "sourceLabel", "setSrcLine", "visibilitychange", "renderQuota"} {
 		if !strings.Contains(htmlStr, sym) {
 			t.Errorf("embed.html 缺少关键符号 %q", sym)
 		}

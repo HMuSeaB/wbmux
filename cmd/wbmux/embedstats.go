@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
+	"github.com/HMuSeaB/wbmux/internal/webui"
 )
 
 // embedStatsText 生成胶囊上那行指标文字与告警等级。
@@ -24,7 +26,11 @@ import (
 //   - 经过网关的代理请求（如国际限免模型）：可获得精确的流式速率；
 //   - 国内自带直连模型（不经网关）：通过 sessiontelemetry 监听本地活跃
 //     会话日志的 rawUsage，O(1) 提取上下文 tokens 与模型名，消灭统计盲区。
-func embedStatsText() (string, string) {
+//
+// quotaLookup 是查"当前模型限流态"的回调（cmd_gui.go 接
+// webui.Server.QuotaFor）。传 nil 表示没有额度数据，胶囊行为与原来
+// 一模一样——测试与非 GUI 路径都走这条。
+func embedStatsText(quotaLookup func(string) *webui.ProxyQuota) (string, string) {
 	sum := gatewayaudit.Default().GetSummary(1)
 	var gwRec *gatewayaudit.Record
 	if len(sum.RecentRecords) > 0 {
@@ -51,10 +57,12 @@ func embedStatsText() (string, string) {
 	var promptTokens int
 	var timestamp time.Time
 	var midPart string
+	var lastModel string
 
 	if useLocal {
 		promptTokens = sessMetric.PromptTokens
 		timestamp = sessMetric.Timestamp
+		lastModel = sessMetric.Model
 		modelName := sessMetric.Model
 		if modelName == "" {
 			modelName = "国内自带"
@@ -63,12 +71,24 @@ func embedStatsText() (string, string) {
 	} else {
 		promptTokens = gwRec.PromptTokens
 		timestamp = gwRec.Timestamp
+		lastModel = gwRec.ModelRequested
 		if gwRec.IsStream {
 			if rate := genRate(gwRec.CompletionTokens, gwRec.DurationMs, gwRec.TTFTMs); rate > 0 {
 				midPart = fmt.Sprintf("%.0f/s", rate)
 			}
 		} else if gwRec.TTFTMs > 0 {
 			midPart = fmt.Sprintf("首字 %.1fs", float64(gwRec.TTFTMs)/1000)
+		}
+	}
+
+	// 额度改写优先于新鲜度三档：限流答的是"现在能不能用"，比
+	// "多久前的数"更要紧——模型被限着时，顶栏继续显示"空闲"或
+	// 旧值都是误导。没记录 / 上游瞬时故障时一个字不改。
+	if quotaLookup != nil && lastModel != "" {
+		if q := quotaLookup(lastModel); q != nil {
+			if text, level, ok := quotaCapsuleText(lastModel, q); ok {
+				return text, level
+			}
 		}
 	}
 
@@ -106,6 +126,48 @@ func embedStatsText() (string, string) {
 
 	level := embedstats.Level(promptTokens, freshness)
 	return strings.Join(parts, " · "), level
+}
+
+// quotaCapsuleText 把限流态翻成胶囊文案。只在 rate_limited /
+// exhausted 时改写（ok=false 表示不改，胶囊保持原样）：
+// 额度是分钟级数据，正常时不配抢 3 秒级胶囊的常驻位置；
+// upstream_error 是上游瞬时故障，重试即可，也不改。
+func quotaCapsuleText(model string, q *webui.ProxyQuota) (string, string, bool) {
+	if q == nil {
+		return "", "", false
+	}
+	switch q.State {
+	case "rate_limited":
+		short := cleanCapsuleModel(model)
+		if hm := quotaResetHM(q); hm != "" {
+			return short + " 限流 " + hm + " 恢复", "warn", true
+		}
+		return short + " 限流", "warn", true
+	case "exhausted":
+		return "额度用尽", "bad", true
+	default:
+		return "", "", false
+	}
+}
+
+// resetHMRe 从 UntilText 原文（"2026-09-29 22:18:43 UTC+8"）
+// 里抓 HH:MM。
+var resetHMRe = regexp.MustCompile(`(\d{2}):(\d{2}):\d{2}`)
+
+// quotaResetHM 从限流记录里抠恢复时刻的 HH:MM。UntilMs 优先
+// （已按上游时区换算成绝对时刻）；没有就从 UntilText 原文里抓；
+// 两者都没有就不编时间，调用方只显示"限流"。
+func quotaResetHM(q *webui.ProxyQuota) string {
+	if q == nil {
+		return ""
+	}
+	if q.UntilMs > 0 {
+		return time.UnixMilli(q.UntilMs).Format("15:04")
+	}
+	if m := resetHMRe.FindStringSubmatch(q.UntilText); m != nil {
+		return m[1] + ":" + m[2]
+	}
+	return ""
 }
 
 // cleanCapsuleModel 紧凑规范化顶栏胶囊上的模型名称，避免冗长厂商前缀或区服后缀挤压排版。

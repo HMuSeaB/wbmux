@@ -510,6 +510,32 @@ func (s *Server) quotaFor(model string) *ProxyQuota {
 	return &cp
 }
 
+// QuotaFor 是 quotaFor 的导出版，供 cmd/wbmux 的胶囊与 embed 面板查询限流状态。
+//
+// 名字做宽容匹配：直连侧日志里是显示名（DeepSeek-V4.1-Flash），
+// 网关侧审计里可能带区服后缀（deepseek-v4.1-flash-sg），而限流表
+// 的键是路由用的官方 ID——三者都对不上同一个字符串时，胶囊的
+// 限流改写就永远触发不了。匹配顺序：原样 → 小写 → 去 -sg/-sg2 后缀。
+func (s *Server) QuotaFor(model string) *ProxyQuota {
+	if q := s.quotaFor(model); q != nil {
+		return q
+	}
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if lower == "" {
+		return nil
+	}
+	if q := s.quotaFor(lower); q != nil {
+		return q
+	}
+	stripped := strings.TrimSuffix(strings.TrimSuffix(lower, "-sg"), "-sg2")
+	if stripped != lower {
+		if q := s.quotaFor(stripped); q != nil {
+			return q
+		}
+	}
+	return nil
+}
+
 // quotaOKSnapshot 返回"代理确认可用"的模型（排序后）。
 func (s *Server) quotaOKSnapshot() []string {
 	s.seedFromLog()
