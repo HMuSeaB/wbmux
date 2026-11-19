@@ -15,12 +15,17 @@ import (
 
 // embedStatsText 生成胶囊上那行指标文字与告警等级。
 //
-// 格式：`187k · 212/s · 今日 42M` 或 `412k · 混元 · 今日 42M`
+// 格式：`187k · 212/s · 今日 42M · 国62%·际41%` 或 `412k · 混元 · 今日 42M`
 //
 // 为什么上下文放在最前面：速率只是"这次快不快"，上下文才是"会不会出事"。
 // 1M 上下文的模型很容易悄悄吃满然后被截断，用户毫无感知——所以
 // 256k 起转黄、512k 转红，让它变成一眼可见的信号。阈值与 stale 分档
 // 的唯一口径在 internal/embedstats，别在这里另写一份。
+//
+// 末尾的额度段是常驻的（用户明确要）：两档主包余量压成一段，国内在前、
+// 国际在后（`国62%·际41%`），只有一边有数据就只显示那一边，没数据
+// 不显示、绝不显示 0%。百分比是整数（面板保留一位小数）。限流/用尽
+// 改写仍优先于一切，那时常驻段不出现；陈旧（aged）与空闲时也不显示。
 //
 // 双源智能融合（借鉴 chuanban 增量遥测架构）：
 //   - 经过网关的代理请求（如国际限免模型）：可获得精确的流式速率；
@@ -28,9 +33,11 @@ import (
 //     会话日志的 rawUsage，O(1) 提取上下文 tokens 与模型名，消灭统计盲区。
 //
 // quotaLookup 是查"当前模型限流态"的回调（cmd_gui.go 接
-// webui.Server.QuotaFor）。传 nil 表示没有额度数据，胶囊行为与原来
-// 一模一样——测试与非 GUI 路径都走这条。
-func embedStatsText(quotaLookup func(string) *webui.ProxyQuota) (string, string) {
+// webui.Server.QuotaFor）；packageLookup 是取"各档主包余量"的回调
+// （cmd_gui.go 接 webui.Server.CapsulePackages），只读缓存快照，
+// 3 秒巡检里绝不直调官方接口。两个回调传 nil 表示没有额度数据，
+// 胶囊行为与原来一模一样——测试与非 GUI 路径都走这条。
+func embedStatsText(quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage) (string, string) {
 	sum := gatewayaudit.Default().GetSummary(1)
 	var gwRec *gatewayaudit.Record
 	if len(sum.RecentRecords) > 0 {
@@ -124,14 +131,46 @@ func embedStatsText(quotaLookup func(string) *webui.ProxyQuota) (string, string)
 		parts = append(parts, "今日 "+compactTokens(todayTokens))
 	}
 
+	// 常驻额度段：只在新鲜态末尾加一段。packageLookup 为 nil 或
+	// 没数据时不加，文案与原来一模一样。
+	if packageLookup != nil {
+		if q := capsuleQuotaText(packageLookup()); q != "" {
+			parts = append(parts, q)
+		}
+	}
+
 	level := embedstats.Level(promptTokens, freshness)
 	return strings.Join(parts, " · "), level
 }
 
+// capsuleQuotaText 把各档主包余量压成胶囊里的一段：两边都有是
+// "国62%·际41%"，只有一边是 "国62%" / "际41%"，都没数据返回 ""。
+// 单字档位（国/际）是面板"国内包/国际包"的缩写，顶栏地方小，
+// 但档位不能含糊——光一个 "62%" 不知道是哪边。
+// 档位顺序固定国内在前、国际在后，不跟着 last 的档位跳变，
+// 否则切模型时同一段数字来回换位置，没法一眼扫。
+func capsuleQuotaText(pkgs []webui.CapsulePackage) string {
+	var parts []string
+	for _, p := range pkgs {
+		label := ""
+		switch p.Side {
+		case "cn":
+			label = "国"
+		case "intl":
+			label = "际"
+		default:
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s%d%%", label, p.Percent))
+	}
+	return strings.Join(parts, "·")
+}
+
 // quotaCapsuleText 把限流态翻成胶囊文案。只在 rate_limited /
 // exhausted 时改写（ok=false 表示不改，胶囊保持原样）：
-// 额度是分钟级数据，正常时不配抢 3 秒级胶囊的常驻位置；
 // upstream_error 是上游瞬时故障，重试即可，也不改。
+// 限流改写优先于常驻额度段：被限着时顶栏只报"限流几点恢复" /
+// "额度用尽"，不另挂余量百分比。
 func quotaCapsuleText(model string, q *webui.ProxyQuota) (string, string, bool) {
 	if q == nil {
 		return "", "", false

@@ -29,7 +29,7 @@ func TestCompactTokens(t *testing.T) {
 
 func TestEmbedStatsTextEmpty(t *testing.T) {
 	// 默认没有请求时，返回暂无请求或基于本地会话
-	text, _ := embedStatsText(nil)
+	text, _ := embedStatsText(nil, nil)
 	if text == "" {
 		t.Error("embedStatsText 不应返回空字符串")
 	}
@@ -62,7 +62,7 @@ func TestEmbedStatsTextGatewayPriority(t *testing.T) {
 		Timestamp:        now,
 	})
 
-	text, level := embedStatsText(nil)
+	text, level := embedStatsText(nil, nil)
 	if !strings.Contains(text, "260k") {
 		t.Errorf("期望包含 260k，得到 %q", text)
 	}
@@ -150,7 +150,7 @@ func TestEmbedStatsTextQuotaLimited(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup)
+	text, level := embedStatsText(lookup, nil)
 	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
 		t.Errorf("限流时胶囊应改写，得到 %q/%q", text, level)
 	}
@@ -175,7 +175,7 @@ func TestEmbedStatsTextQuotaExhausted(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup)
+	text, level := embedStatsText(lookup, nil)
 	if text != "额度用尽" || level != "bad" {
 		t.Errorf("用尽时胶囊应为 额度用尽/bad，得到 %q/%q", text, level)
 	}
@@ -195,8 +195,150 @@ func TestEmbedStatsTextQuotaLookupMiss(t *testing.T) {
 		IsStream:         true,
 		Timestamp:        now,
 	})
-	text, level := embedStatsText(func(string) *webui.ProxyQuota { return nil })
+	text, level := embedStatsText(func(string) *webui.ProxyQuota { return nil }, nil)
 	if !strings.Contains(text, "260k") || level != "warn" {
 		t.Errorf("无额度数据时应保持原样，得到 %q/%q", text, level)
+	}
+}
+
+// seedCapsuleRecord 往网关账本塞一条"现在"的流式记录，让胶囊走新鲜态。
+// 各常驻段测试共用：调用后 embedStatsText 的基础文案是 "100k · 62/s · 今日 …"。
+func seedCapsuleRecord(t *testing.T) {
+	t.Helper()
+	gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
+		ModelRequested:   "deepseek-v4.1-flash",
+		PromptTokens:     100000,
+		CompletionTokens: 50,
+		TotalTokens:      100050,
+		StatusCode:       200,
+		DurationMs:       1000,
+		TTFTMs:           200,
+		IsStream:         true,
+		Timestamp:        time.Now(),
+	})
+}
+
+// TestCapsuleQuotaText 钉住常驻段的拼法：两边都有压成一段，
+// 只有一边只显示那一边，没数据返回 ""，未知档位跳过不编。
+func TestCapsuleQuotaText(t *testing.T) {
+	cases := []struct {
+		in   []webui.CapsulePackage
+		want string
+	}{
+		{nil, ""},
+		{[]webui.CapsulePackage{}, ""},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}}, "国62%"},
+		{[]webui.CapsulePackage{{Side: "intl", Percent: 41}}, "际41%"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}, "国62%·际41%"},
+		{[]webui.CapsulePackage{{Side: "xx", Percent: 50}}, ""},
+	}
+	for _, c := range cases {
+		if got := capsuleQuotaText(c.in); got != c.want {
+			t.Errorf("capsuleQuotaText(%+v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestEmbedStatsTextCapsuleQuotaBoth 两边有数据时胶囊末尾多一段
+// "国62%·际41%"，且是最后一段。
+func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
+	seedCapsuleRecord(t)
+	pkgs := func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
+	}
+	text, _ := embedStatsText(nil, pkgs)
+	if !strings.Contains(text, "100k") {
+		t.Errorf("基础文案应含 100k，得到 %q", text)
+	}
+	if !strings.HasSuffix(text, "国62%·际41%") {
+		t.Errorf("两边有数据时胶囊末尾应为 国62%%·际41%%，得到 %q", text)
+	}
+}
+
+// TestEmbedStatsTextCapsuleQuotaOneSide 只有一边有数据时只显示那一边。
+func TestEmbedStatsTextCapsuleQuotaOneSide(t *testing.T) {
+	seedCapsuleRecord(t)
+	text, _ := embedStatsText(nil, func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
+	})
+	if !strings.Contains(text, "国62%") || strings.Contains(text, "际") {
+		t.Errorf("只有国内档时应只显示 国62%%，得到 %q", text)
+	}
+}
+
+// TestEmbedStatsTextCapsuleQuotaNoData 没数据时文案与原来一模一样：
+// 同一份账本状态下，回调返回空与回调为 nil 的两次调用输出完全相同，
+// 且都不含额度段。
+func TestEmbedStatsTextCapsuleQuotaNoData(t *testing.T) {
+	seedCapsuleRecord(t)
+	a, levelA := embedStatsText(nil, nil)
+	b, levelB := embedStatsText(nil, func() []webui.CapsulePackage { return nil })
+	if a != b || levelA != levelB {
+		t.Errorf("没数据时两次调用应完全相同，得到 %q/%q 与 %q/%q", a, levelA, b, levelB)
+	}
+	if strings.Contains(a, "国") || strings.Contains(a, "际") {
+		t.Errorf("没数据时不应出现额度段，得到 %q", a)
+	}
+}
+
+// TestEmbedStatsTextCapsuleQuotaLimited 限流改写仍优先：常驻段不出现。
+func TestEmbedStatsTextCapsuleQuotaLimited(t *testing.T) {
+	now := time.Now()
+	gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
+		ModelRequested:   "hy4-preview-f",
+		PromptTokens:     260000,
+		CompletionTokens: 50,
+		TotalTokens:      260050,
+		StatusCode:       200,
+		DurationMs:       1000,
+		TTFTMs:           200,
+		IsStream:         true,
+		Timestamp:        now,
+	})
+	lookup := func(model string) *webui.ProxyQuota {
+		if model == "hy4-preview-f" {
+			return &webui.ProxyQuota{
+				Model:     "hy4-preview-f",
+				State:     "rate_limited",
+				UntilText: "2026-09-29 22:18:43 UTC+8",
+			}
+		}
+		return nil
+	}
+	pkgs := func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
+	}
+	text, level := embedStatsText(lookup, pkgs)
+	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
+		t.Errorf("限流时胶囊应改写且不带常驻段，得到 %q/%q", text, level)
+	}
+}
+
+// TestEmbedStatsTextCapsuleQuotaExhausted 用尽改写仍优先：常驻段不出现。
+func TestEmbedStatsTextCapsuleQuotaExhausted(t *testing.T) {
+	now := time.Now()
+	gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
+		ModelRequested:   "deepseek-v4.1-flash",
+		PromptTokens:     100000,
+		CompletionTokens: 50,
+		TotalTokens:      100050,
+		StatusCode:       200,
+		DurationMs:       1000,
+		TTFTMs:           200,
+		IsStream:         true,
+		Timestamp:        now,
+	})
+	lookup := func(model string) *webui.ProxyQuota {
+		if model == "deepseek-v4.1-flash" {
+			return &webui.ProxyQuota{Model: "deepseek-v4.1-flash", State: "exhausted"}
+		}
+		return nil
+	}
+	pkgs := func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
+	}
+	text, level := embedStatsText(lookup, pkgs)
+	if text != "额度用尽" || level != "bad" {
+		t.Errorf("用尽时胶囊应为 额度用尽/bad 且不带常驻段，得到 %q/%q", text, level)
 	}
 }

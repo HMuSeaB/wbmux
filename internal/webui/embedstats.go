@@ -83,15 +83,52 @@ func mainSubscriptionPackage(acc *usage.LiveAccount) *usage.LivePackage {
 	return best
 }
 
+// liveAccounts 是额度数据的唯一来源：测试可注入 liveAccountsFn，
+// 生产读 LiveAccountsCached() 的内存/磁盘快照，绝不发网络请求。
+// 面板 quota 段与胶囊常驻段共用它，两边看到的包是同一份。
+func (s *Server) liveAccounts() map[string]*usage.LiveAccount {
+	if s.liveAccountsFn != nil {
+		return s.liveAccountsFn(s.probe())
+	}
+	return usage.LiveAccountsCached()
+}
+
+// CapsulePackage 是胶囊常驻段里一档的主包余量。
+type CapsulePackage struct {
+	// Side 是 "cn" / "intl"。
+	Side string
+	// Percent 是 remain/total*100，四舍五入到整数（面板保留一位小数，
+	// 胶囊地方小只放整数）。0..100。
+	Percent int
+}
+
+// CapsulePackages 返回各档主包余量百分比（国内在前、国际在后），
+// 供胶囊常驻显示。只读缓存快照，绝不直调官方接口；没数据的档位
+// 不出现，绝不返回 0%——"没数据"和"用完了"是两回事。
+func (s *Server) CapsulePackages() []CapsulePackage {
+	accounts := s.liveAccounts()
+	out := make([]CapsulePackage, 0, 2)
+	for _, side := range []string{"cn", "intl"} {
+		pkg := mainSubscriptionPackage(accounts[side])
+		if pkg == nil {
+			continue
+		}
+		pct := int(math.Round(pkg.Remain / pkg.Total * 100))
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 100 {
+			pct = 100
+		}
+		out = append(out, CapsulePackage{Side: side, Percent: pct})
+	}
+	return out
+}
+
 // embedQuotaFor 拼当前轮询的 quota 段。lastModel 为空（暂无请求）
 // 时只拼主包；限流记录只取 last.model 那一条。
 func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
-	var accounts map[string]*usage.LiveAccount
-	if s.liveAccountsFn != nil {
-		accounts = s.liveAccountsFn(s.probe())
-	} else {
-		accounts = usage.LiveAccountsCached()
-	}
+	accounts := s.liveAccounts()
 
 	out := &embedQuota{}
 	if lastModel != "" {
