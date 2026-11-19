@@ -91,43 +91,8 @@ changelog:
 release:
   # 自动发布为公开版本
   draft: false
-  header: |
-    ### 📦 下载与安装指引
-    下载对应平台的 zip，解压后把 `wbmux`（Windows 为 `wbmux.exe`）放进常用目录或系统 `PATH` 即可。零运行时依赖。
-    - **Windows**：下载 `windows_amd64.zip`；
-    - **macOS**：Apple Silicon (M系列) 下载 `darwin_arm64.zip`，Intel 芯片下载 `darwin_amd64.zip`；
-    - **Linux**：下载 `linux_amd64.zip`。
-
   footer: |
     ---
-    <details>
-    <summary><b>📖 运行机制、使用帮助与已知限制（点击展开）</b></summary>
+    **完整变更日志**: https://github.com/HMuSeaB/wbmux/compare/{{ .PreviousTag }}...{{ .Tag }}
 
-    ```
-    wbmux gui          # 打开图形界面（双击 wbmux.exe 同此）
-    wbmux run intl     # 用国际后端启动
-    wbmux list         # 看看本机探测到哪些安装
-    wbmux doctor       # 体检：机制是否仍然有效
-    wbmux migrate      # 把另一侧的会话/技能/记忆搬过来
-    wbmux sessions     # 会话中心：跨 IDE 历史会话按项目归组（只读）
-    wbmux zcode        # 读 ZCode 的历史对话，可导出 Markdown（只读）
-    wbmux checkin      # 查签到状态；「checkin claim」领今天的积分
-    wbmux shortcut     # 在桌面创建启动快捷方式
-    ```
-
-    > **图形界面**由内嵌网页提供，只在 `127.0.0.1` 上监听，用系统浏览器（优先 Edge / Chrome 的 `--app=` 模式）打开。**默认不自动退出**——它同时是注入到国内客户端的那些模型的转发服务。想让它空闲就退用 `--idle 30m`；退出口是托盘右键或界面里的「关闭界面」。
-
-    > **签到**：只对国内账号有意义，国际侧没开这个活动。自动签到仅在未签时领取，开机或进界面自动执行；命令行默认也只查，要领必须敲 `checkin claim`。
-
-    > **历史搬运**：搬五类东西——会话、附件、内容与配置、技能、记忆。默认只读，加 `--yes` 才执行；绝不覆盖目标端已有内容。设备绑定数据（`keyblob`、`device-id`）与缓存一律不搬。
-
-    > **已知限制**：远程控制里的微信系渠道（小程序 / 微信客服 / 微信 bot）走目标后端的代理接口，切到国际后端后会失效。Slack / Discord / Telegram 等直连型渠道不受影响。详见 [README](https://github.com/HMuSeaB/wbmux)。
-
-    > **尚未验证**：macOS / Linux 未实机验证（仅交叉编译通过）；签到的凭据解密链路只在 Windows 上跑通。
-
-    </details>
-
-    ---
-
-    **本项目是非官方的第三方工具**，与 WorkBuddy、CodeBuddy、腾讯及其关联方不存在隶属、授权或背书关系。它依赖客户端未公开的配置加载行为，该行为可能在任何版本中变化或移除。升级客户端后建议运行 `wbmux doctor` 确认机制仍然有效。
 
