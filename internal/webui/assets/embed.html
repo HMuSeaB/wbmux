@@ -59,7 +59,7 @@
 
   .clients { display: flex; flex-direction: column; gap: 6px; }
 
-  /* 三格指标：上下文 / 生成速率 / 今日用量 */
+  /* 三格指标：上次请求 / 生成速率 / 今日用量 */
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
   .metric {
     background: var(--card); border: 1px solid var(--border);
@@ -70,7 +70,7 @@
   .m-val.bad { color: var(--bad); }
   .m-label { display: block; font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
 
-  /* 最近请求：一行一条，只放"哪个模型 / 多大上下文 / 多快 / 多久前" */
+  /* 最近请求：一行一条，只放"哪个模型 / 多大 / 多快 / 多久前" */
   .recent { display: flex; flex-direction: column; gap: 5px; }
   .recent-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; min-width: 0; }
   .r-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: none; }
@@ -85,6 +85,18 @@
   .st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
   .st.on { color: var(--ok); } .st.on::before { background: var(--ok); }
   .st.off { color: var(--ink-3); }
+
+  /* 额度：每档一行迷你余量条（国内包/国际包分开，绝不合并成总数） */
+  .quota-model { font-size: 11.5px; margin-bottom: 8px; }
+  .quota-model.warn { color: var(--warn); }
+  .quota-model.bad { color: var(--bad); }
+  .quota-rows { display: flex; flex-direction: column; gap: 7px; }
+  .quota-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+  .q-side { flex: none; color: var(--ink-1); width: 44px; }
+  .q-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .q-fill { display: block; height: 100%; border-radius: 3px; background: var(--brand); }
+  .q-fill.warn { background: var(--warn); }
+  .q-text { flex: none; color: var(--ink-2); font-size: 10.5px; }
 
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   button {
@@ -136,7 +148,7 @@
 <div class="metrics">
   <div class="metric">
     <span class="m-val" id="m-ctx">—</span>
-    <span class="m-label">上下文</span>
+    <span class="m-label">上次请求</span>
   </div>
   <div class="metric">
     <span class="m-val" id="m-rate">—</span>
@@ -201,6 +213,12 @@
     <button data-copy="ep-search">复制</button>
   </div>
 </details>
+
+<div class="card" id="quota-card" style="display:none">
+  <div class="card-title">额度</div>
+  <div class="quota-model" id="quota-model" style="display:none"></div>
+  <div class="quota-rows" id="quota-rows"></div>
+</div>
 
 <div class="card">
   <div class="card-title">最近请求</div>
@@ -292,8 +310,8 @@
   startPolling();
 
   // ---------- 胶囊同款指标 ----------
-  // 五个指标都来自 /api/embed/stats（请求级快照）：上下文、生成速率、今日用量。
-  // 上下文超过 256000 转黄、512000 转红——1M 上下文的模型很容易悄悄吃满。
+  // 五个指标都来自 /api/embed/stats（请求级快照）：上次请求、生成速率、今日用量。
+  // 上次请求超过 256000 转黄、512000 转红——1M 上下文的模型很容易悄悄吃满。
   // 阈值与 stale 分档的唯一口径在 Go 端 internal/embedstats，这里的数字
   // 由 internal/webui 的 TestEmbedHTMLThresholds 锁死一致，别手改一边。
   var CTX_WARN = 256000, CTX_BAD = 512000;
@@ -364,6 +382,7 @@
         setSrcLine(last);
       }
       renderRecent((s && s.recent) || []);
+      renderQuota(s && s.quota);
       scheduleStats(5000);
     }).catch(function () {
       // 失败不吞旧数：连续失败 ≥2 次（约 10 秒）就把顶栏药丸标成"数据过期"，
@@ -420,6 +439,71 @@
       list.appendChild(row);
     });
   }
+  // 额度：当前模型的限流态 + 两档主包余量（/api/embed/stats 的 quota 段）。
+  // 没数据的档位后端直接省略，前端不渲染，绝不显示 0%——"没数据"和
+  // "用完了"是两回事。周期文案是后端原样带过来的 ExpiryRuleZh /
+  // CycleEndTime，这里只照抄，不自己编。
+  function quotaTime(q) {
+    if (!q) return "";
+    if (q.untilMs) {
+      var d = new Date(q.untilMs);
+      return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+    var m = /(\d{2}):(\d{2}):\d{2}/.exec(q.untilText || "");
+    return m ? m[1] + ":" + m[2] : "";
+  }
+  function renderQuota(quota) {
+    var card = document.getElementById("quota-card");
+    var rows = document.getElementById("quota-rows");
+    var modelLine = document.getElementById("quota-model");
+    var pkgs = (quota && quota.packages) || [];
+    var model = quota && quota.model;
+    if (!pkgs.length && !model) {
+      card.style.display = "none";
+      rows.textContent = "";
+      modelLine.style.display = "none";
+      modelLine.textContent = "";
+      return;
+    }
+    card.style.display = "";
+    if (model && (model.state === "rate_limited" || model.state === "exhausted")) {
+      modelLine.style.display = "";
+      modelLine.className = "quota-model " + (model.state === "exhausted" ? "bad" : "warn");
+      var t = quotaTime(model);
+      modelLine.textContent = model.state === "exhausted"
+        ? model.model + " 额度用尽"
+        : model.model + " 限流" + (t ? "，" + t + " 恢复" : "");
+    } else {
+      modelLine.style.display = "none";
+      modelLine.textContent = "";
+    }
+    rows.textContent = "";
+    pkgs.forEach(function (p) {
+      var row = document.createElement("div");
+      row.className = "quota-row";
+
+      var side = document.createElement("span");
+      side.className = "q-side";
+      side.textContent = p.side === "intl" ? "国际包" : "国内包";
+
+      var bar = document.createElement("span");
+      bar.className = "q-bar";
+      var fill = document.createElement("span");
+      fill.className = "q-fill" + (p.percent < 20 ? " warn" : "");
+      fill.style.width = Math.max(0, Math.min(100, p.percent)) + "%";
+      bar.appendChild(fill);
+
+      var text = document.createElement("span");
+      text.className = "q-text";
+      text.textContent = "剩余 " + p.percent.toFixed(1) + "%" + (p.cycleText ? " · " + p.cycleText : "");
+
+      row.appendChild(side);
+      row.appendChild(bar);
+      row.appendChild(text);
+      rows.appendChild(row);
+    });
+  }
+
   function bind(id, fn) {
     var btn = document.getElementById(id);
     btn.addEventListener("click", function () {
