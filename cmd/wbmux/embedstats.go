@@ -13,6 +13,19 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
 
+// lastSample 是胶囊"上一次请求"的快照（网关或直连，以时间戳新者为准）。
+// 只含渲染所需的字段；兜底时整条照搬，年龄按 Timestamp 重算。
+type lastSample struct {
+	promptTokens int
+	timestamp    time.Time
+	midPart      string // 速率（网关）或模型名（直连）
+	model        string
+}
+
+// capsuleLastHold 记住上一次给出的新鲜 last（daemon 进程内，内存态）。
+// 新一轮生成中遥测一时找不到记录时，胶囊先拿它老化显示，别跌回空闲。
+var capsuleLastHold = embedstats.NewLastHold[lastSample]()
+
 // embedStatsText 生成胶囊上那行指标文字与告警等级。
 //
 // 格式：`187k · 212/s · 今日 42M · 国62%·际41%` 或 `412k · 混元 · 今日 42M`
@@ -37,15 +50,18 @@ import (
 // （cmd_gui.go 接 webui.Server.CapsulePackages），只读缓存快照，
 // 3 秒巡检里绝不直调官方接口。两个回调传 nil 表示没有额度数据，
 // 胶囊行为与原来一模一样——测试与非 GUI 路径都走这条。
-func embedStatsText(quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage) (string, string) {
-	sum := gatewayaudit.Default().GetSummary(1)
+// hold 是兜底状态（daemon 传 capsuleLastHold）；传 nil 表示不兜底。
+func embedStatsText(quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage, hold *embedstats.LastHold[lastSample]) (string, string) {
+	return embedStatsTextFrom(gatewayaudit.Default().GetSummary(1), sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe()), quotaLookup, packageLookup, hold)
+}
+
+// embedStatsTextFrom 是可测的内层：sum 与 sessMetric 由调用方注入，
+// 兜底状态由 hold 注入。只兜底 last，今日累计仍按本轮新鲜数据算。
+func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.SessionMetric, quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage, hold *embedstats.LastHold[lastSample]) (string, string) {
 	var gwRec *gatewayaudit.Record
 	if len(sum.RecentRecords) > 0 {
 		gwRec = &sum.RecentRecords[0]
 	}
-
-	// 读取本地会话日志中最近的交互
-	sessMetric := sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe())
 
 	// 判定哪个更新：若本地会话记录晚于网关记录，说明当前在用国内自带模型直连
 	useLocal := false
@@ -57,36 +73,49 @@ func embedStatsText(quotaLookup func(string) *webui.ProxyQuota, packageLookup fu
 		}
 	}
 
-	if gwRec == nil && !useLocal {
-		return "暂无请求", ""
-	}
-
-	var promptTokens int
-	var timestamp time.Time
-	var midPart string
-	var lastModel string
-
+	var cand *lastSample
 	if useLocal {
-		promptTokens = sessMetric.PromptTokens
-		timestamp = sessMetric.Timestamp
-		lastModel = sessMetric.Model
 		modelName := sessMetric.Model
 		if modelName == "" {
 			modelName = "国内自带"
 		}
-		midPart = cleanCapsuleModel(modelName)
-	} else {
-		promptTokens = gwRec.PromptTokens
-		timestamp = gwRec.Timestamp
-		lastModel = gwRec.ModelRequested
+		cand = &lastSample{
+			promptTokens: sessMetric.PromptTokens,
+			timestamp:    sessMetric.Timestamp,
+			midPart:      cleanCapsuleModel(modelName),
+			model:        sessMetric.Model,
+		}
+	} else if gwRec != nil {
+		cand = &lastSample{
+			promptTokens: gwRec.PromptTokens,
+			timestamp:    gwRec.Timestamp,
+			model:        gwRec.ModelRequested,
+		}
 		if gwRec.IsStream {
 			if rate := genRate(gwRec.CompletionTokens, gwRec.DurationMs, gwRec.TTFTMs); rate > 0 {
-				midPart = fmt.Sprintf("%.0f/s", rate)
+				cand.midPart = fmt.Sprintf("%.0f/s", rate)
 			}
 		} else if gwRec.TTFTMs > 0 {
-			midPart = fmt.Sprintf("首字 %.1fs", float64(gwRec.TTFTMs)/1000)
+			cand.midPart = fmt.Sprintf("首字 %.1fs", float64(gwRec.TTFTMs)/1000)
 		}
 	}
+
+	// 兜底：新一轮生成中遥测一时找不到记录时，先拿上一次新鲜的 last
+	// 老化显示，别跌回几天前的网关记录。两边都没有才显示"暂无请求"。
+	var served *lastSample
+	var ok bool
+	if cand != nil {
+		served, _, ok = hold.Serve(cand, cand.timestamp)
+	} else {
+		served, _, ok = hold.Serve(nil, time.Time{})
+	}
+	if !ok {
+		return "暂无请求", ""
+	}
+	promptTokens := served.promptTokens
+	timestamp := served.timestamp
+	midPart := served.midPart
+	lastModel := served.model
 
 	// 额度改写优先于新鲜度三档：限流答的是"现在能不能用"，比
 	// "多久前的数"更要紧——模型被限着时，顶栏继续显示"空闲"或
