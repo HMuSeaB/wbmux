@@ -2,6 +2,7 @@ package inject
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,19 @@ func RunDaemon(ctx context.Context, ports []int, embedURL func() string, stats S
 	}
 }
 
+// lastPushed 记住每个端口上次成功推进胶囊的 (text, level)：文本没变就
+// 不推，省掉每 3 秒一次无意义的 CDP Runtime.evaluate。刚重注入的胶囊
+// 除外——新 DOM 里还没有数字，哪怕文本和上次一样也得推一次。
+var (
+	lastPushedMu sync.Mutex
+	lastPushed   = map[int]pushedStats{}
+)
+
+type pushedStats struct {
+	text  string
+	level string
+}
+
 // Sync 检查一次：按需注入，并把指标推进胶囊。返回是否真的注入了。
 func Sync(port int, embedURL string, stats StatsProvider) bool {
 	if embedURL == "" {
@@ -70,9 +84,21 @@ func Sync(port int, embedURL string, stats StatsProvider) bool {
 	}
 
 	// 指标刷新放在注入之后：刚注入的新胶囊先拿到数字，不用等下一轮。
+	// 文本与等级都没变时跳过推送——3 秒巡检只负责"注入标记还在不在"，
+	// 不负责把同一行数字反复重写一遍。
 	if stats != nil {
 		if text, level := stats(); text != "" {
-			_, _ = UpdateStats(c, text, level, 2*time.Second)
+			lastPushedMu.Lock()
+			prev, seen := lastPushed[port]
+			unchanged := seen && !injected && prev.text == text && prev.level == level
+			lastPushedMu.Unlock()
+			if !unchanged {
+				if ok, _ := UpdateStats(c, text, level, 2*time.Second); ok {
+					lastPushedMu.Lock()
+					lastPushed[port] = pushedStats{text: text, level: level}
+					lastPushedMu.Unlock()
+				}
+			}
 		}
 	}
 	return injected

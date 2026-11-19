@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -16,7 +17,8 @@ import (
 //
 // 为什么上下文放在最前面：速率只是"这次快不快"，上下文才是"会不会出事"。
 // 1M 上下文的模型很容易悄悄吃满然后被截断，用户毫无感知——所以
-// 256k 起转黄、512k 转红，让它变成一眼可见的信号。
+// 256k 起转黄、512k 转红，让它变成一眼可见的信号。阈值与 stale 分档
+// 的唯一口径在 internal/embedstats，别在这里另写一份。
 //
 // 双源智能融合（借鉴 chuanban 增量遥测架构）：
 //   - 经过网关的代理请求（如国际限免模型）：可获得精确的流式速率；
@@ -70,9 +72,15 @@ func embedStatsText() (string, string) {
 		}
 	}
 
-	// 超过 30 分钟没有新交互，显示空闲
-	if time.Since(timestamp) >= 30*time.Minute {
+	// 新鲜度三档：30 分钟内正常显示；30–120 分钟显示旧值 + 多久前，
+	// 不着色；超过 120 分钟才显示"空闲"。旧数据直接抹掉会丢掉"刚才
+	// 上下文多大"这个最有用的信息，但把它当"现在"展示会误导人。
+	freshness := embedstats.Classify(time.Since(timestamp))
+	switch freshness {
+	case embedstats.FreshnessIdle:
 		return "空闲", ""
+	case embedstats.FreshnessAged:
+		return fmt.Sprintf("%s · %dm 前", compactTokens(promptTokens), embedstats.AgeMinutes(time.Since(timestamp))), ""
 	}
 
 	parts := []string{compactTokens(promptTokens)}
@@ -96,13 +104,7 @@ func embedStatsText() (string, string) {
 		parts = append(parts, "今日 "+compactTokens(todayTokens))
 	}
 
-	level := ""
-	switch {
-	case promptTokens >= 512_000:
-		level = "bad"
-	case promptTokens >= 256_000:
-		level = "warn"
-	}
+	level := embedstats.Level(promptTokens, freshness)
 	return strings.Join(parts, " · "), level
 }
 

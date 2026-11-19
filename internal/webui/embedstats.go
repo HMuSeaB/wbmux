@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 )
@@ -35,6 +36,9 @@ type embedStatsSnapshot struct {
 //
 // 只留一行放得下的字段；轮询接口带 5 条，体积约 600 字节，
 // 跟只带 1 条几乎没差别。
+//
+// Source/Side 标明这条来自哪边：网关（side 暂无，别编）还是直连
+// （side 为 "cn"/"intl"），双开时胶囊在两边跳变才有据可查。
 type embedRecentStats struct {
 	Model        string  `json:"model"`
 	PromptTokens int     `json:"promptTokens"`
@@ -42,6 +46,8 @@ type embedRecentStats struct {
 	TokPerSec    float64 `json:"tokPerSec"`
 	OK           bool    `json:"ok"`
 	AgeSec       int64   `json:"ageSec"`
+	Source       string  `json:"source,omitempty"`
+	Side         string  `json:"side,omitempty"`
 }
 
 // embedLastStats 是最近一次网关请求的摘要。
@@ -54,6 +60,9 @@ type embedLastStats struct {
 	ContextScale     string  `json:"contextScale,omitempty"`
 	IsStream         bool    `json:"isStream"`
 	AgeSec           int64   `json:"ageSec"`
+	Source           string  `json:"source,omitempty"`
+	Side             string  `json:"side,omitempty"`
+	Freshness        string  `json:"freshness,omitempty"`
 }
 
 // embedDayStats 是当天的累计用量。
@@ -85,6 +94,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			TotalTokens:  rec.TotalTokens,
 			OK:           rec.StatusCode >= 200 && rec.StatusCode < 300,
 			AgeSec:       int64(now.Sub(rec.Timestamp).Seconds()),
+			Source:       "gateway",
 		}
 		if rate := streamRate(rec); rate > 0 {
 			row.TokPerSec = rate
@@ -116,6 +126,8 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			ContextScale:     rec.ContextScale,
 			IsStream:         rec.IsStream,
 			AgeSec:           int64(time.Since(rec.Timestamp).Seconds()),
+			Source:           "gateway",
+			Freshness:        string(embedstats.Classify(time.Since(rec.Timestamp))),
 		}
 		// 生成速率只在流式、且确实存在生成阶段时计算；
 		// 少量 token（<20）的请求算出来的数字噪声太大，直接留 0 让前端跳过。
@@ -145,13 +157,18 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 				PromptTokens:     sessMetric.PromptTokens,
 				CompletionTokens: sessMetric.CompletionTokens,
 				AgeSec:           int64(time.Since(sessMetric.Timestamp).Seconds()),
+				Source:           "local",
+				Side:             sessMetric.Side,
+				Freshness:        string(embedstats.Classify(time.Since(sessMetric.Timestamp))),
 			}
 			localRow := embedRecentStats{
-				Model:        modelName + " (直连)",
+				Model:        modelName,
 				PromptTokens: sessMetric.PromptTokens,
 				TotalTokens:  sessMetric.TotalTokens,
 				OK:           true,
 				AgeSec:       int64(time.Since(sessMetric.Timestamp).Seconds()),
+				Source:       "local",
+				Side:         sessMetric.Side,
 			}
 			out.Recent = append([]embedRecentStats{localRow}, out.Recent...)
 			if len(out.Recent) > 5 {

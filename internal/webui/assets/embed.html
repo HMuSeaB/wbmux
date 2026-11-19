@@ -38,6 +38,13 @@
     font-size: 10.5px; color: var(--ok); background: rgba(52,211,153,0.12);
     border: 1px solid rgba(52,211,153,0.25); border-radius: 999px; padding: 1px 8px;
   }
+  .live-pill.stale {
+    color: var(--warn); background: rgba(235,178,58,0.12);
+    border-color: rgba(235,178,58,0.35);
+  }
+  /* 来源行：当前数字来自哪边（网关/直连·国内/国际），旧值时兼作"多久前"提示 */
+  .src-line { font-size: 11px; color: var(--ink-2); margin: -4px 0 10px; min-height: 0; }
+  .src-line .aged { color: var(--warn); }
   .head a {
     margin-left: auto; color: var(--ink-2); text-decoration: none; font-size: 11.5px;
     padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);
@@ -140,6 +147,8 @@
     <span class="m-label">今日 tokens</span>
   </div>
 </div>
+
+<div class="src-line" id="src-line" style="display:none"></div>
 
 <div class="card">
   <div class="card-title">客户端状态</div>
@@ -256,34 +265,113 @@
       setClient("intl", c.intl);
     }).catch(function () {});
   }
-  refreshStatus();
-  setInterval(refreshStatus, 10000);
+
+  // ---------- 轮询节流 ----------
+  // 客户端状态是分钟级变化的数据，15 秒一轮足够；弹层藏起来（display:none
+  // 的 iframe 在后台标签页里）时两路轮询都停掉，切回来立刻拉一次。
+  // stats 失败时退避 5s → 15s → 30s，成功即复位到 5s。
+  var statsTimer = null, clientsTimer = null, statsFails = 0;
+  var statsBackoff = [5000, 15000, 30000];
+  function scheduleStats(delay) {
+    clearTimeout(statsTimer);
+    statsTimer = setTimeout(function () { loadStats(); }, delay);
+  }
+  function startPolling() {
+    refreshStatus();
+    clearInterval(clientsTimer);
+    clientsTimer = setInterval(refreshStatus, 15000);
+    loadStats();
+  }
+  function stopPolling() {
+    clearTimeout(statsTimer);
+    clearInterval(clientsTimer);
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stopPolling(); else startPolling();
+  });
+  startPolling();
 
   // ---------- 胶囊同款指标 ----------
   // 五个指标都来自 /api/embed/stats（请求级快照）：上下文、生成速率、今日用量。
-  // 上下文超过 256k 转黄、512k 转红——1M 上下文的模型很容易悄悄吃满。
+  // 上下文超过 256000 转黄、512000 转红——1M 上下文的模型很容易悄悄吃满。
+  // 阈值与 stale 分档的唯一口径在 Go 端 internal/embedstats，这里的数字
+  // 由 internal/webui 的 TestEmbedHTMLThresholds 锁死一致，别手改一边。
+  var CTX_WARN = 256000, CTX_BAD = 512000;
+  var STALE_AGED_SEC = 1800, STALE_IDLE_SEC = 7200; // 30 分钟变旧值，120 分钟才算空闲
   function compact(n) {
     if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
     if (n >= 10000) return Math.round(n / 1000) + "k";
     if (n >= 1000) return (n / 1000).toFixed(1) + "k";
     return String(n);
   }
+  function sourceLabel(source, side) {
+    if (source === "local") {
+      if (side === "cn") return "国内直连";
+      if (side === "intl") return "国际直连";
+      return "直连";
+    }
+    return "网关";
+  }
+  function setSrcLine(last) {
+    var line = document.getElementById("src-line");
+    if (!last || !last.model) { line.style.display = "none"; line.textContent = ""; return; }
+    line.style.display = "";
+    line.textContent = "当前数字来自：" + sourceLabel(last.source, last.side) + " · " + last.model;
+  }
+  function setStaleMark(aged) {
+    var pill = document.getElementById("live");
+    if (aged) {
+      pill.classList.add("stale");
+      pill.textContent = "数据过期";
+    } else {
+      pill.classList.remove("stale");
+      pill.textContent = "本机代理在线";
+    }
+  }
   function loadStats() {
-    api("/api/embed/stats").then(function (s) {
+    return api("/api/embed/stats").then(function (s) {
+      statsFails = 0;
+      setStaleMark(false);
       var last = (s && s.last) || {};
-      // 数据超过 30 分钟就不再代表"现在"，两格都显示为空，
-      // 避免用户以为自己此刻上下文这么大/这么快。
-      var stale = (last.ageSec || 0) > 1800;
+      // 新鲜度三档（与 Go 端 internal/embedstats 一致，前端用 ageSec 兜底）：
+      // 30 分钟内正常显示；30–120 分钟显示旧值 + 多久前、不着色；
+      // 超过 120 分钟才显示"空闲"。旧数据直接抹掉会丢信息，当"现在"又会误导人。
+      var freshness = last.freshness
+        || ((last.ageSec || 0) > STALE_IDLE_SEC ? "idle"
+          : ((last.ageSec || 0) > STALE_AGED_SEC ? "aged" : "fresh"));
+      var idle = freshness === "idle";
+      var aged = freshness === "aged";
       var ctx = document.getElementById("m-ctx");
-      ctx.textContent = stale ? "空闲" : (last.promptTokens ? compact(last.promptTokens) : "—");
-      ctx.className = "m-val" + (!stale && last.promptTokens >= 512000 ? " bad" : (!stale && last.promptTokens >= 256000 ? " warn" : ""));
-      document.getElementById("m-rate").textContent = stale ? "—"
+      ctx.textContent = idle ? "空闲" : (last.promptTokens ? compact(last.promptTokens) : "—");
+      ctx.className = "m-val" + (!idle && !aged && last.promptTokens >= CTX_BAD ? " bad" : (!idle && !aged && last.promptTokens >= CTX_WARN ? " warn" : ""));
+      document.getElementById("m-rate").textContent = idle ? "—"
         : (last.tokPerSec ? Math.round(last.tokPerSec) + "/s"
           : (last.ttftMs ? "首字 " + (last.ttftMs / 1000).toFixed(1) + "s" : "—"));
       var today = (s && s.today) || {};
       document.getElementById("m-today").textContent = today.tokens ? compact(today.tokens) : "—";
+      var line = document.getElementById("src-line");
+      if (aged) {
+        line.style.display = "";
+        line.innerHTML = "";
+        var span = document.createElement("span");
+        span.className = "aged";
+        span.textContent = "数据为 " + ago(last.ageSec) + "前 · 仅供参考";
+        line.appendChild(span);
+      } else if (idle) {
+        line.style.display = "none";
+        line.textContent = "";
+      } else {
+        setSrcLine(last);
+      }
       renderRecent((s && s.recent) || []);
-    }).catch(function () {});
+      scheduleStats(5000);
+    }).catch(function () {
+      // 失败不吞旧数：连续失败 ≥2 次（约 10 秒）就把顶栏药丸标成"数据过期"，
+      // 旧数字仍保留在原位，但不再冒充实时数据；恢复成功即清标记。
+      statsFails++;
+      if (statsFails >= 2) setStaleMark(true);
+      scheduleStats(statsBackoff[Math.min(statsFails - 1, statsBackoff.length - 1)]);
+    });
   }
 
   // 多久前：只给粗粒度，精确到分钟对这个用途没意义。
@@ -321,6 +409,8 @@
       var bits = [];
       if (r.promptTokens) bits.push(compact(r.promptTokens));
       if (r.tokPerSec) bits.push(Math.round(r.tokPerSec) + "/s");
+      // 行尾标来源：网关 / 国内直连 / 国际直连（Go 端 source/side 字段）。
+      if (r.source) bits.push(sourceLabel(r.source, r.side));
       bits.push(ago(r.ageSec));
       meta.textContent = bits.join(" · ");
 
@@ -330,9 +420,6 @@
       list.appendChild(row);
     });
   }
-  loadStats();
-  setInterval(loadStats, 5000);
-
   function bind(id, fn) {
     var btn = document.getElementById(id);
     btn.addEventListener("click", function () {
