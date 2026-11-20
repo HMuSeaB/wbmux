@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -164,20 +163,18 @@ func mainSubscriptionPackage(acc *usage.LiveAccount) *usage.LivePackage {
 // 2026-11-20 的教训：只认 subscription 会让国内档整个消失（用户看到
 // "国内呢？"），而国内的额度恰恰全是 bonus。
 func mainPackage(acc *usage.LiveAccount) *usage.LivePackage {
-	if sub := mainSubscriptionPackage(acc); sub != nil {
-		return sub
-	}
 	if acc == nil || !acc.OK {
 		return nil
 	}
+	// 把订阅包和赠送包合在一起算。
+	// 旧逻辑优先返回订阅包，国际包因此显示 0%——订阅额度用完了，但赠送包
+	// 还剩 186，用户看到的却是"剩余 0.0%"（2026-11-20 实测）。
 	var merged *usage.LivePackage
-	count := 0
 	for i := range acc.Packages {
 		p := &acc.Packages[i]
-		if p.Kind != "bonus" || p.Total <= 0 {
+		if p.Total <= 0 {
 			continue
 		}
-		count++
 		if merged == nil {
 			cp := *p
 			merged = &cp
@@ -186,6 +183,14 @@ func mainPackage(acc *usage.LiveAccount) *usage.LivePackage {
 		merged.Total += p.Total
 		merged.Remain += p.Remain
 		merged.Used += p.Used
+		// 到期信息取订阅包的：它按自然月算得准；赠送包没有可靠到期时刻。
+		if p.Kind == "subscription" && merged.Kind != "subscription" {
+			merged.Kind = p.Kind
+			merged.KindZh = p.KindZh
+			merged.ExpiryRuleZh = p.ExpiryRuleZh
+			merged.CycleEndTime = p.CycleEndTime
+			merged.ExpiresAtMs = p.ExpiresAtMs
+		}
 		if p.ExpiresAtMs > 0 && (merged.ExpiresAtMs == 0 || p.ExpiresAtMs < merged.ExpiresAtMs) {
 			merged.ExpiresAtMs = p.ExpiresAtMs
 		}
@@ -193,7 +198,6 @@ func mainPackage(acc *usage.LiveAccount) *usage.LivePackage {
 	if merged == nil {
 		return nil
 	}
-	merged.Name = fmt.Sprintf("%d 个赠送包", count)
 	return merged
 }
 
