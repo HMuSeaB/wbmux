@@ -13,7 +13,7 @@ import (
 // 客户端里已注入的旧面板会在 3 秒内被自动替换，不需要用户刷新窗口。
 //
 // v17：额度行显示 剩余/总量，不再只有百分比。
-const PanelVersion = "19"
+const PanelVersion = "20"
 
 // TagFor 返回某个 embed 地址对应的注入标记。
 //

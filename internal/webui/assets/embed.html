@@ -14,7 +14,7 @@
     --ok: #34d399; --bad: #f87171; --warn: #ebb23a;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { height: 100%; max-width: 100%; overflow-x: hidden; }
   body {
     background: var(--bg); color: var(--ink-0);
     font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -195,6 +195,52 @@
     .metric .value, .hero-cell .v { font-size: 19px; }
     .qv-head, .qhead { flex-wrap: wrap; gap: 2px; }
   }
+  /* ---- 主指标卡：唯一强调位 ----
+     skill 的硬约束：一屏只有一个强调色、层级靠字号差 ≥4px。
+     主数字 30px、标签 10.5px、次级数字 15px —— 三档拉开。
+     深色底沿用客户端侧栏（浅底在这里会像贴上去的补丁），
+     但强调色只用在主数字上，其余走灰阶。 */
+  .ctx-hero {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+    /* 窄栏下不能靠内容撑宽：撑开就会被裁掉右边 */
+    max-width: 100%; min-width: 0; overflow: hidden;
+  }
+  .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+  .ctx-label { font-size: 10.5px; color: var(--ink-3); letter-spacing: .04em; }
+  .ctx-sub { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctx-value-wrap { display: flex; align-items: baseline; gap: 6px; margin: 6px 0 8px; min-width: 0; }
+  .ctx-value { font-size: 30px; font-weight: 680; line-height: 1.1; color: var(--brand); letter-spacing: -.01em; }
+  .ctx-value.warn { color: var(--warn); }
+  .ctx-value.bad { color: var(--bad); }
+  .ctx-limit { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .ctx-bar { height: 4px; background: var(--card-2); border-radius: 2px; overflow: hidden; }
+  .ctx-bar i { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 2px; transition: width .3s ease; }
+  .ctx-bar i.warn { background: var(--warn); }
+  .ctx-bar i.bad { background: var(--bad); }
+
+  /* ---- 次级指标：一行三列，同字号同权重 ---- */
+  .sub-stats {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px; background: var(--border); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; margin-bottom: 10px;
+  }
+  .sub-stat { background: var(--card); padding: 10px 12px; min-width: 0; }
+  .sub-label { display: block; font-size: 10.5px; color: var(--ink-3); letter-spacing: .03em; }
+  .sub-value {
+    display: block; margin-top: 3px; font-size: 15px; font-weight: 620;
+    color: var(--ink-0); font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---- 30 天柱：给一个上限刻度，否则只有一根柱子看不出量级 ---- */
+  .spark-wrap { margin-bottom: 10px; }
+  .spark-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 10.5px; color: var(--ink-3); margin-bottom: 6px;
+  }
+  .spark-max { font-variant-numeric: tabular-nums; }
+
 </style>
 </head>
 <body>
@@ -206,27 +252,41 @@
   <a id="full-link" href="#" target="_blank" rel="noopener">完整面板 ↗</a>
 </div>
 
-<div class="hero">
-  <div class="hero-cell">
-    <span class="hero-num" id="m-ctx">—</span>
-    <span class="hero-label">上下文</span>
+<!-- 主指标：一张卡承载最重要的信息（skill：唯一强调落在最重要的数上）。
+     旧版是三张等宽卡、其中一张还是空的"—"，三块视觉权重一样，
+     用户不知道该看哪个。现在上下文独占一块，其余降为下面的次级行。 -->
+<div class="ctx-hero">
+  <div class="ctx-head">
+    <span class="ctx-label">当前上下文</span>
+    <span class="ctx-sub" id="m-ctx-sub">—</span>
   </div>
-  <div class="hero-cell">
-    <span class="hero-num" id="m-today">—</span>
-    <span class="hero-label">今日 tokens</span>
+  <div class="ctx-value-wrap">
+    <span class="ctx-value" id="m-ctx">—</span>
+    <span class="ctx-limit" id="m-ctx-limit"></span>
   </div>
-  <div class="hero-cell sub">
-    <span class="hero-num" id="m-rate">—</span>
-    <span class="hero-label">生成速率</span>
+  <div class="ctx-bar"><i id="m-ctx-bar"></i></div>
+</div>
+
+<!-- 次级指标：一行三列，同等权重、同样字阶，不再有"空卡" -->
+<div class="sub-stats">
+  <div class="sub-stat">
+    <span class="sub-label">今日 tokens</span>
+    <span class="sub-value" id="m-today">—</span>
+  </div>
+  <div class="sub-stat">
+    <span class="sub-label">本月</span>
+    <span class="sub-value" id="m-month">—</span>
+  </div>
+  <div class="sub-stat">
+    <span class="sub-label">累计</span>
+    <span class="sub-value" id="m-total">—</span>
   </div>
 </div>
 
-<div class="stats-strip">
-  <span>本月 <b id="m-month">—</b></span>
-  <span>累计 <b id="m-total">—</b></span>
-  <span class="strip-label">近 30 天</span>
+<div class="spark-wrap">
+  <div class="spark-head"><span>近 30 天</span><span class="spark-max" id="spark-max"></span></div>
+  <div class="spark" id="spark"></div>
 </div>
-<div class="spark" id="spark"></div>
 
 <div class="src-line" id="src-line" style="display:none"></div>
 
@@ -441,26 +501,54 @@
           : ((last.ageSec || 0) > STALE_AGED_SEC ? "aged" : "fresh"));
       var idle = freshness === "idle";
       var aged = freshness === "aged";
+      // 主指标：大数字只放"已用"，上限单独一档弱化显示；下面一条进度条
+      // 把"占了多少"变成一眼能看的形状（skill：层级靠字号与灰度）。
       var ctx = document.getElementById("m-ctx");
+      var ctxLimit = document.getElementById("m-ctx-limit");
+      var ctxBar = document.getElementById("m-ctx-bar");
+      var ctxSub = document.getElementById("m-ctx-sub");
       if (idle) {
         ctx.textContent = "空闲";
+        ctxLimit.textContent = "";
+        ctxBar.style.width = "0%";
+        ctxBar.className = "";
+        ctxSub.textContent = "超过 2 小时没有新请求";
       } else if (!last.promptTokens) {
         ctx.textContent = "—";
+        ctxLimit.textContent = "";
+        ctxBar.style.width = "0%";
+        ctxSub.textContent = "还没有请求";
       } else {
-        // 有模型声明的上限时显示 "335k/1M"，一眼看出还剩多少空间
-        ctx.textContent = compact(last.promptTokens) +
-          (last.contextLimit ? "/" + compact(last.contextLimit) : "");
+        ctx.textContent = compact(last.promptTokens);
+        var ratio = last.contextLimit ? last.promptTokens / last.contextLimit : 0;
+        ctxLimit.textContent = last.contextLimit ? "/ " + compact(last.contextLimit) : "";
+        ctxBar.style.width = Math.max(0, Math.min(100, ratio * 100)) + "%";
+        ctxBar.className = (last.promptTokens >= CTX_BAD ? "bad" : (last.promptTokens >= CTX_WARN ? "warn" : ""));
+        ctxSub.textContent = last.contextLimit
+          ? "已用 " + Math.round(ratio * 100) + "%"
+          : "";
       }
-      ctx.className = "hero-num" + (!idle && !aged && last.promptTokens >= CTX_BAD ? " bad" : (!idle && !aged && last.promptTokens >= CTX_WARN ? " warn" : ""));
-      document.getElementById("m-rate").textContent = idle ? "—"
+      var rate = idle ? 0
         : (last.tokPerSec ? Math.round(last.tokPerSec) + "/s"
-          : (last.ttftMs ? "首字 " + (last.ttftMs / 1000).toFixed(1) + "s" : "—"));
+          : (last.ttftMs ? "首字 " + (last.ttftMs / 1000).toFixed(1) + "s" : ""));
+      // 速率没有独立卡片了，并入主卡副标题：有值才显示。
+      if (rate && !idle && !aged) {
+        ctxSub.textContent = (ctxSub.textContent ? ctxSub.textContent + " · " : "") + rate;
+      }
       var today = (s && s.today) || {};
       document.getElementById("m-today").textContent = today.tokens ? compact(today.tokens) : "—";
       var totals = (s && s.totals) || {};
       document.getElementById("m-month").textContent = totals.month ? compact(totals.month) : "—";
       document.getElementById("m-total").textContent = totals.total ? compact(totals.total) : "—";
       renderSpark(s && s.daily);
+      // 标出这 30 天的峰值：只有一根柱子时，没有刻度看不出量级。
+      var mx = document.getElementById("spark-max");
+      if (mx) {
+        var daily = (s && s.daily) || [];
+        var peak = 0;
+        daily.forEach(function (d) { if (d && d.tokens > peak) peak = d.tokens; });
+        mx.textContent = peak ? "峰值 " + compact(peak) : "";
+      }
       var line = document.getElementById("src-line");
       if (aged) {
         line.style.display = "";
