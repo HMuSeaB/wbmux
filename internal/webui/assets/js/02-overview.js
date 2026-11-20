@@ -608,3 +608,64 @@
     if (!document.getElementById("log-live").checked) return;
     loadProxyLog(false);
   }, LOG_INTERVAL);
+
+  // ---------- 概览四格指标 ----------
+  // 与顶栏胶囊同源（/api/embed/stats），避免两处口径不一致。
+  function ovCompact(n) {
+    if (!n) return "—";
+    if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M";
+    if (n >= 1e3) return Math.round(n / 1e3) + "k";
+    return String(n);
+  }
+
+  function renderOverviewStats(s) {
+    var last = (s && s.last) || {};
+    var today = (s && s.today) || {};
+    var totals = (s && s.totals) || {};
+    var pkgs = (s && s.quota && s.quota.packages) || [];
+
+    var idle = (last.ageSec || 0) > 7200;
+    var ctx = document.getElementById("ov-ctx");
+    if (ctx) ctx.textContent = idle ? "空闲" : ovCompact(last.promptTokens);
+    var t = document.getElementById("ov-today");
+    if (t) t.textContent = ovCompact(today.tokens);
+    var m = document.getElementById("ov-month");
+    if (m) m.textContent = ovCompact(totals.month);
+    var r = document.getElementById("ov-reqs");
+    if (r) r.textContent = today.requests ? String(today.requests) : "—";
+
+    // 来源与额度：同一条数据，用一行小字说清"这些数是从哪来的"
+    var src = document.getElementById("ov-src");
+    if (src) {
+      var dot = src.querySelector("i");
+      var local = last.source === "local";
+      if (dot) dot.className = last.model ? "on" : "";
+      src.innerHTML = "";
+      var d2 = document.createElement("i");
+      if (last.model) d2.className = "on";
+      src.appendChild(d2);
+      var label = local ? "国内直连" : (last.model ? "网关代理" : "等待请求");
+      src.appendChild(document.createTextNode(
+        last.model ? label + " · " + last.model : label));
+    }
+
+    var q = document.getElementById("ov-quota");
+    if (q) {
+      var segs = pkgs.filter(function (p) { return p.percent > 0; }).map(function (p) {
+        return (p.side === "intl" ? "际" : "国") + Math.round(p.percent) + "%";
+      });
+      q.textContent = segs.length ? "额度 " + segs.join(" · ") : "额度 —";
+    }
+  }
+
+  async function loadOverviewStats() {
+    try {
+      renderOverviewStats(await api("/api/embed/stats"));
+    } catch (e) { /* 静默：概览指标挂掉不影响其余功能 */ }
+  }
+
+  // 页面加载后拉一次，之后 15 秒刷新（与 embed 面板的节流口径一致）。
+  setTimeout(function () {
+    loadOverviewStats();
+    setInterval(loadOverviewStats, 15000);
+  }, 400);

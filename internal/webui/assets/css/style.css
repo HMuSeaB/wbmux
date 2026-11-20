@@ -2134,3 +2134,26 @@
     color: #ebb23a;
     border: 1px solid rgba(235, 178, 58, 0.3);
   }
+
+  /* ---- 概览页四格指标：先给数，再给操作 ---- */
+  .ov-status { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .ov-pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+    border: 1px solid var(--g4); border-radius: 999px; background: var(--g1);
+    font-size: 11.5px; color: var(--ink-2); white-space: nowrap;
+  }
+  .ov-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--g5); flex: none; }
+  .ov-pill i.on { background: var(--ok); }
+  .ov-kpis {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px; margin-bottom: 14px;
+  }
+  .ov-kpi {
+    background: var(--g1); border: 1px solid var(--g4); border-radius: 10px;
+    padding: 12px 14px; min-width: 0;
+  }
+  .ov-kpi-label { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  .ov-kpi-value {
+    display: block; margin-top: 6px; font-size: 22px; font-weight: 650;
+    color: var(--ink); font-family: var(--mono); line-height: 1.2;
+  }

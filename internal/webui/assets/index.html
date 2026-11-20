@@ -71,6 +71,32 @@
   </aside>
   <main class="main">
     <div data-page="status">
+      <!-- 概览指标：先给数，再给操作。数据与顶栏胶囊同源（/api/embed/stats），
+           避免面板和胶囊两处口径不一致。 -->
+      <div class="ov-status">
+        <span class="ov-pill" id="ov-clients"><i></i>客户端检测中</span>
+        <span class="ov-pill" id="ov-src"><i></i>等待请求</span>
+        <span class="ov-pill" id="ov-quota">额度 —</span>
+      </div>
+      <div class="ov-kpis">
+        <div class="ov-kpi">
+          <span class="ov-kpi-label">当前上下文</span>
+          <b class="ov-kpi-value" id="ov-ctx">—</b>
+        </div>
+        <div class="ov-kpi">
+          <span class="ov-kpi-label">今日 tokens</span>
+          <b class="ov-kpi-value" id="ov-today">—</b>
+        </div>
+        <div class="ov-kpi">
+          <span class="ov-kpi-label">本月 tokens</span>
+          <b class="ov-kpi-value" id="ov-month">—</b>
+        </div>
+        <div class="ov-kpi">
+          <span class="ov-kpi-label">今日请求</span>
+          <b class="ov-kpi-value" id="ov-reqs">—</b>
+        </div>
+      </div>
+
       <!-- 1.0 核心主路径引导看板 (Hero Card) -->
       <div class="hero-card">
         <div class="hero-card-head">
