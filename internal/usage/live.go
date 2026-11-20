@@ -960,3 +960,96 @@ func parseRateNumber(s string) float64 {
 	_, _ = fmt.Sscanf(s, "%g", &f)
 	return f
 }
+
+// FreeCard 是一张免费/奖励积分卡的明细。
+//
+// 汇总接口（get-user-resource-summary）只按 PackageCode 聚合，81 张卡会被
+// 合成一行；要拿到"哪张卡哪天到期"必须调 get-user-resource-free-packages，
+// 按 code 展开后逐张返回。实测一次 77KB，所以只在需要明细时调。
+type FreeCard struct {
+	Code     string
+	Total    float64
+	Remain   float64
+	Used     float64
+	CycleEnd string // 官方原样，如 "2026-11-22 13:31:41"
+	EndMs    int64  // 解析出的到期毫秒时间戳；解析失败为 0
+	Reason   string // 发放来源（如"Buddy 加油站签到"）
+}
+
+// FetchFreeCards 按 PackageCode 拉逐张卡明细。
+//
+// codes 来自资源汇总接口的 Packages[].PackageCode。返回的卡已按到期时间
+// 升序（最先清零的在前），方便面板直接展示。
+func FetchFreeCards(endpoint string, cred credential.Credential, codes []string) ([]FreeCard, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	reqBody, err := json.Marshal(map[string]any{
+		"PackageCodes": codes,
+		"PageNumber":   1,
+		"PageSize":     50,
+	})
+	if err != nil {
+		return nil, err
+	}
+	raw, err := liveJSON(endpoint, "/billing/meter/get-user-resource-free-packages", "POST", cred.Token, cred.UID, bytes.NewReader(reqBody), nil)
+	if err != nil {
+		return nil, err
+	}
+	// liveJSON 已经把外层 envelope 的 data 解出来了，这里直接对上 Accounts，
+	// 不能再套一层 Data（2026-11-20 踩过：多套一层就永远解析出 0 张卡）。
+	var doc struct {
+		Accounts []struct {
+			PackageCode         string      `json:"PackageCode"`
+			CycleCapacitySize   json.Number `json:"CycleCapacitySize"`
+			CycleCapacityRemain json.Number `json:"CycleCapacityRemain"`
+			CycleCapacityUsed   json.Number `json:"CycleCapacityUsed"`
+			CycleEndTime        string      `json:"CycleEndTime"`
+			AccountAttributes   []struct {
+				Key   string `json:"Key"`
+				Value string `json:"Value"`
+			} `json:"AccountAttributes"`
+		} `json:"Accounts"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	out := make([]FreeCard, 0, len(doc.Accounts))
+	for _, a := range doc.Accounts {
+		c := FreeCard{Code: a.PackageCode, CycleEnd: a.CycleEndTime}
+		c.Total, _ = a.CycleCapacitySize.Float64()
+		c.Remain, _ = a.CycleCapacityRemain.Float64()
+		c.Used, _ = a.CycleCapacityUsed.Float64()
+		if c.Total <= 0 {
+			continue
+		}
+		// 官方时间串没有时区，按本地时区理解——它和客户端显示的就是同一个。
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", a.CycleEndTime, time.Local); err == nil {
+			c.EndMs = t.UnixMilli()
+		}
+		for _, kv := range a.AccountAttributes {
+			if kv.Key == "grantReason" && kv.Value != "" {
+				c.Reason = kv.Value
+			}
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].EndMs == 0 || out[j].EndMs == 0 {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].EndMs < out[j].EndMs
+	})
+	return out, nil
+}
+
+// FreeCardsFor 拉某一侧免费/奖励积分卡的逐张明细（读凭证 + 取 codes 都在内部）。
+//
+// codes 从已有的账号快照里来，避免为拿 code 再调一次汇总接口。
+func FreeCardsFor(probe *variant.Probe, id variant.ID, codes []string) ([]FreeCard, error) {
+	cred, err := readCredential(probe, id)
+	if err != nil {
+		return nil, err
+	}
+	return FetchFreeCards(liveEndpoint[id], cred, codes)
+}

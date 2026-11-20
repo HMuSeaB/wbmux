@@ -166,6 +166,9 @@
   .qbar i { display: block; height: 100%; background: var(--ok); border-radius: 3px; }
   .qbar i.low { background: var(--warn); }
   .qmeta { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .qexp { font-size: 10px; color: var(--ink-3); min-width: 52px; font-variant-numeric: tabular-nums; }
+  .qexp.hot { color: var(--warn); font-weight: 600; }
+  .qmore { font-size: 10px; color: var(--ink-3); padding: 4px 0 2px 60px; }
 </style>
 </head>
 <body>
@@ -357,6 +360,11 @@
   // 去掉无意义的小数尾零：1000000 显示 1M 而不是 1.00M，
   // 1.5M 保留一位。上限这类整数最容易被 ".00" 弄脏。
   // 千分位 + 最多两位小数：积分卡上 4893.78000056 这种浮点尾巴要收掉。
+  // "2026-11-22 13:31:41" → "11/22"；解析不了原样返回。
+  function shortDate(v) {
+    var m = /^\d{4}-(\d{2})-(\d{2})/.exec(v || "");
+    return m ? m[1] + "/" + m[2] : (v ? "—" : "—");
+  }
   function fmtNum(n) {
     var v = Math.round(n * 100) / 100;
     return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -571,22 +579,63 @@
         head.appendChild(hs);
         rows.appendChild(head);
 
+        // 卡可能有几十张（签到每天发一张），面板放不下，按到期日聚合。
+        var groups = [];
+        var byDay = {};
         p.cards.forEach(function (c) {
+          var d = shortDate(c.expiresAt);
+          var g = byDay[d];
+          if (!g) {
+            g = byDay[d] = { day: d, count: 0, total: 0, used: 0, daysLeft: c.daysLeft, expiresAt: c.expiresAt };
+            groups.push(g);
+          }
+          g.count += 1;
+          g.total += c.total;
+          g.used += c.used;
+        });
+
+        // 用尽的组不占位（余额为 0 的卡看一眼就知道没了），最多列 5 组，
+        // 其余折成一行"还有 N 组"——面板高度有限，最近到期的才是要看的。
+        var live = groups.filter(function (g) { return g.total - g.used > 0; });
+        var rest = live.length - 5;
+        var restSum = 0;
+        live.slice(5).forEach(function (g) { restSum += g.total - g.used; });
+
+        live.slice(0, 5).forEach(function (g) {
+          var pct = g.total > 0 ? Math.max(0, Math.min(100, (g.total - g.used) / g.total * 100)) : 0;
           var cardEl = document.createElement("div");
           cardEl.className = "qcard";
+
+          // 到期日放最左：多张卡时，先看"哪张先没"比看用量更要紧。
+          var ce = document.createElement("span");
+          var hot = g.daysLeft > 0 && g.daysLeft <= 3;
+          ce.className = "qexp" + (hot ? " hot" : "");
+          ce.textContent = g.day + (g.count > 1 ? " ×" + g.count : "");
+          ce.title = g.expiresAt + (g.daysLeft ? " · 还有 " + g.daysLeft + " 天" : " · 已到期");
+
           var cb = document.createElement("div");
           cb.className = "qbar";
           var cf = document.createElement("i");
-          cf.style.width = Math.max(0, Math.min(100, c.percent)) + "%";
-          if (c.percent < 20) cf.className = "low";
+          cf.style.width = pct + "%";
+          if (pct < 20) cf.className = "low";
           cb.appendChild(cf);
+
           var ct = document.createElement("span");
           ct.className = "qmeta";
-          ct.textContent = fmtNum(c.used) + " / " + fmtNum(c.total);
+          ct.textContent = fmtNum(g.used) + " / " + fmtNum(g.total);
+
+          cardEl.appendChild(ce);
           cardEl.appendChild(cb);
           cardEl.appendChild(ct);
           rows.appendChild(cardEl);
         });
+
+        if (rest > 0) {
+          var more = document.createElement("div");
+          more.className = "qmore";
+          more.textContent = "还有 " + rest + " 组 · " + fmtNum(restSum) + " 积分";
+          rows.appendChild(more);
+        }
         return;
       }
 

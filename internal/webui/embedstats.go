@@ -2,16 +2,17 @@ package webui
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 	"math"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 	"github.com/HMuSeaB/wbmux/internal/usage"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
 // ---------- 嵌入胶囊的指标快照 ----------
@@ -97,6 +98,13 @@ type embedQuotaCard struct {
 	Remain  float64 `json:"remain"`
 	Used    float64 `json:"used"`
 	Percent float64 `json:"percent"`
+	// ExpiresAt 是官方给的到期时刻原文（如 "2026-11-22 13:31:41"）。
+	// 来自 get-user-resource-free-packages，是真实值，不是推算。
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	// DaysLeft 距离到期还有几天（向上取整，已过期为 0）。
+	DaysLeft int `json:"daysLeft,omitempty"`
+	// Reason 是发放来源（"Buddy 加油站签到"这类），用来区分同额度的卡。
+	Reason string `json:"reason,omitempty"`
 }
 
 // expiringDays 是"快到清零日"的阈值（天）。
@@ -199,6 +207,46 @@ func (s *Server) liveAccounts() map[string]*usage.LiveAccount {
 	return usage.LiveAccountsCached()
 }
 
+// freeCardsCache 缓存逐张卡明细。
+//
+// get-user-resource-free-packages 一次返回 77KB（81 张卡），而面板 5 秒一刷——
+// 每轮都真调等于自己 DDoS 自己的账号。60 秒足够：卡是每天发的，不会秒变。
+var freeCardsCache struct {
+	mu     sync.Mutex
+	at     time.Time
+	bySide map[string][]usage.FreeCard
+}
+
+const freeCardsTTL = 60 * time.Second
+
+// freeCards 返回某一侧的逐张卡明细；取不到就退回空（面板只少显示细节）。
+func (s *Server) freeCards(side string, codes []string) []usage.FreeCard {
+	if len(codes) == 0 {
+		return nil
+	}
+	freeCardsCache.mu.Lock()
+	defer freeCardsCache.mu.Unlock()
+	if time.Since(freeCardsCache.at) < freeCardsTTL {
+		if v, ok := freeCardsCache.bySide[side]; ok {
+			return v
+		}
+	}
+	id := variant.CN
+	if side == "intl" {
+		id = variant.Intl
+	}
+	cards, err := usage.FreeCardsFor(s.probe(), id, codes)
+	if err != nil {
+		return nil
+	}
+	if freeCardsCache.bySide == nil {
+		freeCardsCache.bySide = make(map[string][]usage.FreeCard, 2)
+	}
+	freeCardsCache.bySide[side] = cards
+	freeCardsCache.at = time.Now()
+	return cards
+}
+
 // CapsulePackage 是胶囊常驻段里一档的主包余量。
 type CapsulePackage struct {
 	// Side 是 "cn" / "intl"。
@@ -273,15 +321,29 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 			// 国内是"平台奖励积分"：多张卡各自独立到期，合并成一行会丢掉
 			// "哪张快没了"。逐张列出，但只放确定的容量——官方汇总接口不给
 			// 到期时刻，代码里的 30 天是按发放规则估的，不能当真实值展示。
+			var codes []string
 			for _, p := range accounts[side].Packages {
-				if p.Kind != "bonus" || p.Total <= 0 {
-					continue
+				if p.Kind == "bonus" && p.Code != "" {
+					codes = append(codes, p.Code)
 				}
-				card := embedQuotaCard{Total: p.Total, Remain: p.Remain, Used: p.Used}
-				card.Percent = math.Round(p.Remain/p.Total*1000) / 10
+			}
+			for _, c := range s.freeCards(side, codes) {
+				card := embedQuotaCard{
+					Total:  c.Total,
+					Remain: c.Remain,
+					Used:   c.Used,
+					Reason: c.Reason,
+				}
+				card.Percent = math.Round(c.Remain/c.Total*1000) / 10
+				if c.EndMs > 0 {
+					card.ExpiresAt = c.CycleEnd
+					card.DaysLeft = int(math.Ceil(time.Until(time.UnixMilli(c.EndMs)).Hours() / 24))
+					if card.DaysLeft < 0 {
+						card.DaysLeft = 0
+					}
+				}
 				row.Cards = append(row.Cards, card)
 			}
-			sort.Slice(row.Cards, func(i, j int) bool { return row.Cards[i].Total > row.Cards[j].Total })
 			row.CycleText = ""
 		} else if d := resetsInDays(pkg); d > 0 {
 			// 订阅包按自然月重置，月末是算得准的，天数照常给。
