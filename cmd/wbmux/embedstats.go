@@ -9,7 +9,6 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
-	"github.com/HMuSeaB/wbmux/internal/variant"
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
 
@@ -51,8 +50,30 @@ var capsuleLastHold = embedstats.NewLastHold[lastSample]()
 // 3 秒巡检里绝不直调官方接口。两个回调传 nil 表示没有额度数据，
 // 胶囊行为与原来一模一样——测试与非 GUI 路径都走这条。
 // hold 是兜底状态（daemon 传 capsuleLastHold）；传 nil 表示不兜底。
-func embedStatsText(quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage, hold *embedstats.LastHold[lastSample]) (string, string) {
-	return embedStatsTextFrom(gatewayaudit.Default().GetSummary(1), sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe()), quotaLookup, packageLookup, hold)
+// sessMetric 是本地会话的最新用量，由调用方探测后传入——取值与写盘
+// （observeLocalUsage）都在调用方，这个函数保持只读，测试可注入。
+func embedStatsText(sessMetric *sessiontelemetry.SessionMetric, quotaLookup func(string) *webui.ProxyQuota, packageLookup func() []webui.CapsulePackage, hold *embedstats.LastHold[lastSample]) (string, string) {
+	return embedStatsTextFrom(gatewayaudit.Default().GetSummary(1), sessMetric, quotaLookup, packageLookup, hold)
+}
+
+// observeLocalUsage 把一条直连用量落进审计账本（P2-12）。
+//
+// 全仓库唯一的直连写盘点：daemon 3 秒巡检只要客户端连着就会调。
+// 与取文案分开，是为了让 embedStatsText 保持只读——否则测试一跑就会
+// 往真实账本里写记录，且探测路径无法注入（PR #7 原实现的问题）。
+func observeLocalUsage(m *sessiontelemetry.SessionMetric) {
+	if m == nil {
+		return
+	}
+	gatewayaudit.Default().ObserveLocalSession(gatewayaudit.LocalSessionUsage{
+		SessionID:        m.SessionID,
+		Model:            m.Model,
+		Side:             m.Side,
+		Timestamp:        m.Timestamp,
+		PromptTokens:     m.PromptTokens,
+		CompletionTokens: m.CompletionTokens,
+		TotalTokens:      m.TotalTokens,
+	})
 }
 
 // embedStatsTextFrom 是可测的内层：sum 与 sessMetric 由调用方注入，
@@ -91,7 +112,15 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 			timestamp:    gwRec.Timestamp,
 			model:        gwRec.ModelRequested,
 		}
-		if gwRec.IsStream {
+		// 直连记录已由 daemon 落进账本：它没有流式速率，中段显示模型名，
+		// 与以前 useLocal 分支的行为一致。
+		if gwRec.Source == "local" {
+			name := gwRec.ModelRequested
+			if name == "" {
+				name = "国内自带"
+			}
+			cand.midPart = cleanCapsuleModel(name)
+		} else if gwRec.IsStream {
 			if rate := genRate(gwRec.CompletionTokens, gwRec.DurationMs, gwRec.TTFTMs); rate > 0 {
 				cand.midPart = fmt.Sprintf("%.0f/s", rate)
 			}
@@ -153,9 +182,8 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 			break
 		}
 	}
-	if useLocal && timestamp.Format("2006-01-02") == today {
-		todayTokens += sessMetric.TotalTokens
-	}
+	// 今日只从账本日度汇总出：直连记录已由 daemon 落盘并计入日度聚合，
+	// 这里再叠一次就是算两次（PR #7 删掉的特殊处理）。
 	if todayTokens > 0 {
 		parts = append(parts, "今日 "+compactTokens(todayTokens))
 	}

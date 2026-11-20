@@ -18,8 +18,10 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/inject"
 	"github.com/HMuSeaB/wbmux/internal/instance"
 	"github.com/HMuSeaB/wbmux/internal/netroute"
+	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 	"github.com/HMuSeaB/wbmux/internal/tray"
 	"github.com/HMuSeaB/wbmux/internal/update"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 	"github.com/HMuSeaB/wbmux/internal/version"
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
@@ -256,7 +258,13 @@ func cmdGUI(args []string) error {
 		}()
 		inject.RunDaemon(ictx, inject.DefaultCDPPorts, func() string {
 			return embedURLFrom(srv.URL())
-		}, func() (string, string) { return embedStatsText(srv.QuotaFor, srv.CapsulePackages, capsuleLastHold) })
+		}, func() (string, string) {
+			// 先探测本地会话并落账本（唯一的直连写盘点），再取文案。
+			// 取文案保持只读，测试可注入 sessMetric。
+			m := sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe())
+			observeLocalUsage(m)
+			return embedStatsText(m, srv.QuotaFor, srv.CapsulePackages, capsuleLastHold)
+		})
 	}()
 
 	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，

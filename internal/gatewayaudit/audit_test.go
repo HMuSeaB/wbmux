@@ -3,6 +3,7 @@ package gatewayaudit
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestAuditorRingBuffer(t *testing.T) {
@@ -234,5 +235,118 @@ func TestAuditorPersistenceAndDailyStats(t *testing.T) {
 	}
 	if sumAllCleared.DailyStats[len(sumAllCleared.DailyStats)-1].TotalRequests != 0 {
 		t.Fatalf("ClearAll 后今日日度统计应为 0，得到 %d", sumAllCleared.DailyStats[len(sumAllCleared.DailyStats)-1].TotalRequests)
+	}
+}
+
+// TestObserveLocalSessionDedup 钉住直连落账本的去重与口径统一：
+// 先一条 Kimi、再一条 DeepSeek，Recent 里两条都在且按时间排，
+// Today 等于两条 TotalTokens 之和；重复观察同一条不产生重复写入。
+func TestObserveLocalSessionDedup(t *testing.T) {
+	a := NewAuditor(100)
+	now := time.Now()
+	kimi := LocalSessionUsage{
+		SessionID: "sess-1", Model: "Kimi-K3.1-Pro", Side: "cn",
+		Timestamp:    now.Add(-10 * time.Second),
+		PromptTokens: 48000, CompletionTokens: 1000, TotalTokens: 49000,
+	}
+	ds := LocalSessionUsage{
+		SessionID: "sess-1", Model: "DeepSeek-V4.1-Flash", Side: "cn",
+		Timestamp:    now,
+		PromptTokens: 152000, CompletionTokens: 1000, TotalTokens: 153000,
+	}
+	if !a.ObserveLocalSession(kimi) {
+		t.Fatal("第一次观察 Kimi 应写入")
+	}
+	if !a.ObserveLocalSession(ds) {
+		t.Fatal("第一次观察 DeepSeek 应写入")
+	}
+	// 重复观察同一条（3 秒巡检 / 5 秒轮询都会反复看到）不产生重复写入
+	if a.ObserveLocalSession(kimi) {
+		t.Error("重复观察 Kimi 不应再写")
+	}
+	if a.ObserveLocalSession(ds) {
+		t.Error("重复观察 DeepSeek 不应再写")
+	}
+
+	sum := a.GetSummary(10)
+	if sum.TotalRequests != 2 {
+		t.Fatalf("账本应只有 2 条，得到 %d", sum.TotalRequests)
+	}
+	// Recent 按时间倒序：最新是 DeepSeek，其次 Kimi
+	if len(sum.RecentRecords) != 2 ||
+		sum.RecentRecords[0].ModelRequested != "DeepSeek-V4.1-Flash" ||
+		sum.RecentRecords[1].ModelRequested != "Kimi-K3.1-Pro" {
+		t.Fatalf("Recent 应按时间排 [DeepSeek, Kimi]，得到 %+v", sum.RecentRecords)
+	}
+	rec := sum.RecentRecords[0]
+	if rec.Source != "local" || rec.Side != "cn" || rec.SessionID != "sess-1" ||
+		rec.StatusCode != 200 || rec.IsStream {
+		t.Errorf("直连记录字段不对：%+v", rec)
+	}
+	// Today 真累加：49000 + 153000
+	today := sum.DailyStats[len(sum.DailyStats)-1]
+	if today.TotalRequests != 2 || today.TotalTokens != 202000 {
+		t.Errorf("今日应为 2 请求/202000 tokens，得到 %+v", today)
+	}
+
+	// 同会话、同时间、不同 total → 是另一条请求，照写
+	other := kimi
+	other.TotalTokens = 49001
+	other.CompletionTokens = 1001
+	if !a.ObserveLocalSession(other) {
+		t.Error("total 不同应是新记录")
+	}
+	// 不同会话 → 新记录
+	other2 := kimi
+	other2.SessionID = "sess-2"
+	if !a.ObserveLocalSession(other2) {
+		t.Error("不同会话应是新记录")
+	}
+	if got := a.GetSummary(10).TotalRequests; got != 4 {
+		t.Errorf("追加两条不同记录后总数应为 4，得到 %d", got)
+	}
+
+	// 非法输入不写盘
+	if a.ObserveLocalSession(LocalSessionUsage{Model: "x", Timestamp: now}) {
+		t.Error("SessionID 为空时不应写入")
+	}
+	if a.ObserveLocalSession(LocalSessionUsage{SessionID: "s", Model: "x"}) {
+		t.Error("Timestamp 为空时不应写入")
+	}
+	if a.ObserveLocalSession(LocalSessionUsage{SessionID: "s", Model: "x", Timestamp: now}) {
+		t.Error("token 全为 0 时不应写入")
+	}
+}
+
+// TestObserveLocalSessionRestartNoDup 钉住去重不靠内存：
+// 全新 Auditor 读同一目录（内存 seen 集是空的），重复观察仍不重复写。
+func TestObserveLocalSessionRestartNoDup(t *testing.T) {
+	dir := t.TempDir()
+	u := LocalSessionUsage{
+		SessionID: "sess-1", Model: "Kimi-K3.1-Pro", Side: "cn",
+		Timestamp:    time.Now(),
+		PromptTokens: 48000, CompletionTokens: 1000, TotalTokens: 49000,
+	}
+
+	a1 := NewAuditorWithStorage(100, dir)
+	if !a1.ObserveLocalSession(u) {
+		t.Fatal("第一次观察应写入")
+	}
+
+	// 模拟重启：全新 Auditor 从磁盘恢复，内存里没有任何 seen 集
+	a2 := NewAuditorWithStorage(100, dir)
+	if got := a2.GetSummary(10).TotalRequests; got != 1 {
+		t.Fatalf("重启恢复后期望 1 条，得到 %d", got)
+	}
+	if a2.ObserveLocalSession(u) {
+		t.Error("重启后重复观察不应再写")
+	}
+	if got := a2.GetSummary(10).TotalRequests; got != 1 {
+		t.Errorf("重启后重复观察后总数仍应为 1，得到 %d", got)
+	}
+	// 磁盘上的记录字段完整
+	rec := a2.GetSummary(10).RecentRecords[0]
+	if rec.Source != "local" || rec.Side != "cn" || rec.SessionID != "sess-1" {
+		t.Errorf("重启恢复的记录字段不对：%+v", rec)
 	}
 }

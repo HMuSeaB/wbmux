@@ -7,6 +7,7 @@ import (
 
 	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
+	"github.com/HMuSeaB/wbmux/internal/sessiontelemetry"
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
 
@@ -30,7 +31,7 @@ func TestCompactTokens(t *testing.T) {
 
 func TestEmbedStatsTextEmpty(t *testing.T) {
 	// 默认没有请求时，返回暂无请求或基于本地会话
-	text, _ := embedStatsText(nil, nil, nil)
+	text, _ := embedStatsText(nil, nil, nil, nil)
 	if text == "" {
 		t.Error("embedStatsText 不应返回空字符串")
 	}
@@ -63,7 +64,7 @@ func TestEmbedStatsTextGatewayPriority(t *testing.T) {
 		Timestamp:        now,
 	})
 
-	text, level := embedStatsText(nil, nil, nil)
+	text, level := embedStatsText(nil, nil, nil, nil)
 	if !strings.Contains(text, "260k") {
 		t.Errorf("期望包含 260k，得到 %q", text)
 	}
@@ -151,7 +152,7 @@ func TestEmbedStatsTextQuotaLimited(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup, nil, nil)
+	text, level := embedStatsText(nil, lookup, nil, nil)
 	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
 		t.Errorf("限流时胶囊应改写，得到 %q/%q", text, level)
 	}
@@ -176,7 +177,7 @@ func TestEmbedStatsTextQuotaExhausted(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup, nil, nil)
+	text, level := embedStatsText(nil, lookup, nil, nil)
 	if text != "额度用尽" || level != "bad" {
 		t.Errorf("用尽时胶囊应为 额度用尽/bad，得到 %q/%q", text, level)
 	}
@@ -196,7 +197,7 @@ func TestEmbedStatsTextQuotaLookupMiss(t *testing.T) {
 		IsStream:         true,
 		Timestamp:        now,
 	})
-	text, level := embedStatsText(func(string) *webui.ProxyQuota { return nil }, nil, nil)
+	text, level := embedStatsText(nil, func(string) *webui.ProxyQuota { return nil }, nil, nil)
 	if !strings.Contains(text, "260k") || level != "warn" {
 		t.Errorf("无额度数据时应保持原样，得到 %q/%q", text, level)
 	}
@@ -300,7 +301,7 @@ func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
 	}
-	text, _ := embedStatsText(nil, pkgs, nil)
+	text, _ := embedStatsText(nil, nil, pkgs, nil)
 	if !strings.Contains(text, "100k") {
 		t.Errorf("基础文案应含 100k，得到 %q", text)
 	}
@@ -312,7 +313,7 @@ func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 // TestEmbedStatsTextCapsuleQuotaOneSide 只有一边有数据时只显示那一边。
 func TestEmbedStatsTextCapsuleQuotaOneSide(t *testing.T) {
 	seedCapsuleRecord(t)
-	text, _ := embedStatsText(nil, func() []webui.CapsulePackage {
+	text, _ := embedStatsText(nil, nil, func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
 	}, nil)
 	if !strings.Contains(text, "国62%") || strings.Contains(text, "际") {
@@ -325,8 +326,8 @@ func TestEmbedStatsTextCapsuleQuotaOneSide(t *testing.T) {
 // 且都不含额度段。
 func TestEmbedStatsTextCapsuleQuotaNoData(t *testing.T) {
 	seedCapsuleRecord(t)
-	a, levelA := embedStatsText(nil, nil, nil)
-	b, levelB := embedStatsText(nil, func() []webui.CapsulePackage { return nil }, nil)
+	a, levelA := embedStatsText(nil, nil, nil, nil)
+	b, levelB := embedStatsText(nil, nil, func() []webui.CapsulePackage { return nil }, nil)
 	if a != b || levelA != levelB {
 		t.Errorf("没数据时两次调用应完全相同，得到 %q/%q 与 %q/%q", a, levelA, b, levelB)
 	}
@@ -362,7 +363,7 @@ func TestEmbedStatsTextCapsuleQuotaLimited(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
 	}
-	text, level := embedStatsText(lookup, pkgs, nil)
+	text, level := embedStatsText(nil, lookup, pkgs, nil)
 	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
 		t.Errorf("限流时胶囊应改写且不带常驻段，得到 %q/%q", text, level)
 	}
@@ -391,8 +392,63 @@ func TestEmbedStatsTextCapsuleQuotaExhausted(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
 	}
-	text, level := embedStatsText(lookup, pkgs, nil)
+	text, level := embedStatsText(nil, lookup, pkgs, nil)
 	if text != "额度用尽" || level != "bad" {
 		t.Errorf("用尽时胶囊应为 额度用尽/bad 且不带常驻段，得到 %q/%q", text, level)
+	}
+}
+
+// TestObserveLocalUsageDedups 验证直连记录落账本时按
+// sessionId+timestamp+totalTokens 去重：daemon 每 3 秒巡检会重复看到同一条。
+func TestObserveLocalUsageDedups(t *testing.T) {
+	gatewayaudit.Default().Clear()
+	now := time.Now()
+	m := &sessiontelemetry.SessionMetric{
+		SessionID: "sess-test-1", Model: "Kimi-K3.1-Pro", Side: "cn",
+		Timestamp: now, PromptTokens: 49000, CompletionTokens: 200, TotalTokens: 49200,
+	}
+	observeLocalUsage(m)
+	observeLocalUsage(m)
+
+	var locals []gatewayaudit.Record
+	for _, r := range gatewayaudit.Default().GetSummary(5).RecentRecords {
+		if r.Source == "local" {
+			locals = append(locals, r)
+		}
+	}
+	if len(locals) != 1 {
+		t.Fatalf("重复巡检应只落 1 条 local 记录，得到 %d", len(locals))
+	}
+	if locals[0].ModelRequested != "Kimi-K3.1-Pro" || locals[0].SessionID != "sess-test-1" {
+		t.Errorf("记录字段不对: %+v", locals[0])
+	}
+	if locals[0].TTFTMs != 0 || locals[0].IsStream {
+		t.Errorf("直连记录不应编造 TTFT 或流式标记: %+v", locals[0])
+	}
+}
+
+// TestEmbedStatsTextFromLedger 验证网关与直连记录落在同一张账本后：
+// last 取两者中更新的那条、今日按账本累加（不再另行叠加）。
+func TestEmbedStatsTextFromLedger(t *testing.T) {
+	gatewayaudit.Default().Clear()
+	now := time.Now()
+	gatewayaudit.Default().ObserveLocalSession(gatewayaudit.LocalSessionUsage{
+		SessionID: "s1", Model: "Kimi-K3.1-Pro", Side: "cn",
+		Timestamp:    now.Add(-2 * time.Minute),
+		PromptTokens: 49000, CompletionTokens: 200, TotalTokens: 49200,
+	})
+	gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
+		ModelRequested: "deepseek-v4.1-flash",
+		PromptTokens:   150000, CompletionTokens: 500, TotalTokens: 150500,
+		StatusCode: 200, IsStream: true,
+		Timestamp: now.Add(-time.Minute), DurationMs: 2000, TTFTMs: 500,
+	})
+
+	text, _ := embedStatsText(nil, nil, nil, nil)
+	if !strings.Contains(text, "150k") {
+		t.Errorf("last 应取更新的网关记录 150k，得到 %q", text)
+	}
+	if !strings.Contains(text, "今日") {
+		t.Errorf("今日应把两条记录一起累加，得到 %q", text)
 	}
 }
