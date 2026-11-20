@@ -256,7 +256,7 @@ func cmdGUI(args []string) error {
 			<-srv.Done()
 			cancel()
 		}()
-		inject.RunDaemon(ictx, inject.DefaultCDPPorts, func() string {
+		inject.RunDaemon(ictx, func() string {
 			return embedURLFrom(srv.URL())
 		}, func() (string, string) {
 			// 先探测本地会话并落账本（唯一的直连写盘点），再取文案。

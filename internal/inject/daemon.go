@@ -29,12 +29,14 @@ type StatsProvider func() (text, level string)
 //
 // 端口连不上（客户端没带调试参数、或该档位没开）就静默跳过——这是常态，
 // 不该往日志里刷错误。
-func RunDaemon(ctx context.Context, ports []int, embedURL func() string, stats StatsProvider, onDetach func()) {
+func RunDaemon(ctx context.Context, embedURL func() string, stats StatsProvider, onDetach func()) {
 	attached := false
 	run := func() {
 		anyConnected := false
 		url := embedURL()
-		for _, p := range ports {
+		// 每轮现查：--remote-debugging-port=0 的会话重启后端口会变，
+		// 缓存端口列表会让守护一直连旧端口。
+		for _, p := range DiscoverPorts() {
 			injected, connected := Sync(p, url, stats)
 			_ = injected
 			if connected {

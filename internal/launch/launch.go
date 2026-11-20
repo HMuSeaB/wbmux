@@ -144,19 +144,17 @@ func BuildArgs(id variant.ID, dataDir string) []string {
 
 // buildArgs 拼装传给客户端的参数。
 //
-// 调试端口只在能被绑定时才加：端口被别的程序占着时，Chromium 会因为
-// 绑不上而降低启动可靠性——注入是附加功能，绝不能反过来挡住客户端本体。
+// 调试端口固定传 0：Chromium 自己挑一个空闲端口，并把它写进
+// <dataDir>/DevToolsActivePort，由 inject.DiscoverPorts 读取。
+//
+// 为什么不用固定端口：9222/9223 被别的程序占着时只能放弃注入（写死端口
+// 就这点最坑），双开时还得手工分配。0 既不会失败，也不会互相抢。
 func buildArgs(id variant.ID, dataDir string) []string {
-	return buildArgsWithPort(dataDir, DebugPort(id))
-}
-
-// buildArgsWithPort 是 buildArgs 的可注入版本，便于测试覆盖两个分支。
-func buildArgsWithPort(dataDir string, port int) []string {
-	args := []string{UserDataDirFlag + "=" + dataDir}
-	if portFree(port) {
-		args = append(args, fmt.Sprintf("--remote-debugging-port=%d", port))
+	_ = id
+	return []string{
+		UserDataDirFlag + "=" + dataDir,
+		"--remote-debugging-port=0",
 	}
-	return args
 }
 
 // portFree 判断回环端口是否还能绑定。只做瞬时探测，不长期占用。
