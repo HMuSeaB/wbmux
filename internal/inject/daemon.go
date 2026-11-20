@@ -104,6 +104,12 @@ func Sync(port int, embedURL string, stats StatsProvider) (injected, connected b
 		}
 	}
 
+	// 界面优化：独立 style 标签，按内容 hash 比对。改 ~/.wbmux/theme.css
+	// 之后最多 3 秒自动生效，不用重启客户端，也不影响胶囊。
+	if _, err := EnsureTheme(c, ThemeCSS()); err != nil {
+		// 静默：主题挂了胶囊照常工作。
+	}
+
 	// 指标刷新放在注入之后：刚注入的新胶囊先拿到数字，不用等下一轮。
 	// 文本与等级都没变时跳过推送——3 秒巡检只负责"注入标记还在不在"，
 	// 不负责把同一行数字反复重写一遍。

@@ -1,0 +1,44 @@
+/* ---- wbmux 默认界面优化：字体栈 + 细节 ----
+   目标是修掉"在 Windows 上落到微软雅黑"这件事，而不是换一套皮肤。
+   想追加自己的样式：写 ~/.wbmux/theme.css，下一次巡检（3 秒内）自动并进来，
+   不用重启客户端。 */
+
+/* 界面字体：优先 Win11 的可变字体与更纱黑体，最后才回落到系统默认。
+   不写 * 选择器——客户端里有图标字体，全局覆盖会把图标打成方块。 */
+body,
+body > div,
+[class*="sidebar"],
+[class*="titlebar"] {
+  font-family:
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    "Sarasa UI SC",
+    "Microsoft YaHei UI",
+    "PingFang SC",
+    system-ui,
+    sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 代码与输入框：等宽字体单独走一条链 */
+code, kbd, pre, samp,
+[class*="monaco"],
+[class*="code-block"] {
+  font-family:
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Sarasa Mono SC",
+    Consolas,
+    "Liberation Mono",
+    monospace !important;
+}
+
+/* 滚动条收细：默认的 15px 宽在窄侧栏里太抢空间 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); }
+::-webkit-scrollbar-track { background: transparent; }
