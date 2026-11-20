@@ -1,19 +1,76 @@
-/* ---- wbmux 界面优化：字体 + 细节 ----
-   目标不是换一套皮肤，是把"在 Windows 上落到微软雅黑"这件事修掉，并给正文
-   一点书卷感。用到的字体都是本机已有的：
+/* ---- wbmux 界面优化：字体桥接 + 细节 ----
+   用到的字体都是本机已有的：
      UI      Segoe UI Variable Text（Win11 可变）+ Noto Sans SC（思源黑体）
      代码    Maple Mono CN（中文等宽）+ Cascadia Code
      正文    Noto Serif SC（思源宋体可变，屏幕优化过，不是 simsun）
    想追加自己的样式：写 ~/.wbmux/theme.css，下一次巡检（3 秒内）自动并进来。 */
 
+/* ---- 字体桥接 ----
+   为什么要 @font-face 而不是直接列 font-family：
+   1) 同一款字体在不同机器上的注册名不一样（系统安装 / 用户安装 / 命令行安装
+      会得到不同族名），local() 里列多个别名能显著提高命中率；
+   2) 按字重分段定义同一个 family，600/700 才能用真正的粗体文件——否则浏览器
+      会把常规字重"描粗"，中文边缘会糊。
+   这些都是从船板（chuanban-antigravity-theme-patch）的 core/theme.css 学来的。 */
+
+@font-face {
+  font-family: "wbmux-ui";
+  src: local("Segoe UI Variable Text"), local("SegoeUIVariableText"),
+       local("Noto Sans SC"), local("NotoSansSC-Regular"), local("思源黑体");
+  font-weight: 300 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "wbmux-ui";
+  src: local("Segoe UI Variable Display Bold"), local("Noto Sans SC Bold"),
+       local("NotoSansSC-Bold"), local("Microsoft YaHei UI Bold"), local("思源黑体 Bold");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "wbmux-mono";
+  src: local("Maple Mono CN"), local("MapleMono-CN-Regular"),
+       local("Cascadia Code"), local("CascadiaCode-Regular");
+  font-weight: 300 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "wbmux-mono";
+  src: local("Maple Mono CN Bold"), local("MapleMono-CN-Bold"), local("Cascadia Code Bold");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "wbmux-serif";
+  src: local("Noto Serif SC"), local("NotoSerifSC-Regular"), local("思源宋体");
+  font-weight: 300 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "wbmux-serif";
+  src: local("Noto Serif SC Bold"), local("NotoSerifSC-Bold"), local("思源宋体 Bold");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* 界面字体：西文走 Segoe，中文回落到思源黑体。
-   不写 * 选择器——客户端里有图标字体，全局覆盖会把图标打成方块。 */
+   不写 * 选择器——客户端里有图标字体，全局覆盖会把图标打成方块。
+   桥接 family 失败时后面还有完整回退链。 */
 body,
 body > div,
 [class*="sidebar"],
 [class*="titlebar"],
 [class*="menu"] {
   font-family:
+    "wbmux-ui",
     "Segoe UI Variable Text",
     "Segoe UI",
     "Noto Sans SC",
@@ -30,6 +87,7 @@ code, kbd, pre, samp,
 [class*="monaco"],
 [class*="code-block"] {
   font-family:
+    "wbmux-mono",
     "Maple Mono CN",
     "Maple Mono",
     "Cascadia Code",
@@ -39,8 +97,7 @@ code, kbd, pre, samp,
     monospace !important;
 }
 
-/* 对话正文：思源宋体。18px 下思源宋体是屏幕优化的可变字体，
-   字形比系统宋体干净；代码块用下面那条规则单独拉回等宽。 */
+/* 对话正文：思源宋体。18px 下它是屏幕优化的可变字体，字形比系统宋体干净 */
 .cr-markdown,
 .cr-markdown p,
 .cr-markdown li,
@@ -49,7 +106,7 @@ code, kbd, pre, samp,
 .cr-markdown h2,
 .cr-markdown h3 {
   font-family:
-    "Segoe UI Variable Text",
+    "wbmux-serif",
     "Noto Serif SC",
     "Songti SC",
     Georgia,
@@ -63,6 +120,7 @@ code, kbd, pre, samp,
 .cr-markdown kbd,
 .cr-markdown table code {
   font-family:
+    "wbmux-mono",
     "Maple Mono CN",
     "Maple Mono",
     "Cascadia Code",
