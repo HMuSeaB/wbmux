@@ -42,21 +42,13 @@ func Dial(port int, timeout time.Duration) (*Client, error) {
 	}
 	var chosen *pageTarget
 	for i := range targets {
-		if targets[i].Type == "page" && strings.Contains(targets[i].URL, "renderer/index.html") {
+		if isHostPage(targets[i]) {
 			chosen = &targets[i]
 			break
 		}
 	}
-	if chosen == nil {
-		for i := range targets {
-			if targets[i].Type == "page" {
-				chosen = &targets[i]
-				break
-			}
-		}
-	}
 	if chosen == nil || chosen.WebSocketDebuggerURL == "" {
-		return nil, errors.New("没有可注入的页面（窗口可能还没加载完）")
+		return nil, errors.New("没有可注入的客户端主界面（窗口可能还没加载完；内置浏览器与本地预览页不会被注入）")
 	}
 
 	ws, err := dialWS(chosen.WebSocketDebuggerURL, timeout)
@@ -64,6 +56,22 @@ func Dial(port int, timeout time.Duration) (*Client, error) {
 		return nil, err
 	}
 	return &Client{ws: ws}, nil
+}
+
+// isHostPage 判断一个 target 是不是客户端主界面。
+//
+// 主界面永远是 file:// 下的 renderer/index.html；内置浏览器打开的网页与本地
+// 预览页是 http(s)://，一律不碰——注入到那里会污染用户的页面，胶囊数据也
+// 对不上。此前"找不到主界面就取第一个 page"的兜底会把胶囊塞进预览页。
+func isHostPage(t pageTarget) bool {
+	if t.Type != "page" || t.WebSocketDebuggerURL == "" {
+		return false
+	}
+	u := t.URL
+	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return false
+	}
+	return strings.Contains(u, "/renderer/index.html") || strings.Contains(u, "app.asar/renderer")
 }
 
 // Close 关闭会话。
