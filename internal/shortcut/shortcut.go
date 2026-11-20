@@ -322,9 +322,17 @@ foreach ($d in $scanDirs) {
                         if ($d.ToLower() -eq $desktop.ToLower()) {
                             $foundOnDesktop[$t.Name] = $true
                         }
-                        $arg = "--remote-debugging-port=" + $t.Port
-                        if (-not $sc.Arguments -or -not ($sc.Arguments -match "--remote-debugging-port")) {
-                            $sc.Arguments = ($sc.Arguments + " " + $arg).Trim()
+                        # 统一写 0（Chromium 自选端口并写入 DevToolsActivePort）：
+                        # 固定端口被别的程序占用时，客户端会绑不上，注入就静默失效。
+                        # 已带旧固定端口参数的快捷方式要改写成 0，否则老用户永远停在旧参数上。
+                        if ($sc.Arguments -match "--remote-debugging-port=(\d+)") {
+                            if ($matches[1] -ne "0") {
+                                $sc.Arguments = ($sc.Arguments -replace "--remote-debugging-port=\d+", "--remote-debugging-port=0")
+                                $sc.Save()
+                                Write-Output ("REPATCHED:" + $lnkPath)
+                            }
+                        } else {
+                            $sc.Arguments = ($sc.Arguments + " --remote-debugging-port=0").Trim()
                             $sc.Save()
                             Write-Output ("PATCHED:" + $lnkPath)
                         }
@@ -343,7 +351,7 @@ if (Test-Path $desktop) {
                 $sc = $ws.CreateShortcut($newPath)
                 $sc.TargetPath = $t.Exe
                 $sc.WorkingDirectory = Split-Path $t.Exe
-                $sc.Arguments = "--remote-debugging-port=" + $t.Port
+                $sc.Arguments = "--remote-debugging-port=0"
                 $sc.Description = $t.Name + " (带调试端口)"
                 $sc.Save()
                 Write-Output ("CREATED:" + $newPath)
@@ -372,6 +380,9 @@ if (Test-Path $desktop) {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "PATCHED:") {
 			res.Patched = append(res.Patched, strings.TrimPrefix(trimmed, "PATCHED:"))
+		} else if strings.HasPrefix(trimmed, "REPATCHED:") {
+			// 已有旧固定端口参数、被改写成 0 的快捷方式，同样算"已修补"。
+			res.Patched = append(res.Patched, strings.TrimPrefix(trimmed, "REPATCHED:"))
 		} else if strings.HasPrefix(trimmed, "CREATED:") {
 			res.Created = append(res.Created, strings.TrimPrefix(trimmed, "CREATED:"))
 		}
