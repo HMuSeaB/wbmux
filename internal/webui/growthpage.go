@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -112,17 +113,38 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req)
 	}
 
-	p := s.probe()
-	c, err := s.intlCred(p)
-	if err != nil || c.Token == "" {
-		writeErr(w, http.StatusNotFound, "未配置国际版账号凭证，请先登录国际版账号")
+	res, err := s.AutoSimulateIntlActive(req.Model)
+	if err != nil {
+		if errors.Is(err, ErrNoIntlCred) {
+			writeErr(w, http.StatusNotFound, "未配置国际版账号凭证，请先登录国际版账号")
+			return
+		}
+		s.note(ProxyLogEntry{Level: "bad", Text: "国际版模拟活跃对话失败: " + err.Error()})
+		writeErr(w, http.StatusBadGateway, "模拟活跃对话失败: "+err.Error())
 		return
 	}
 
-	// 动态解析当前实时免积分候选模型（优先用户指定，其次官方限免 FreeNow / 0 积分模型）
+	writeJSON(w, res)
+}
+
+// errNoIntlCred 表示国际侧没有可用凭证——定时任务遇到它要安静跳过。
+var ErrNoIntlCred = errors.New("未配置国际版账号凭证")
+
+// AutoSimulateIntlActive 触发一次国际端模拟活跃对话，返回官方响应。
+//
+// HTTP 接口和每日定时任务共用这一份逻辑：定时任务没有 http.Request，
+// 也要能安静失败（没配账号、没限免模型都不该打扰用户）。
+func (s *Server) AutoSimulateIntlActive(model string) (any, error) {
+	p := s.probe()
+	c, err := s.intlCred(p)
+	if err != nil || c.Token == "" {
+		return nil, ErrNoIntlCred
+	}
+
+	// 候选模型：优先用户指定，其次官方限免（FreeNow / 0 积分），跳过图像视频。
 	var candidates []string
-	if req.Model != "" {
-		candidates = append(candidates, req.Model)
+	if model != "" {
+		candidates = append(candidates, model)
 	}
 	if live := usage.LiveAccounts(p)[string(variant.Intl)]; live != nil && live.OK {
 		for _, m := range live.Models {
@@ -134,27 +156,22 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
+	if len(candidates) == 0 {
+		return nil, errors.New("当前没有限免模型可用")
+	}
 
 	client := growth.NewClient(s.upstreamBase())
 	res, err := client.SimulateIntlActive(credential.Credential{Token: c.Token, UID: c.UID}, candidates...)
 	if err != nil {
-		s.note(ProxyLogEntry{
-			Level: "bad",
-			Text:  "国际版模拟活跃对话失败: " + err.Error(),
-		})
-		writeErr(w, http.StatusBadGateway, "模拟活跃对话失败: "+err.Error())
-		return
+		return nil, err
 	}
-
 	usage.InvalidateLiveCache(variant.Intl)
-
 	s.note(ProxyLogEntry{
 		Level: "info",
 		Model: res.Model,
 		Text:  fmt.Sprintf("已成功模拟国际端今日活跃对话 (模型: %s, 耗时 %dms, 首字 %dms) · 次日跑批自动发放 +30 积分", res.Model, res.DurationMs, res.TTFTMs),
 	})
-
-	writeJSON(w, res)
+	return res, nil
 }
 
 // DomesticTasksResponse 国内端成长计划全量任务与收益响应。

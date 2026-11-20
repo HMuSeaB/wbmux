@@ -272,6 +272,16 @@ func cmdGUI(args []string) error {
 		})
 	}()
 
+	// 每天自动跑一次国际端"模拟活跃"（与面板按钮同一条路径）。
+	go func() {
+		ictx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-srv.Done()
+			cancel()
+		}()
+		runIntlSimDaily(ictx, srv)
+	}()
+
 	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，
 	// 第一眼看它是走代理还是直连、有没有跳过不可用的代理。
 	guiLog("网络出口：%s", netroute.Describe())
