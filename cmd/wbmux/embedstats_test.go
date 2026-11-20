@@ -285,7 +285,7 @@ func TestCapsuleQuotaText(t *testing.T) {
 		{[]webui.CapsulePackage{}, ""},
 		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}}, "国62%"},
 		{[]webui.CapsulePackage{{Side: "intl", Percent: 41}}, "际41%"},
-		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}, "国62%·际41%"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}, "国62% 际41%"},
 		{[]webui.CapsulePackage{{Side: "xx", Percent: 50}}, ""},
 	}
 	for _, c := range cases {
@@ -296,7 +296,7 @@ func TestCapsuleQuotaText(t *testing.T) {
 }
 
 // TestEmbedStatsTextCapsuleQuotaBoth 两边有数据时胶囊末尾多一段
-// "国62%·际41%"，且是最后一段。
+// "国62% 际41%"，且是最后一段。
 func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	seedCapsuleRecord(t)
 	pkgs := func() []webui.CapsulePackage {
@@ -306,7 +306,7 @@ func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	if !strings.Contains(text, "100k") {
 		t.Errorf("基础文案应含 100k，得到 %q", text)
 	}
-	if !strings.HasSuffix(text, "国62%·际41%") {
+	if !strings.HasSuffix(text, "国62% 际41%") {
 		t.Errorf("两边有数据时胶囊末尾应为 国62%%·际41%%，得到 %q", text)
 	}
 }
@@ -462,7 +462,7 @@ func TestCapsuleQuotaTextExpiring(t *testing.T) {
 		{Side: "cn", Percent: 62, DaysLeft: 3, Expiring: true},
 		{Side: "intl", Percent: 41, DaysLeft: 20},
 	})
-	if got != "国62%·3d·际41%" {
+	if got != "国62%·3d 际41%" {
 		t.Errorf("应只给快到期的国内档贴天数，得到 %q", got)
 	}
 	if got := capsuleQuotaText([]webui.CapsulePackage{

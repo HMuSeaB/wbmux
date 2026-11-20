@@ -174,14 +174,55 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 
 	// 常驻额度段：只在新鲜态末尾加一段。packageLookup 为 nil 或
 	// 没数据时不加，文案与原来一模一样。
+	var packages []webui.CapsulePackage
 	if packageLookup != nil {
-		if q := capsuleQuotaText(packageLookup()); q != "" {
+		packages = packageLookup()
+		if q := capsuleQuotaText(packages); q != "" {
 			parts = append(parts, q)
 		}
 	}
 
 	level := embedstats.Level(promptTokens, freshness)
+	// 顶栏整条只有一个颜色：额度和上下文谁更急就报谁。
+	if lv := quotaLevel(packages); quotaRank(lv) > quotaRank(level) {
+		level = lv
+	}
 	return strings.Join(parts, " · "), level
+}
+
+// quotaLevel 把"还有余额的档里最低的那个"翻成告警等级：
+// 低于 20% 黄、低于 5% 红。用尽（0%）的档不参与——那档可能根本没在用，
+// 让它在顶栏把整条染红只会误导。
+func quotaLevel(pkgs []webui.CapsulePackage) string {
+	min, seen := 0, false
+	for _, p := range pkgs {
+		if p.Percent <= 0 {
+			continue
+		}
+		if !seen || p.Percent < min {
+			min, seen = p.Percent, true
+		}
+	}
+	if !seen {
+		return ""
+	}
+	switch {
+	case min < 5:
+		return "bad"
+	case min < 20:
+		return "warn"
+	}
+	return ""
+}
+
+func quotaRank(level string) int {
+	switch level {
+	case "bad":
+		return 2
+	case "warn":
+		return 1
+	}
+	return 0
 }
 
 // capsuleQuotaText 把各档主包余量压成胶囊里的一段：两边都有是
@@ -191,7 +232,8 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 // 档位顺序固定国内在前、国际在后，不跟着 last 的档位跳变，
 // 否则切模型时同一段数字来回换位置，没法一眼扫。
 func capsuleQuotaText(pkgs []webui.CapsulePackage) string {
-	var parts []string
+	var segments []string
+	var zeroSeg string
 	for _, p := range pkgs {
 		label := ""
 		switch p.Side {
@@ -209,9 +251,18 @@ func capsuleQuotaText(pkgs []webui.CapsulePackage) string {
 		if p.Expiring && p.Percent > 0 && p.DaysLeft > 0 {
 			seg = fmt.Sprintf("%s%d%%·%dd", label, p.Percent, p.DaysLeft)
 		}
-		parts = append(parts, seg)
+		// 用尽的那档不占位置：0% 天天看都是 0，不提供信息；两档都用尽
+		// 时才保留一条，让"额度空了"还能看见。
+		if p.Percent > 0 {
+			segments = append(segments, seg)
+		} else if zeroSeg == "" {
+			zeroSeg = seg
+		}
 	}
-	return strings.Join(parts, "·")
+	if len(segments) == 0 && zeroSeg != "" {
+		segments = append(segments, zeroSeg)
+	}
+	return strings.Join(segments, " ")
 }
 
 // quotaCapsuleText 把限流态翻成胶囊文案。只在 rate_limited /

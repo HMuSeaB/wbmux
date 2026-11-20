@@ -30,9 +30,26 @@ import (
 type embedStatsSnapshot struct {
 	Last      *embedLastStats    `json:"last,omitempty"`
 	Today     embedDayStats      `json:"today"`
+	Totals    embedTotals        `json:"totals"`
+	Daily     []embedDayPoint    `json:"daily"`
 	Recent    []embedRecentStats `json:"recent"`
 	Quota     *embedQuota        `json:"quota,omitempty"`
 	UpdatedAt time.Time          `json:"updatedAt"`
+}
+
+// embedTotals 是跨天累计，回答"这个月用了多少 / 一共用了多少"。
+// Total 只统计账本里还留着的日子——网关日志会滚动清理，这里不假装是
+// 开天辟地以来的总数。
+type embedTotals struct {
+	Month int `json:"month"`
+	Total int `json:"total"`
+}
+
+// embedDayPoint 是 30 天柱状图的一根柱子。没有记录的日子也占一格（tokens=0），
+// 否则"最近没怎么用"这件事在图上会变成空白，看不出是缺数据还是没用。
+type embedDayPoint struct {
+	Date   string `json:"date"`
+	Tokens int    `json:"tokens"`
 }
 
 // embedQuota 是面板额度区的数据：当前模型的限流态 + 两档主包余量。
@@ -300,6 +317,23 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	out := embedStatsSnapshot{UpdatedAt: time.Now(), Recent: make([]embedRecentStats, 0, 5)}
 
 	now := time.Now()
+
+	// 本月 / 累计 + 近 30 天柱子，全部从日度聚合出——面板要回答
+	// "这个月到底用了多少"，只给一个今日总量太单薄。
+	monthKey := now.Format("2006-01")
+	byDate := make(map[string]int, len(sum.DailyStats))
+	for _, d := range sum.DailyStats {
+		out.Totals.Total += d.TotalTokens
+		if len(d.Date) >= 7 && d.Date[:7] == monthKey {
+			out.Totals.Month += d.TotalTokens
+		}
+		byDate[d.Date] = d.TotalTokens
+	}
+	out.Daily = make([]embedDayPoint, 0, 30)
+	for i := 29; i >= 0; i-- {
+		day := now.AddDate(0, 0, -i).Format("2006-01-02")
+		out.Daily = append(out.Daily, embedDayPoint{Date: day, Tokens: byDate[day]})
+	}
 	for _, rec := range sum.RecentRecords {
 		if len(out.Recent) >= 5 {
 			break
