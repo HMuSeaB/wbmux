@@ -2,11 +2,15 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/usage"
 	"github.com/HMuSeaB/wbmux/internal/variant"
@@ -118,6 +122,135 @@ func TestEmbedStatsQuotaSegment(t *testing.T) {
 	pkg := resp.Quota.Packages[0]
 	if pkg.Side != "cn" || pkg.Percent != 62.5 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
 		t.Errorf("国内包应为 cn/62.5%%/每月 1 日重置，得到 %+v", pkg)
+	}
+}
+
+// TestServeEmbedLast 钉住面板侧兜底：新记录替换旧记录、nil 时给兜底且
+// 年龄按兜底时间戳重算、满 120 分钟变 idle；holder 为 nil 时不兜底。
+func TestServeEmbedLast(t *testing.T) {
+	now := time.Now()
+	s := &Server{lastHold: embedstats.NewLastHold[embedLastStats]()}
+
+	got := s.serveEmbedLast(&embedLastStats{Model: "Kimi-K3.1-Pro", PromptTokens: 61000}, now)
+	if got == nil || got.Model != "Kimi-K3.1-Pro" || got.Freshness != "fresh" {
+		t.Fatalf("新记录应原样给出且为 fresh，得到 %+v", got)
+	}
+	// nil candidate → 兜底，AgeSec 重算为约 0 秒
+	got = s.serveEmbedLast(nil, time.Time{})
+	if got == nil || got.Model != "Kimi-K3.1-Pro" {
+		t.Fatalf("nil candidate 应给兜底，得到 %+v", got)
+	}
+	if got.AgeSec < 0 || got.AgeSec > 5 {
+		t.Errorf("兜底 AgeSec 应为约 0 秒，得到 %d", got.AgeSec)
+	}
+	// 更旧的 candidate 不替换兜底
+	got = s.serveEmbedLast(&embedLastStats{Model: "old", PromptTokens: 1000}, now.Add(-time.Hour))
+	if got == nil || got.Model != "Kimi-K3.1-Pro" {
+		t.Errorf("旧 candidate 不应替换兜底，得到 %+v", got)
+	}
+	// 更新的 candidate 替换兜底
+	got = s.serveEmbedLast(&embedLastStats{Model: "DeepSeek-V4.1-Flash", PromptTokens: 62000}, now.Add(time.Minute))
+	if got == nil || got.Model != "DeepSeek-V4.1-Flash" {
+		t.Errorf("新 candidate 应替换兜底，得到 %+v", got)
+	}
+
+	// 121 分钟前的兜底 → idle；40 分钟前 → aged
+	sOld := &Server{lastHold: embedstats.NewLastHold[embedLastStats]()}
+	sOld.serveEmbedLast(&embedLastStats{Model: "Kimi-K3.1-Pro", PromptTokens: 61000}, now.Add(-121*time.Minute))
+	if got := sOld.serveEmbedLast(nil, time.Time{}); got == nil || got.Freshness != "idle" {
+		t.Errorf("121 分钟前的兜底应判 idle，得到 %+v", got)
+	}
+	sAged := &Server{lastHold: embedstats.NewLastHold[embedLastStats]()}
+	sAged.serveEmbedLast(&embedLastStats{Model: "Kimi-K3.1-Pro", PromptTokens: 61000}, now.Add(-40*time.Minute))
+	if got := sAged.serveEmbedLast(nil, time.Time{}); got == nil || got.Freshness != "aged" {
+		t.Errorf("40 分钟前的兜底应判 aged，得到 %+v", got)
+	}
+
+	// holder 为 nil（测试直接拼的 Server）时不兜底
+	bare := &Server{}
+	if got := bare.serveEmbedLast(&embedLastStats{Model: "x"}, now); got == nil || got.Model != "x" {
+		t.Errorf("nil holder 应原样返回 candidate，得到 %+v", got)
+	}
+	if got := bare.serveEmbedLast(nil, time.Time{}); got != nil {
+		t.Errorf("nil holder + nil candidate 应返回 nil，得到 %+v", got)
+	}
+}
+
+// TestEmbedStatsHoldEndToEnd 走一遍 handleEmbedStats 的兜底全流程：
+// 遥测有新鲜记录 → last 正常；把会话文件改写成只有填充行（模拟新一轮
+// 生成中旧记录被挤出窗口、新用量未落盘）→ last 仍是上一条，不跌回空闲；
+// 再写入更新的记录 → last 被替换。
+func TestEmbedStatsHoldEndToEnd(t *testing.T) {
+	// 测试二进制里 Default() 不落盘，Clear 只清内存，不动用户真实日志。
+	gatewayaudit.Default().Clear()
+
+	tmpDir := t.TempDir()
+	sessDir := filepath.Join(tmpDir, ".workbuddy", "projects", "proj1")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessFile := filepath.Join(sessDir, "session.jsonl")
+	writeUsage := func(model string, prompt int, ts time.Time) {
+		t.Helper()
+		line := fmt.Sprintf(`{"id":"u1","timestamp":%d,"providerData":{"requestModelName":%q,"rawUsage":{"prompt_tokens":%d,"completion_tokens":120,"total_tokens":%d}}}`+"\n",
+			ts.UnixMilli(), model, prompt, prompt+120)
+		if err := os.WriteFile(sessFile, []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	callStats := func(s *Server) (model, freshness string, prompt int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/embed/stats", nil)
+		rec := httptest.NewRecorder()
+		s.handleEmbedStats(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("handleEmbedStats 应返回 200，得到 %d", rec.Code)
+		}
+		var resp struct {
+			Last *struct {
+				Model        string `json:"model"`
+				PromptTokens int    `json:"promptTokens"`
+				Freshness    string `json:"freshness"`
+			} `json:"last"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("响应无法解析: %v", err)
+		}
+		if resp.Last == nil {
+			return "", "", 0
+		}
+		return resp.Last.Model, resp.Last.Freshness, resp.Last.PromptTokens
+	}
+
+	s := newQuotaTestServer(t)
+	s.lastHold = embedstats.NewLastHold[embedLastStats]()
+	s.opts.Probe = &variant.Probe{Home: tmpDir}
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{}
+	}
+
+	now := time.Now()
+	writeUsage("Kimi-K3.1-Pro", 61000, now)
+	if model, freshness, prompt := callStats(s); model != "Kimi-K3.1-Pro" || freshness != "fresh" || prompt != 61000 {
+		t.Fatalf("第一次应拿到新鲜记录，得到 %q/%q/%d", model, freshness, prompt)
+	}
+
+	// 模拟生成中：日志里只剩填充行（不含 usage/tokens 关键字），遥测返回 nil
+	filler := ""
+	for i := 0; i < 200; i++ {
+		filler += `{"type":"thought","text":"thinking very hard, filling the log line by line..."}` + "\n"
+	}
+	if err := os.WriteFile(sessFile, []byte(filler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if model, freshness, prompt := callStats(s); model != "Kimi-K3.1-Pro" || prompt != 61000 {
+		t.Fatalf("遥测 miss 时应兜底上一条，得到 %q/%q/%d", model, freshness, prompt)
+	}
+
+	// 更新的记录一到就替换兜底
+	writeUsage("DeepSeek-V4.1-Flash", 62000, time.Now())
+	if model, _, prompt := callStats(s); model != "DeepSeek-V4.1-Flash" || prompt != 62000 {
+		t.Fatalf("新记录应替换兜底，得到 %q/%d", model, prompt)
 	}
 }
 

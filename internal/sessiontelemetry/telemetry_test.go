@@ -109,6 +109,64 @@ func TestTailReadUsageLargeFile(t *testing.T) {
 	}
 }
 
+func TestTailReadUsageSecondTier(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessFile := filepath.Join(tmpDir, "test-second-tier.jsonl")
+
+	// 用量记录先写，随后追加约 100KB 不带 usage/tokens 关键字的填充行，
+	// 把它顶出 64KB 快路径窗口、留在 512KB 慢路径窗口内。
+	usage := `{"id":"u1","timestamp":1700000000000,"providerData":{"requestModelName":"Kimi-K3.1-Pro","rawUsage":{"prompt_tokens":61000,"completion_tokens":120,"total_tokens":61120}}}` + "\n"
+	filler := strings.Repeat(`{"type":"thought","text":"thinking very hard, filling the log line by line..."}`+"\n", 1500)
+	if err := os.WriteFile(sessFile, []byte(usage+filler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(sessFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() <= 64*1024 || fi.Size() >= 512*1024 {
+		t.Fatalf("测试前置：文件应为 64KB–512KB，实际 %d 字节", fi.Size())
+	}
+
+	m, err := TailReadUsage(sessFile, "cn")
+	if err != nil {
+		t.Fatalf("TailReadUsage: %v", err)
+	}
+	if m == nil {
+		t.Fatal("用量记录在 64KB 外、512KB 内，第二档应找得到，但得到 nil")
+	}
+	if m.PromptTokens != 61000 || m.Model != "Kimi-K3.1-Pro" {
+		t.Errorf("期望 61000/Kimi-K3.1-Pro，得到 %d/%q", m.PromptTokens, m.Model)
+	}
+}
+
+func TestTailReadUsageBeyondSlowWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessFile := filepath.Join(tmpDir, "test-beyond-slow.jsonl")
+
+	// 用量记录距文件尾超过 512KB：两档都扫不到，返回 nil（有界，不扫全文件）。
+	usage := `{"id":"u1","timestamp":1700000000000,"providerData":{"requestModelName":"Kimi-K3.1-Pro","rawUsage":{"prompt_tokens":61000,"completion_tokens":120,"total_tokens":61120}}}` + "\n"
+	filler := strings.Repeat(`{"type":"thought","text":"thinking very hard, filling the log line by line..."}`+"\n", 9000)
+	if err := os.WriteFile(sessFile, []byte(usage+filler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(sessFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() <= 512*1024 {
+		t.Fatalf("测试前置：文件应超过 512KB，实际 %d 字节", fi.Size())
+	}
+
+	m, err := TailReadUsage(sessFile, "cn")
+	if err != nil {
+		t.Fatalf("TailReadUsage: %v", err)
+	}
+	if m != nil {
+		t.Errorf("用量记录在 512KB 外，应返回 nil，得到 %+v", m)
+	}
+}
+
 func TestFindLatestActiveSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	cnDir := filepath.Join(tmpDir, ".workbuddy", "projects", "proj1")

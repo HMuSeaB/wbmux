@@ -256,7 +256,7 @@ func cmdGUI(args []string) error {
 		}()
 		inject.RunDaemon(ictx, inject.DefaultCDPPorts, func() string {
 			return embedURLFrom(srv.URL())
-		}, func() (string, string) { return embedStatsText(srv.QuotaFor, srv.CapsulePackages) })
+		}, func() (string, string) { return embedStatsText(srv.QuotaFor, srv.CapsulePackages, capsuleLastHold) })
 	}()
 
 	// 把这一轮的出口选择写进日志：以后再遇到"某个功能连不上"，

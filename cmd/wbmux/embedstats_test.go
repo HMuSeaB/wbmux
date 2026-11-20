@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/gatewayaudit"
 	"github.com/HMuSeaB/wbmux/internal/webui"
 )
@@ -29,7 +30,7 @@ func TestCompactTokens(t *testing.T) {
 
 func TestEmbedStatsTextEmpty(t *testing.T) {
 	// 默认没有请求时，返回暂无请求或基于本地会话
-	text, _ := embedStatsText(nil, nil)
+	text, _ := embedStatsText(nil, nil, nil)
 	if text == "" {
 		t.Error("embedStatsText 不应返回空字符串")
 	}
@@ -62,7 +63,7 @@ func TestEmbedStatsTextGatewayPriority(t *testing.T) {
 		Timestamp:        now,
 	})
 
-	text, level := embedStatsText(nil, nil)
+	text, level := embedStatsText(nil, nil, nil)
 	if !strings.Contains(text, "260k") {
 		t.Errorf("期望包含 260k，得到 %q", text)
 	}
@@ -150,7 +151,7 @@ func TestEmbedStatsTextQuotaLimited(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup, nil)
+	text, level := embedStatsText(lookup, nil, nil)
 	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
 		t.Errorf("限流时胶囊应改写，得到 %q/%q", text, level)
 	}
@@ -175,7 +176,7 @@ func TestEmbedStatsTextQuotaExhausted(t *testing.T) {
 		}
 		return nil
 	}
-	text, level := embedStatsText(lookup, nil)
+	text, level := embedStatsText(lookup, nil, nil)
 	if text != "额度用尽" || level != "bad" {
 		t.Errorf("用尽时胶囊应为 额度用尽/bad，得到 %q/%q", text, level)
 	}
@@ -195,14 +196,67 @@ func TestEmbedStatsTextQuotaLookupMiss(t *testing.T) {
 		IsStream:         true,
 		Timestamp:        now,
 	})
-	text, level := embedStatsText(func(string) *webui.ProxyQuota { return nil }, nil)
+	text, level := embedStatsText(func(string) *webui.ProxyQuota { return nil }, nil, nil)
 	if !strings.Contains(text, "260k") || level != "warn" {
 		t.Errorf("无额度数据时应保持原样，得到 %q/%q", text, level)
 	}
 }
 
-// seedCapsuleRecord 往网关账本塞一条"现在"的流式记录，让胶囊走新鲜态。
-// 各常驻段测试共用：调用后 embedStatsText 的基础文案是 "100k · 62/s · 今日 …"。
+func TestEmbedStatsTextFromHold(t *testing.T) {
+	// 遥测一时找不到记录（新一轮生成中旧记录被挤出窗口）时，胶囊拿上一次
+	// 新鲜的 last 显示，而不是"暂无请求"/"空闲"。
+	now := time.Now()
+	hold := embedstats.NewLastHold[lastSample]()
+	hold.Serve(&lastSample{promptTokens: 61000, timestamp: now, midPart: "Kimi-K3.1-Pro", model: "Kimi-K3.1-Pro"}, now)
+
+	text, level := embedStatsTextFrom(gatewayaudit.Summary{}, nil, nil, nil, hold)
+	if text != "61k · Kimi-K3.1-Pro" || level != "" {
+		t.Errorf("兜底时应显示上一次的 61k · Kimi-K3.1-Pro，得到 %q/%q", text, level)
+	}
+}
+
+func TestEmbedStatsTextFromHoldEmpty(t *testing.T) {
+	// 两边都没有 → 暂无请求
+	text, _ := embedStatsTextFrom(gatewayaudit.Summary{}, nil, nil, nil, embedstats.NewLastHold[lastSample]())
+	if text != "暂无请求" {
+		t.Errorf("无数据时应为 暂无请求，得到 %q", text)
+	}
+}
+
+func TestEmbedStatsTextFromHoldReplace(t *testing.T) {
+	// 更新的记录一到就替换兜底
+	now := time.Now()
+	hold := embedstats.NewLastHold[lastSample]()
+	hold.Serve(&lastSample{promptTokens: 48000, timestamp: now.Add(-10 * time.Minute), midPart: "Kimi-K3.1-Pro", model: "Kimi-K3.1-Pro"}, now.Add(-10*time.Minute))
+
+	sum := gatewayaudit.Summary{RecentRecords: []gatewayaudit.Record{{
+		ModelRequested:   "deepseek-v4.1-flash",
+		PromptTokens:     61000,
+		CompletionTokens: 50,
+		TotalTokens:      61050,
+		StatusCode:       200,
+		DurationMs:       1000,
+		TTFTMs:           200,
+		IsStream:         true,
+		Timestamp:        now,
+	}}}
+	text, _ := embedStatsTextFrom(sum, nil, nil, nil, hold)
+	if !strings.Contains(text, "61k") || !strings.Contains(text, "/s") {
+		t.Errorf("新记录应替换兜底，得到 %q", text)
+	}
+}
+
+func TestEmbedStatsTextFromHoldAged(t *testing.T) {
+	// 兜底 40 分钟后：显示旧值 + 多久前，不着色
+	now := time.Now()
+	hold := embedstats.NewLastHold[lastSample]()
+	hold.Serve(&lastSample{promptTokens: 61000, timestamp: now.Add(-40 * time.Minute), midPart: "Kimi-K3.1-Pro", model: "Kimi-K3.1-Pro"}, now.Add(-40*time.Minute))
+
+	text, level := embedStatsTextFrom(gatewayaudit.Summary{}, nil, nil, nil, hold)
+	if text != "61k · 40m 前" || level != "" {
+		t.Errorf("40 分钟前的兜底应显示 61k · 40m 前且不着色，得到 %q/%q", text, level)
+	}
+}
 func seedCapsuleRecord(t *testing.T) {
 	t.Helper()
 	gatewayaudit.Default().RecordRequest(gatewayaudit.Record{
@@ -246,7 +300,7 @@ func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
 	}
-	text, _ := embedStatsText(nil, pkgs)
+	text, _ := embedStatsText(nil, pkgs, nil)
 	if !strings.Contains(text, "100k") {
 		t.Errorf("基础文案应含 100k，得到 %q", text)
 	}
@@ -260,7 +314,7 @@ func TestEmbedStatsTextCapsuleQuotaOneSide(t *testing.T) {
 	seedCapsuleRecord(t)
 	text, _ := embedStatsText(nil, func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
-	})
+	}, nil)
 	if !strings.Contains(text, "国62%") || strings.Contains(text, "际") {
 		t.Errorf("只有国内档时应只显示 国62%%，得到 %q", text)
 	}
@@ -271,8 +325,8 @@ func TestEmbedStatsTextCapsuleQuotaOneSide(t *testing.T) {
 // 且都不含额度段。
 func TestEmbedStatsTextCapsuleQuotaNoData(t *testing.T) {
 	seedCapsuleRecord(t)
-	a, levelA := embedStatsText(nil, nil)
-	b, levelB := embedStatsText(nil, func() []webui.CapsulePackage { return nil })
+	a, levelA := embedStatsText(nil, nil, nil)
+	b, levelB := embedStatsText(nil, func() []webui.CapsulePackage { return nil }, nil)
 	if a != b || levelA != levelB {
 		t.Errorf("没数据时两次调用应完全相同，得到 %q/%q 与 %q/%q", a, levelA, b, levelB)
 	}
@@ -308,7 +362,7 @@ func TestEmbedStatsTextCapsuleQuotaLimited(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}
 	}
-	text, level := embedStatsText(lookup, pkgs)
+	text, level := embedStatsText(lookup, pkgs, nil)
 	if text != "hy4-preview-f 限流 22:18 恢复" || level != "warn" {
 		t.Errorf("限流时胶囊应改写且不带常驻段，得到 %q/%q", text, level)
 	}
@@ -337,7 +391,7 @@ func TestEmbedStatsTextCapsuleQuotaExhausted(t *testing.T) {
 	pkgs := func() []webui.CapsulePackage {
 		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
 	}
-	text, level := embedStatsText(lookup, pkgs)
+	text, level := embedStatsText(lookup, pkgs, nil)
 	if text != "额度用尽" || level != "bad" {
 		t.Errorf("用尽时胶囊应为 额度用尽/bad 且不带常驻段，得到 %q/%q", text, level)
 	}

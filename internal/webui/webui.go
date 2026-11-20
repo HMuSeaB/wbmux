@@ -29,6 +29,7 @@ import (
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/doctor"
+	"github.com/HMuSeaB/wbmux/internal/embedstats"
 	"github.com/HMuSeaB/wbmux/internal/growth"
 	"github.com/HMuSeaB/wbmux/internal/netroute"
 	"github.com/HMuSeaB/wbmux/internal/runner"
@@ -132,6 +133,15 @@ type Server struct {
 	// "现在恢复了吗"；只有真正跟上游说话的代理知道。
 	rate rateState
 
+	// lastHold 记住上一次给出的新鲜 last（见 embedstats.LastHold）。
+	//
+	// 直连遥测只读会话日志尾部，新一轮生成中思考与工具输出会把上一轮的
+	// 用量记录挤出窗口、新用量又未落盘，遥测一时返回 nil；此时若直接拿
+	// nil 去融合，就会跌回几天前的网关记录、显示"空闲"。先拿上一次的
+	// last 老化显示（fresh → aged → 满 120 分钟才空闲），任何更新的
+	// 记录一到就替换它。只放内存，进程重启清空。
+	lastHold *embedstats.LastHold[embedLastStats]
+
 	// guardian 负责后台自适应遥测与活跃心跳守护，防服务端风控。
 	guardian *telemetry.Guardian
 
@@ -221,6 +231,7 @@ func New(opts Options) (*Server, error) {
 		lastActive: time.Now(),
 		done:       make(chan struct{}),
 		logFn:      opts.Logf,
+		lastHold:   embedstats.NewLastHold[embedLastStats](),
 	}
 	srv.guardian = telemetry.NewGuardian(
 		p.Home,

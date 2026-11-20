@@ -62,8 +62,21 @@ func FindLatestActiveSession(probe *variant.Probe) (latestPath string, latestSid
 	return latestPath, latestSide, latestMtime
 }
 
-// TailReadUsage 使用 O(1) 尾部 Seek 仅读取末尾数据块（默认 64KB），
+// tailFastBytes 是快路径窗口：64KB，覆盖正常一轮的用量记录。
+// tailSlowBytes 是慢路径窗口：512KB，只在快路径 miss 时重扫一次。
+// 新一轮生成时思考内容与工具输出不断追加进日志，上一轮的用量记录可能被
+// 挤出 64KB，而新一轮的用量要等整轮结束才落盘；512KB 约为 8 倍余量，
+// 覆盖一轮长思考 + 工具输出的量级，同时仍是一次有界读取，不扫全文件。
+const (
+	tailFastBytes = int64(64 * 1024)
+	tailSlowBytes = int64(512 * 1024)
+)
+
+// TailReadUsage 使用 O(1) 尾部 Seek 仅读取末尾数据块，
 // 逆序解析最新一轮对话中记录的 Token 与用量指标。
+//
+// 两档扫描：先读 64KB 快路径；miss 时再读 512KB 重扫一次。慢路径只在
+// miss 时多花一次有界读取，稳态成本不变。
 func TailReadUsage(filePath, side string) (*SessionMetric, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -75,17 +88,29 @@ func TailReadUsage(filePath, side string) (*SessionMetric, error) {
 	if err != nil {
 		return nil, err
 	}
-	size := fi.Size()
-	if size == 0 {
+	if fi.Size() == 0 {
 		return nil, nil
 	}
 
-	const maxTailBytes = int64(64 * 1024)
-	readBytes := maxTailBytes
+	m, err := scanTailUsage(f, fi, filePath, side, tailFastBytes)
+	if err != nil || m != nil {
+		return m, err
+	}
+	if fi.Size() <= tailFastBytes {
+		return nil, nil // 整文件已扫过，没必要再扫
+	}
+	return scanTailUsage(f, fi, filePath, side, tailSlowBytes)
+}
+
+// scanTailUsage 读文件尾部 maxBytes 字节，逆序找最新一条用量记录。
+// 找不到返回 (nil, nil)——不是错误。
+func scanTailUsage(f *os.File, fi os.FileInfo, filePath, side string, maxBytes int64) (*SessionMetric, error) {
+	size := fi.Size()
+	readBytes := maxBytes
 	var offset int64 = 0
-	if size > maxTailBytes {
-		offset = size - maxTailBytes
-		readBytes = maxTailBytes
+	if size > maxBytes {
+		offset = size - maxBytes
+		readBytes = maxBytes
 	} else {
 		readBytes = size
 	}

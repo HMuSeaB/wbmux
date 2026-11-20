@@ -248,6 +248,8 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// lastAt 是融合出的 last 的时间戳，供兜底比较新旧。
+	var lastAt time.Time
 	if len(sum.RecentRecords) > 0 {
 		rec := sum.RecentRecords[0]
 		last := &embedLastStats{
@@ -267,6 +269,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			last.TokPerSec = rate
 		}
 		out.Last = last
+		lastAt = rec.Timestamp
 	}
 
 	// 双源融合：检测本地活跃会话日志（捕获国内自带模型直连）
@@ -293,6 +296,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 				Side:             sessMetric.Side,
 				Freshness:        string(embedstats.Classify(time.Since(sessMetric.Timestamp))),
 			}
+			lastAt = sessMetric.Timestamp
 			localRow := embedRecentStats{
 				Model:        modelName,
 				PromptTokens: sessMetric.PromptTokens,
@@ -322,6 +326,12 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 兜底：遥测一时找不到新鲜记录时（新一轮生成中旧记录被挤出尾部窗口），
+	// 别跌回几天前的网关记录，先拿上一次新鲜的 last 老化显示；Today 累计
+	// 与 Recent 列表不受影响。切换会话时兜底可能短暂显示旧会话的数，随后
+	// 被新会话的第一条用量记录替换——可接受的折中，不另做会话切换检测。
+	out.Last = s.serveEmbedLast(out.Last, lastAt)
+
 	// 额度段：只读内存态（代理观察 + LiveAccounts 缓存快照），
 	// 5 秒轮询里绝不直调官方接口。last 在网关/直连融合之后才定，
 	// 所以拼在这里，不能提前。
@@ -332,6 +342,23 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	out.Quota = s.embedQuotaFor(lastModel)
 
 	writeJSON(w, out)
+}
+
+// serveEmbedLast 把新算出的 last 与兜底里挑新者，并按结果的时间戳重算
+// AgeSec 与 Freshness——兜底存的是当时的快照，年龄会变，上一轮调的
+// AgeSec 不能接着用。lastHold 为 nil（测试直接拼的 Server）时不兜底，
+// 原样返回 candidate。
+func (s *Server) serveEmbedLast(candidate *embedLastStats, at time.Time) *embedLastStats {
+	if s.lastHold == nil {
+		return candidate
+	}
+	served, servedAt, ok := s.lastHold.Serve(candidate, at)
+	if !ok {
+		return nil
+	}
+	served.AgeSec = int64(time.Since(servedAt).Seconds())
+	served.Freshness = string(embedstats.Classify(time.Since(servedAt)))
+	return served
 }
 
 // streamRate 计算纯生成阶段的 token 速率；样本太小时返回 0。
