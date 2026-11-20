@@ -49,24 +49,30 @@ func readDevToolsActivePort(path string) int {
 // 而 0 让 Chromium 自己挑，DevToolsActivePort 告诉我们挑了哪个——
 // 双开也不会互相抢。
 func DiscoverPorts() []int {
-	return discoverPorts(devToolsActivePortCandidates(), DefaultCDPPorts)
+	return discoverPorts(devToolsActivePortCandidates(), clientListeningPorts(), DefaultCDPPorts)
 }
 
-// discoverPorts 是可测的内层：目录与回退端口都从参数来。
-func discoverPorts(dirs []string, fallback []int) []int {
-	seen := make(map[int]bool, 4)
+// discoverPorts 是可测的内层：目录、额外候选、回退端口都从参数来。
+//
+// 三路来源按可信度排序：DevToolsActivePort 文件 → 客户端进程的监听端口
+// （WorkBuddy 用 port=0 时不写文件，只能这么拿）→ 固定 9222/9223 兼容旧会话。
+func discoverPorts(dirs []string, extra []int, fallback []int) []int {
+	seen := make(map[int]bool, 8)
 	var out []int
-	for _, dir := range dirs {
-		if p := readDevToolsActivePort(filepath.Join(dir, "DevToolsActivePort")); p > 0 && !seen[p] {
+	add := func(p int) {
+		if p > 0 && !seen[p] {
 			seen[p] = true
 			out = append(out, p)
 		}
 	}
+	for _, dir := range dirs {
+		add(readDevToolsActivePort(filepath.Join(dir, "DevToolsActivePort")))
+	}
+	for _, p := range extra {
+		add(p)
+	}
 	for _, p := range fallback {
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
+		add(p)
 	}
 	return out
 }

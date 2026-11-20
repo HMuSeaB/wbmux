@@ -41,8 +41,8 @@ func TestDiscoverPorts(t *testing.T) {
 	}
 	// dirB 没有 DevToolsActivePort（客户端未以 port=0 启动）
 
-	got := discoverPorts([]string{dirA, dirB}, []int{9222, 51000, 9223})
-	want := []int{51000, 9222, 9223}
+	got := discoverPorts([]string{dirA, dirB}, []int{15462}, []int{9222, 51000, 9223})
+	want := []int{51000, 15462, 9222, 9223}
 	if len(got) != len(want) {
 		t.Fatalf("端口数不对，得到 %v，期望 %v", got, want)
 	}
