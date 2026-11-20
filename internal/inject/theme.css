@@ -1,18 +1,22 @@
-/* ---- wbmux 默认界面优化：字体栈 + 细节 ----
-   目标是修掉"在 Windows 上落到微软雅黑"这件事，而不是换一套皮肤。
-   想追加自己的样式：写 ~/.wbmux/theme.css，下一次巡检（3 秒内）自动并进来，
-   不用重启客户端。 */
+/* ---- wbmux 界面优化：字体 + 细节 ----
+   目标不是换一套皮肤，是把"在 Windows 上落到微软雅黑"这件事修掉，并给正文
+   一点书卷感。用到的字体都是本机已有的：
+     UI      Segoe UI Variable Text（Win11 可变）+ Noto Sans SC（思源黑体）
+     代码    Maple Mono CN（中文等宽）+ Cascadia Code
+     正文    Noto Serif SC（思源宋体可变，屏幕优化过，不是 simsun）
+   想追加自己的样式：写 ~/.wbmux/theme.css，下一次巡检（3 秒内）自动并进来。 */
 
-/* 界面字体：优先 Win11 的可变字体与更纱黑体，最后才回落到系统默认。
+/* 界面字体：西文走 Segoe，中文回落到思源黑体。
    不写 * 选择器——客户端里有图标字体，全局覆盖会把图标打成方块。 */
 body,
 body > div,
 [class*="sidebar"],
-[class*="titlebar"] {
+[class*="titlebar"],
+[class*="menu"] {
   font-family:
     "Segoe UI Variable Text",
     "Segoe UI",
-    "Sarasa UI SC",
+    "Noto Sans SC",
     "Microsoft YaHei UI",
     "PingFang SC",
     system-ui,
@@ -21,16 +25,48 @@ body > div,
   text-rendering: optimizeLegibility;
 }
 
-/* 代码与输入框：等宽字体单独走一条链 */
+/* 代码与输入框：Maple Mono CN 自带中文等宽，中英混排比 Consolas 整齐 */
 code, kbd, pre, samp,
 [class*="monaco"],
 [class*="code-block"] {
   font-family:
+    "Maple Mono CN",
+    "Maple Mono",
     "Cascadia Code",
-    "Cascadia Mono",
     "Sarasa Mono SC",
     Consolas,
     "Liberation Mono",
+    monospace !important;
+}
+
+/* 对话正文：思源宋体。18px 下思源宋体是屏幕优化的可变字体，
+   字形比系统宋体干净；代码块用下面那条规则单独拉回等宽。 */
+.cr-markdown,
+.cr-markdown p,
+.cr-markdown li,
+.cr-markdown blockquote,
+.cr-markdown h1,
+.cr-markdown h2,
+.cr-markdown h3 {
+  font-family:
+    "Segoe UI Variable Text",
+    "Noto Serif SC",
+    "Songti SC",
+    Georgia,
+    serif !important;
+}
+
+/* 正文里的代码必须留在等宽链上：.cr-markdown 的特异性高于 code，
+   所以要在它之后、用更高特异性重新声明。 */
+.cr-markdown pre,
+.cr-markdown code,
+.cr-markdown kbd,
+.cr-markdown table code {
+  font-family:
+    "Maple Mono CN",
+    "Maple Mono",
+    "Cascadia Code",
+    Consolas,
     monospace !important;
 }
 
