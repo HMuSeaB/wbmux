@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"math"
 	"net/http"
@@ -82,6 +83,20 @@ type embedQuotaPackage struct {
 	DaysLeft int `json:"daysLeft,omitempty"`
 	// Expiring 表示一周内就会清零——面板上要醒目标出来。
 	Expiring bool `json:"expiring,omitempty"`
+	// Cards 是这一档下的每一张积分卡（国内是"平台奖励积分"，多张卡各自
+	// 独立到期）。合并成一行会丢掉"哪张快没了"，所以展开给面板逐张显示。
+	Cards []embedQuotaCard `json:"cards,omitempty"`
+}
+
+// embedQuotaCard 是一张卡的确定数据。
+//
+// 故意不带到期时间：官方"资源汇总"接口只给容量不给到期时刻，现有代码里
+// 那个"30 天后清零"是按发放规则估出来的，不是真实值——宁可不说，也不编。
+type embedQuotaCard struct {
+	Total   float64 `json:"total"`
+	Remain  float64 `json:"remain"`
+	Used    float64 `json:"used"`
+	Percent float64 `json:"percent"`
 }
 
 // expiringDays 是"快到清零日"的阈值（天）。
@@ -254,7 +269,22 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 		case pkg.CycleEndTime != "":
 			row.CycleText = "到期 " + pkg.CycleEndTime
 		}
-		if d := resetsInDays(pkg); d > 0 {
+		if pkg.Kind == "bonus" {
+			// 国内是"平台奖励积分"：多张卡各自独立到期，合并成一行会丢掉
+			// "哪张快没了"。逐张列出，但只放确定的容量——官方汇总接口不给
+			// 到期时刻，代码里的 30 天是按发放规则估的，不能当真实值展示。
+			for _, p := range accounts[side].Packages {
+				if p.Kind != "bonus" || p.Total <= 0 {
+					continue
+				}
+				card := embedQuotaCard{Total: p.Total, Remain: p.Remain, Used: p.Used}
+				card.Percent = math.Round(p.Remain/p.Total*1000) / 10
+				row.Cards = append(row.Cards, card)
+			}
+			sort.Slice(row.Cards, func(i, j int) bool { return row.Cards[i].Total > row.Cards[j].Total })
+			row.CycleText = ""
+		} else if d := resetsInDays(pkg); d > 0 {
+			// 订阅包按自然月重置，月末是算得准的，天数照常给。
 			row.DaysLeft = d
 			row.Expiring = d <= expiringDays
 		}
