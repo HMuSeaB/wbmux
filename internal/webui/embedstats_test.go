@@ -116,12 +116,17 @@ func TestEmbedStatsQuotaSegment(t *testing.T) {
 		resp.Quota.Model.Model != "deepseek-v4.1-flash" {
 		t.Errorf("quota.model 应为 deepseek-v4.1-flash 的限流记录，得到 %+v", resp.Quota.Model)
 	}
-	if len(resp.Quota.Packages) != 1 {
-		t.Fatalf("应只有国内包一行（国际档无订阅包），得到 %d 行 %+v", len(resp.Quota.Packages), resp.Quota.Packages)
+	// 国内有订阅包、国际只有赠送包——两档都要出现：赠送包同样是额度，
+	// 只认订阅包会让纯赠送包账号（国内）整档消失。
+	if len(resp.Quota.Packages) != 2 {
+		t.Fatalf("两档都应有额度行，得到 %d 行 %+v", len(resp.Quota.Packages), resp.Quota.Packages)
 	}
 	pkg := resp.Quota.Packages[0]
 	if pkg.Side != "cn" || pkg.Percent != 62.5 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
 		t.Errorf("国内包应为 cn/62.5%%/每月 1 日重置，得到 %+v", pkg)
+	}
+	if il := resp.Quota.Packages[1]; il.Side != "intl" || il.Percent != 100 {
+		t.Errorf("国际档赠送包应为 intl/100%%，得到 %+v", il)
 	}
 }
 
@@ -329,7 +334,7 @@ func TestCapsulePackages(t *testing.T) {
 		t.Errorf("62.5%% 应四舍五入为 63，且只有国内档，得到 %+v", got)
 	}
 
-	// 没数据的档位不出现：账号不可用、Total<=0、只有 bonus 包
+	// 订阅包 Total<=0 时退到赠送包（赠送包也是额度）；两边都没有可用包才为空。
 	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
 		return accounts(
 			&usage.LiveAccount{OK: false, Packages: []usage.LivePackage{sub(100, 62)}},
@@ -339,8 +344,38 @@ func TestCapsulePackages(t *testing.T) {
 			}},
 		)
 	}
+	if got := s.CapsulePackages(); len(got) != 1 || got[0].Side != "intl" || got[0].Percent != 100 {
+		t.Errorf("应退到国际档赠送包 100%%，得到 %+v", got)
+	}
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return accounts(&usage.LiveAccount{OK: false}, &usage.LiveAccount{OK: true})
+	}
 	if got := s.CapsulePackages(); len(got) != 0 {
-		t.Errorf("两边都没主包时应返回空，得到 %+v", got)
+		t.Errorf("两边都无可用包时应返回空，得到 %+v", got)
+	}
+}
+
+// TestMainPackageMergesBonus 验证纯赠送包账号（国内正是这种）把多张卡
+// 合并成一个主包：余额求和、到期取最早那张。只认订阅包会让整个国内档消失。
+func TestMainPackageMergesBonus(t *testing.T) {
+	now := time.Now()
+	acc := &usage.LiveAccount{OK: true, Packages: []usage.LivePackage{
+		{Kind: "bonus", Total: 5715, Remain: 5190.67, ExpiresAtMs: now.Add(30 * 24 * time.Hour).UnixMilli()},
+		{Kind: "bonus", Total: 500, Remain: 500, ExpiresAtMs: now.Add(20 * 24 * time.Hour).UnixMilli()},
+		{Kind: "bonus", Total: 100, Remain: 100, ExpiresAtMs: now.Add(25 * 24 * time.Hour).UnixMilli()},
+	}}
+	got := mainPackage(acc)
+	if got == nil {
+		t.Fatal("纯赠送包账号应有主包")
+	}
+	if got.Total != 6315 || got.Remain < 5790.6 || got.Remain > 5790.8 {
+		t.Errorf("应合并求和 total=6315 remain≈5790.67，得到 %+v", got)
+	}
+	if d := resetsInDays(got); d != 20 {
+		t.Errorf("到期应取最早那张（20 天），得到 %d", d)
+	}
+	if got.Name != "3 个赠送包" {
+		t.Errorf("合并后应标出张数，得到 %q", got.Name)
 	}
 }
 

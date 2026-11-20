@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"time"
@@ -92,10 +93,9 @@ func resetsInDays(pkg *usage.LivePackage) int {
 	return days
 }
 
-// mainSubscriptionPackage 挑一侧的主包：kind=="subscription" 里
+// mainSubscriptionPackage 挑一侧的订阅主包：kind=="subscription" 里
 // DeductPriority 最小的那个（1 为最优先扣的月度包）。
-// 没有订阅包、或 Total<=0（算不出百分比）时返回 nil，调用方
-// 直接省略该档。
+// 没有订阅包、或 Total<=0（算不出百分比）时返回 nil。
 func mainSubscriptionPackage(acc *usage.LiveAccount) *usage.LivePackage {
 	if acc == nil || !acc.OK {
 		return nil
@@ -112,6 +112,48 @@ func mainSubscriptionPackage(acc *usage.LiveAccount) *usage.LivePackage {
 		}
 	}
 	return best
+}
+
+// mainPackage 挑一侧用于额度显示的主包。
+//
+// 有月度订阅包就用它；没有订阅包时（国内账号是纯赠送包模式）把 bonus
+// 合并成一个虚拟包：total/remain/used 求和，到期时间取最早的那张——
+// 那才是最先清零的钱，提醒应该跟着它走。
+//
+// 2026-11-20 的教训：只认 subscription 会让国内档整个消失（用户看到
+// "国内呢？"），而国内的额度恰恰全是 bonus。
+func mainPackage(acc *usage.LiveAccount) *usage.LivePackage {
+	if sub := mainSubscriptionPackage(acc); sub != nil {
+		return sub
+	}
+	if acc == nil || !acc.OK {
+		return nil
+	}
+	var merged *usage.LivePackage
+	count := 0
+	for i := range acc.Packages {
+		p := &acc.Packages[i]
+		if p.Kind != "bonus" || p.Total <= 0 {
+			continue
+		}
+		count++
+		if merged == nil {
+			cp := *p
+			merged = &cp
+			continue
+		}
+		merged.Total += p.Total
+		merged.Remain += p.Remain
+		merged.Used += p.Used
+		if p.ExpiresAtMs > 0 && (merged.ExpiresAtMs == 0 || p.ExpiresAtMs < merged.ExpiresAtMs) {
+			merged.ExpiresAtMs = p.ExpiresAtMs
+		}
+	}
+	if merged == nil {
+		return nil
+	}
+	merged.Name = fmt.Sprintf("%d 个赠送包", count)
+	return merged
 }
 
 // liveAccounts 是额度数据的唯一来源：测试可注入 liveAccountsFn，
@@ -144,7 +186,7 @@ func (s *Server) CapsulePackages() []CapsulePackage {
 	accounts := s.liveAccounts()
 	out := make([]CapsulePackage, 0, 2)
 	for _, side := range []string{"cn", "intl"} {
-		pkg := mainSubscriptionPackage(accounts[side])
+		pkg := mainPackage(accounts[side])
 		if pkg == nil {
 			continue
 		}
@@ -176,7 +218,7 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 		}
 	}
 	for _, side := range []string{"cn", "intl"} {
-		pkg := mainSubscriptionPackage(accounts[side])
+		pkg := mainPackage(accounts[side])
 		if pkg == nil {
 			continue
 		}
