@@ -262,7 +262,9 @@ func capsuleQuotaText(pkgs []webui.CapsulePackage) string {
 	if len(segments) == 0 && zeroSeg != "" {
 		segments = append(segments, zeroSeg)
 	}
-	return strings.Join(segments, " ")
+	// 两档之间用中点分隔：`国91%·际47%` 比 `国91% 际47%` 好读——
+	// 空格分隔时两个百分比容易看成一个数（2026-11-20 截图反馈）。
+	return strings.Join(segments, "·")
 }
 
 // quotaCapsuleText 把限流态翻成胶囊文案。只在 rate_limited /

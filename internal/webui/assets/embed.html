@@ -19,6 +19,10 @@
     background: var(--bg); color: var(--ink-0);
     font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     padding: 12px; overflow-y: auto;
+    /* 窄栏下任何子元素都不该把 body 撑宽：撑宽后右侧被裁，
+       看起来就是"内容缺了一块"（2026-11-20 340px 实测）。 */
+    overflow-x: hidden;
+    max-width: 100vw;
   }
   /* 弹层内滚动条要细，别把 400px 的面板再挤窄 */
   body::-webkit-scrollbar { width: 6px; }
@@ -169,6 +173,28 @@
   .qexp { font-size: 10px; color: var(--ink-3); min-width: 52px; font-variant-numeric: tabular-nums; }
   .qexp.hot { color: var(--warn); font-weight: 600; }
   .qmore { font-size: 10px; color: var(--ink-3); padding: 4px 0 2px 60px; }
+  /* ---- 窄栏自适应 ----
+     面板是嵌在客户端侧边的 iframe，宽度常常只有 300–360px。
+     三列 grid 在这么窄的容器里会把每个格子压到 90px，标题折行、
+     数字被挤成两行——这就是"整体太丑"的直接来源。
+
+     ≤380px：指标与操作区改两列，hero 三格堆成单列；
+     ≤300px：全部单列，并缩小字号与内边距，保证一屏看得到重点。 */
+  @media (max-width: 380px) {
+    body { padding: 10px; font-size: 12.5px; }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero > :first-child { grid-column: 1 / -1; }
+    .card { padding: 10px; }
+    /* 所有 grid 子项都必须能收缩，否则内容会把轨道撑开 */
+    .metrics > *, .hero > *, .actions > * { min-width: 0; }
+  }
+  @media (max-width: 300px) {
+    .metrics, .hero, .actions { grid-template-columns: minmax(0, 1fr); }
+    .metric .value, .hero-cell .v { font-size: 19px; }
+    .qv-head, .qhead { flex-wrap: wrap; gap: 2px; }
+  }
 </style>
 </head>
 <body>
