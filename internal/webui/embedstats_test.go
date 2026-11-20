@@ -398,3 +398,39 @@ func TestResetsInDays(t *testing.T) {
 		t.Errorf("CycleEndTime 50 小时后应为 3，得到 %d", d)
 	}
 }
+
+// TestContextLimitFor 钉住上下文上限的查询口径：归一化匹配（忽略大小写与
+// 连字符）、跨档位查找、查不到返回 0（不猜）。
+func TestContextLimitFor(t *testing.T) {
+	s := &Server{}
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{
+			"cn": {OK: true, Models: []usage.LiveModel{
+				{ID: "deepseek-v4.1-flash", Name: "DeepSeek-V4.1-Flash", Ctx: 1000000},
+			}},
+			"intl": {OK: true, Models: []usage.LiveModel{
+				{ID: "claude-3-5-sonnet", Name: "Claude 3.5 Sonnet", Ctx: 200000},
+				{ID: "zero-ctx", Name: "Zero", Ctx: 0},
+			}},
+		}
+	}
+
+	if got := s.contextLimitFor("DeepSeek-V4.1-Flash"); got != 1000000 {
+		t.Errorf("按名称精确匹配应为 1000000，得到 %d", got)
+	}
+	if got := s.contextLimitFor("deepseek-v4.1-flash"); got != 1000000 {
+		t.Errorf("按 ID 匹配应为 1000000，得到 %d", got)
+	}
+	if got := s.contextLimitFor("Claude 3.5 Sonnet"); got != 200000 {
+		t.Errorf("跨档位查找应为 200000，得到 %d", got)
+	}
+	if got := s.contextLimitFor("unknown-model"); got != 0 {
+		t.Errorf("未知模型应返回 0，得到 %d", got)
+	}
+	if got := s.contextLimitFor(""); got != 0 {
+		t.Errorf("空模型名应返回 0，得到 %d", got)
+	}
+	if got := s.contextLimitFor("zero-ctx"); got != 0 {
+		t.Errorf("Ctx 为 0 的模型应被视为无数据，得到 %d", got)
+	}
+}

@@ -346,10 +346,15 @@
   // 由 internal/webui 的 TestEmbedHTMLThresholds 锁死一致，别手改一边。
   var CTX_WARN = 256000, CTX_BAD = 512000;
   var STALE_AGED_SEC = 1800, STALE_IDLE_SEC = 7200; // 30 分钟变旧值，120 分钟才算空闲
+  // 去掉无意义的小数尾零：1000000 显示 1M 而不是 1.00M，
+  // 1.5M 保留一位。上限这类整数最容易被 ".00" 弄脏。
+  function trimZero(v) {
+    return String(v).replace(/\.0+$/, "").replace(/(\.\d)0+$/, "$1");
+  }
   function compact(n) {
-    if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
+    if (n >= 1000000) return trimZero((n / 1000000).toFixed(2)) + "M";
     if (n >= 10000) return Math.round(n / 1000) + "k";
-    if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+    if (n >= 1000) return trimZero((n / 1000).toFixed(1)) + "k";
     return String(n);
   }
   function sourceLabel(source, side) {
@@ -390,7 +395,15 @@
       var idle = freshness === "idle";
       var aged = freshness === "aged";
       var ctx = document.getElementById("m-ctx");
-      ctx.textContent = idle ? "空闲" : (last.promptTokens ? compact(last.promptTokens) : "—");
+      if (idle) {
+        ctx.textContent = "空闲";
+      } else if (!last.promptTokens) {
+        ctx.textContent = "—";
+      } else {
+        // 有模型声明的上限时显示 "335k/1M"，一眼看出还剩多少空间
+        ctx.textContent = compact(last.promptTokens) +
+          (last.contextLimit ? "/" + compact(last.contextLimit) : "");
+      }
       ctx.className = "hero-num" + (!idle && !aged && last.promptTokens >= CTX_BAD ? " bad" : (!idle && !aged && last.promptTokens >= CTX_WARN ? " warn" : ""));
       document.getElementById("m-rate").textContent = idle ? "—"
         : (last.tokPerSec ? Math.round(last.tokPerSec) + "/s"

@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"strings"
 	"math"
 	"net/http"
 	"time"
@@ -296,6 +297,9 @@ type embedLastStats struct {
 	Source           string  `json:"source,omitempty"`
 	Side             string  `json:"side,omitempty"`
 	Freshness        string  `json:"freshness,omitempty"`
+	// ContextLimit 是当前模型声明的上下文上限（maxInputTokens）。
+	// 0 表示查不到——不猜，前端就不显示 "x / 上限"。
+	ContextLimit int `json:"contextLimit,omitempty"`
 }
 
 // embedDayStats 是当天的累计用量。
@@ -382,6 +386,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			Source:           recordSource(rec),
 			Side:             rec.Side,
 			Freshness:        string(embedstats.Classify(time.Since(rec.Timestamp))),
+			ContextLimit:     s.contextLimitFor(rec.ModelRequested),
 		}
 		// 生成速率只在流式、且确实存在生成阶段时计算；
 		// 少量 token（<20）的请求算出来的数字噪声太大，直接留 0 让前端跳过。
@@ -415,6 +420,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 				Source:           "local",
 				Side:             sessMetric.Side,
 				Freshness:        string(embedstats.Classify(time.Since(sessMetric.Timestamp))),
+				ContextLimit:     s.contextLimitFor(modelName),
 			}
 			lastAt = sessMetric.Timestamp
 			// 直连记录已由 daemon 落进账本（ObserveLocalSession），Recent 与
@@ -445,6 +451,45 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 // AgeSec 与 Freshness——兜底存的是当时的快照，年龄会变，上一轮调的
 // AgeSec 不能接着用。lastHold 为 nil（测试直接拼的 Server）时不兜底，
 // 原样返回 candidate。
+// contextLimitFor 按模型名查上下文上限（maxInputTokens）。
+//
+// 匹配先精确、再归一化（忽略大小写、连字符、下划线、空格、点）后做包含判断——
+// 客户端里的模型名和官方 id 经常一处带连字符一处不带。查不到返回 0：
+// 面板宁可不显示"上限"，也不编一个数字出来。
+func (s *Server) contextLimitFor(model string) int {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return 0
+	}
+	norm := func(v string) string {
+		v = strings.ToLower(strings.TrimSpace(v))
+		return strings.NewReplacer("-", "", "_", "", " ", "", ".", "").Replace(v)
+	}
+	want := norm(model)
+	if want == "" {
+		return 0
+	}
+	accounts := s.liveAccounts()
+	for _, side := range []string{"cn", "intl"} {
+		acc := accounts[side]
+		if acc == nil || !acc.OK {
+			continue
+		}
+		for _, m := range acc.Models {
+			if m.Ctx <= 0 {
+				continue
+			}
+			id, name := norm(m.ID), norm(m.Name)
+			if id == want || name == want ||
+				(id != "" && strings.Contains(want, id)) ||
+				(name != "" && strings.Contains(name, want)) {
+				return m.Ctx
+			}
+		}
+	}
+	return 0
+}
+
 func (s *Server) serveEmbedLast(candidate *embedLastStats, at time.Time) *embedLastStats {
 	if s.lastHold == nil {
 		return candidate
