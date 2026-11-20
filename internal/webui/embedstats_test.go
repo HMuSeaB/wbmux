@@ -159,3 +159,54 @@ func TestEmbedStatsQuotaSegmentEmpty(t *testing.T) {
 		t.Errorf("没数据时 quota 段应省略，得到 %+v", resp.Quota)
 	}
 }
+
+// TestCapsulePackages 钉住胶囊常驻段的数据面：各档主包余量百分比，
+// 国内在前、国际在后；百分比四舍五入到整数（面板保留一位小数）；
+// 没数据的档位不出现，绝不返回 0%。
+func TestCapsulePackages(t *testing.T) {
+	accounts := func(cn, intl *usage.LiveAccount) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{"cn": cn, "intl": intl}
+	}
+	sub := func(total, remain float64) usage.LivePackage {
+		return usage.LivePackage{Kind: "subscription", Total: total, Remain: remain, DeductPriority: 1}
+	}
+
+	s := newQuotaTestServer(t)
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return accounts(
+			&usage.LiveAccount{OK: true, Packages: []usage.LivePackage{sub(100, 62)}},
+			&usage.LiveAccount{OK: true, Packages: []usage.LivePackage{sub(200, 82)}},
+		)
+	}
+	got := s.CapsulePackages()
+	if len(got) != 2 || got[0] != (CapsulePackage{Side: "cn", Percent: 62}) ||
+		got[1] != (CapsulePackage{Side: "intl", Percent: 41}) {
+		t.Fatalf("两边有数据时应为 [{cn 62} {intl 41}]，得到 %+v", got)
+	}
+
+	// 整数四舍五入：面板 62.5%，胶囊 63%
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return accounts(
+			&usage.LiveAccount{OK: true, Packages: []usage.LivePackage{sub(100, 62.5)}},
+			nil,
+		)
+	}
+	got = s.CapsulePackages()
+	if len(got) != 1 || got[0] != (CapsulePackage{Side: "cn", Percent: 63}) {
+		t.Errorf("62.5%% 应四舍五入为 63，且只有国内档，得到 %+v", got)
+	}
+
+	// 没数据的档位不出现：账号不可用、Total<=0、只有 bonus 包
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return accounts(
+			&usage.LiveAccount{OK: false, Packages: []usage.LivePackage{sub(100, 62)}},
+			&usage.LiveAccount{OK: true, Packages: []usage.LivePackage{
+				{Kind: "subscription", Total: 0, Remain: 0, DeductPriority: 1},
+				{Kind: "bonus", Total: 50, Remain: 50, DeductPriority: 2},
+			}},
+		)
+	}
+	if got := s.CapsulePackages(); len(got) != 0 {
+		t.Errorf("两边都没主包时应返回空，得到 %+v", got)
+	}
+}
