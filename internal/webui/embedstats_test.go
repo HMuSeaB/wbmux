@@ -343,3 +343,23 @@ func TestCapsulePackages(t *testing.T) {
 		t.Errorf("两边都没主包时应返回空，得到 %+v", got)
 	}
 }
+
+// TestResetsInDays 钉住"还剩几天清零"的口径：毫秒时间戳优先、
+// CycleEndTime 兜底、已过期与无信息都返回 0（不猜）。
+func TestResetsInDays(t *testing.T) {
+	now := time.Now()
+	if d := resetsInDays(&usage.LivePackage{ExpiresAtMs: now.Add(72 * time.Hour).UnixMilli()}); d != 3 {
+		t.Errorf("3 天后到期应为 3，得到 %d", d)
+	}
+	if d := resetsInDays(&usage.LivePackage{ExpiresAtMs: now.Add(-time.Hour).UnixMilli()}); d != 0 {
+		t.Errorf("已过期应为 0，得到 %d", d)
+	}
+	if d := resetsInDays(&usage.LivePackage{}); d != 0 {
+		t.Errorf("无到期信息应为 0，得到 %d", d)
+	}
+	// CycleEndTime 兜底：50 小时向上取整为 3 天
+	end := now.Add(50 * time.Hour).Format("2006-01-02 15:04:05")
+	if d := resetsInDays(&usage.LivePackage{CycleEndTime: end}); d != 3 {
+		t.Errorf("CycleEndTime 50 小时后应为 3，得到 %d", d)
+	}
+}

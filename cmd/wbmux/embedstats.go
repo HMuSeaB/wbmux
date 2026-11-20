@@ -218,7 +218,14 @@ func capsuleQuotaText(pkgs []webui.CapsulePackage) string {
 		default:
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s%d%%", label, p.Percent))
+		seg := fmt.Sprintf("%s%d%%", label, p.Percent)
+		// 一周内清零且还有余额：把天数贴在后面（`国62%·3d`），
+		// 让"额度要没了"在顶栏一眼可见。已经 0% 的不提醒——那时
+		// 限流/用尽的文案会接管，再挂个天数只是噪音。
+		if p.Expiring && p.Percent > 0 && p.DaysLeft > 0 {
+			seg = fmt.Sprintf("%s%d%%·%dd", label, p.Percent, p.DaysLeft)
+		}
+		parts = append(parts, seg)
 	}
 	return strings.Join(parts, "·")
 }

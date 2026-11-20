@@ -452,3 +452,20 @@ func TestEmbedStatsTextFromLedger(t *testing.T) {
 		t.Errorf("今日应把两条记录一起累加，得到 %q", text)
 	}
 }
+
+// TestCapsuleQuotaTextExpiring 验证一周内清零且还有余额时，胶囊额度段
+// 后面贴天数（`国62%·3d`）；已经 0% 的档位不贴，避免与限流文案重复。
+func TestCapsuleQuotaTextExpiring(t *testing.T) {
+	got := capsuleQuotaText([]webui.CapsulePackage{
+		{Side: "cn", Percent: 62, DaysLeft: 3, Expiring: true},
+		{Side: "intl", Percent: 41, DaysLeft: 20},
+	})
+	if got != "国62%·3d·际41%" {
+		t.Errorf("应只给快到期的国内档贴天数，得到 %q", got)
+	}
+	if got := capsuleQuotaText([]webui.CapsulePackage{
+		{Side: "intl", Percent: 0, DaysLeft: 3, Expiring: true},
+	}); got != "际0%" {
+		t.Errorf("0%% 时不应贴天数，得到 %q", got)
+	}
+}

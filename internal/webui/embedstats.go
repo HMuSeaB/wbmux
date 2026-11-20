@@ -59,6 +59,37 @@ type embedQuotaPackage struct {
 	// （如"每月 1 日重置（月底清零更新）"），没有才退 CycleEndTime
 	// （"到期 2026-10-27 03:33:47"）。照抄，不自己编。
 	CycleText string `json:"cycleText,omitempty"`
+	// DaysLeft 是距离失效/重置还有几天（向上取整）。0 表示没有可用到期信息。
+	DaysLeft int `json:"daysLeft,omitempty"`
+	// Expiring 表示一周内就会清零——面板上要醒目标出来。
+	Expiring bool `json:"expiring,omitempty"`
+}
+
+// expiringDays 是"快到清零日"的阈值（天）。
+const expiringDays = 7
+
+// resetsInDays 返回距离该包失效/重置还有几天（向上取整）。
+//
+// 0 表示没有可用的到期信息，绝不猜：优先 ExpiresAtMs（官方毫秒时间戳），
+// 其次 CycleEndTime（"2026-10-27 03:33:47"，官方本地时间）。两者都没有
+// 就不显示天数——"每月 1 日重置"这类纯规则文案推不出日期。
+func resetsInDays(pkg *usage.LivePackage) int {
+	var end time.Time
+	if pkg.ExpiresAtMs > 0 {
+		end = time.UnixMilli(pkg.ExpiresAtMs)
+	} else if pkg.CycleEndTime != "" {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", pkg.CycleEndTime, time.Local); err == nil {
+			end = t
+		}
+	}
+	if end.IsZero() {
+		return 0
+	}
+	days := int(math.Ceil(time.Until(end).Hours() / 24))
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 // mainSubscriptionPackage 挑一侧的主包：kind=="subscription" 里
@@ -100,6 +131,10 @@ type CapsulePackage struct {
 	// Percent 是 remain/total*100，四舍五入到整数（面板保留一位小数，
 	// 胶囊地方小只放整数）。0..100。
 	Percent int
+	// DaysLeft 是距离清零还有几天；0 表示没有可用到期信息。
+	DaysLeft int
+	// Expiring 表示一周内清零且还有余额——胶囊要标出来，别让额度悄悄没了。
+	Expiring bool
 }
 
 // CapsulePackages 返回各档主包余量百分比（国内在前、国际在后），
@@ -120,7 +155,10 @@ func (s *Server) CapsulePackages() []CapsulePackage {
 		if pct > 100 {
 			pct = 100
 		}
-		out = append(out, CapsulePackage{Side: side, Percent: pct})
+		// 到期信息可能有也可能没有（"每月 1 日重置"这种纯规则文案推不出日期），
+		// 推不出就留 0，胶囊不显示天数。
+		d := resetsInDays(pkg)
+		out = append(out, CapsulePackage{Side: side, Percent: pct, DaysLeft: d, Expiring: d > 0 && d <= expiringDays})
 	}
 	return out
 }
@@ -155,6 +193,10 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 			row.CycleText = pkg.ExpiryRuleZh
 		case pkg.CycleEndTime != "":
 			row.CycleText = "到期 " + pkg.CycleEndTime
+		}
+		if d := resetsInDays(pkg); d > 0 {
+			row.DaysLeft = d
+			row.Expiring = d <= expiringDays
 		}
 		out.Packages = append(out.Packages, row)
 	}

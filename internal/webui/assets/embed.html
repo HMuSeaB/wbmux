@@ -92,6 +92,8 @@
   .quota-model.bad { color: var(--bad); }
   .quota-rows { display: flex; flex-direction: column; gap: 7px; }
   .quota-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+  /* 一周内清零：整行文字转琥珀色加粗，让"余额要没了"自己跳出来 */
+  .quota-row.expiring .q-text { color: var(--warn); font-weight: 650; }
   .q-side { flex: none; color: var(--ink-1); width: 44px; }
   .q-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
   .q-fill { display: block; height: 100%; border-radius: 3px; background: var(--brand); }
@@ -495,7 +497,18 @@
 
       var text = document.createElement("span");
       text.className = "q-text";
-      text.textContent = "剩余 " + p.percent.toFixed(1) + "%" + (p.cycleText ? " · " + p.cycleText : "");
+      // 有到期信息就显示天数："X 天后重置"（普通色）；一周内清零且还有
+      // 余额，换成"X 天后清零"并转琥珀色。余额为 0 也显示天数——用户
+      // 需要知道什么时候能重新有额度，但不再强调（已经用尽）。
+      var tail = "";
+      if (p.daysLeft > 0) {
+        var hot = p.expiring && p.percent > 0;
+        tail = hot ? " · " + p.daysLeft + " 天后清零" : " · " + p.daysLeft + " 天后重置";
+        if (hot) row.className = "quota-row expiring";
+      } else if (p.cycleText) {
+        tail = " · " + p.cycleText;
+      }
+      text.textContent = "剩余 " + p.percent.toFixed(1) + "%" + tail;
 
       row.appendChild(side);
       row.appendChild(bar);
