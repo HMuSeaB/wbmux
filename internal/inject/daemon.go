@@ -104,6 +104,12 @@ func Sync(port int, embedURL string, stats StatsProvider) (injected, connected b
 		}
 	}
 
+	// 路由钩子装一次就够：之后切页会通过 __wbmux_route_kick__ 主动催一轮，
+	// 不必等 3 秒巡检。装在主题活动之前，第一次切入页面就能被接住。
+	if err := ensureRouteHook(c); err != nil {
+		// 静默：钩子失败只是退化成纯轮询。
+	}
+
 	// 界面优化：独立 style 标签，按内容 hash 比对。改 ~/.wbmux/theme.css
 	// 之后最多 3 秒自动生效，不用重启客户端，也不影响胶囊。
 	if _, err := EnsureTheme(c, ThemeCSS()); err != nil {
