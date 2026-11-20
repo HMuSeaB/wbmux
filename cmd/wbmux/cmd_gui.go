@@ -264,6 +264,11 @@ func cmdGUI(args []string) error {
 			m := sessiontelemetry.GetLatestSessionUsage(variant.DefaultProbe())
 			observeLocalUsage(m)
 			return embedStatsText(m, srv.QuotaFor, srv.CapsulePackages, capsuleLastHold)
+		}, func() {
+			// 客户端重启后丢了调试端口时，胶囊和面板会同时静默消失。
+			// 提示一次，告诉用户不是坏了，只是要重启一次客户端。
+			tray.NotifyInfo("wbmux 面板掉了",
+				"客户端重启后没有调试端口，胶囊和面板暂时失效。在 wbmux 里点一次「重启客户端」即可恢复。")
 		})
 	}()
 

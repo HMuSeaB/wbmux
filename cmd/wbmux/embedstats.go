@@ -143,7 +143,6 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 	}
 	promptTokens := served.promptTokens
 	timestamp := served.timestamp
-	midPart := served.midPart
 	lastModel := served.model
 
 	// 额度改写优先于新鲜度三档：限流答的是"现在能不能用"，比
@@ -168,25 +167,10 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 		return fmt.Sprintf("%s · %dm 前", compactTokens(promptTokens), embedstats.AgeMinutes(time.Since(timestamp))), ""
 	}
 
+	// 胶囊只留两个"会不会出事"的信号：上下文与额度。速率、模型名、
+	// 今日用量都进面板——顶栏宽度装不下四段，装下了也来不及看
+	// （2026-11-20 用户反馈"胶囊显示的信息太多了"）。
 	parts := []string{compactTokens(promptTokens)}
-	if midPart != "" {
-		parts = append(parts, midPart)
-	}
-
-	// 今日用量为 0 时整段省掉——"今日 0"只会让顶栏更吵。
-	today := time.Now().Format("2006-01-02")
-	todayTokens := 0
-	for _, d := range sum.DailyStats {
-		if d.Date == today {
-			todayTokens = d.TotalTokens
-			break
-		}
-	}
-	// 今日只从账本日度汇总出：直连记录已由 daemon 落盘并计入日度聚合，
-	// 这里再叠一次就是算两次（PR #7 删掉的特殊处理）。
-	if todayTokens > 0 {
-		parts = append(parts, "今日 "+compactTokens(todayTokens))
-	}
 
 	// 常驻额度段：只在新鲜态末尾加一段。packageLookup 为 nil 或
 	// 没数据时不加，文案与原来一模一样。

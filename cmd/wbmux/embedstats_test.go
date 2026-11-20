@@ -211,8 +211,9 @@ func TestEmbedStatsTextFromHold(t *testing.T) {
 	hold.Serve(&lastSample{promptTokens: 61000, timestamp: now, midPart: "Kimi-K3.1-Pro", model: "Kimi-K3.1-Pro"}, now)
 
 	text, level := embedStatsTextFrom(gatewayaudit.Summary{}, nil, nil, nil, hold)
-	if text != "61k · Kimi-K3.1-Pro" || level != "" {
-		t.Errorf("兜底时应显示上一次的 61k · Kimi-K3.1-Pro，得到 %q/%q", text, level)
+	// 胶囊只显示上下文；模型名、速率、今日都在面板里。
+	if text != "61k" || level != "" {
+		t.Errorf("兜底时应显示上一次的 61k，得到 %q/%q", text, level)
 	}
 }
 
@@ -242,7 +243,7 @@ func TestEmbedStatsTextFromHoldReplace(t *testing.T) {
 		Timestamp:        now,
 	}}}
 	text, _ := embedStatsTextFrom(sum, nil, nil, nil, hold)
-	if !strings.Contains(text, "61k") || !strings.Contains(text, "/s") {
+	if !strings.Contains(text, "61k") {
 		t.Errorf("新记录应替换兜底，得到 %q", text)
 	}
 }
@@ -448,8 +449,9 @@ func TestEmbedStatsTextFromLedger(t *testing.T) {
 	if !strings.Contains(text, "150k") {
 		t.Errorf("last 应取更新的网关记录 150k，得到 %q", text)
 	}
-	if !strings.Contains(text, "今日") {
-		t.Errorf("今日应把两条记录一起累加，得到 %q", text)
+	// 今日用量不再上胶囊（面板里有），这里只钉住 last 取自更新的一条。
+	if strings.Contains(text, "今日") {
+		t.Errorf("胶囊不应再显示今日用量，得到 %q", text)
 	}
 }
 

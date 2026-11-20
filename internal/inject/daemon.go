@@ -29,11 +29,25 @@ type StatsProvider func() (text, level string)
 //
 // 端口连不上（客户端没带调试参数、或该档位没开）就静默跳过——这是常态，
 // 不该往日志里刷错误。
-func RunDaemon(ctx context.Context, ports []int, embedURL func() string, stats StatsProvider) {
+func RunDaemon(ctx context.Context, ports []int, embedURL func() string, stats StatsProvider, onDetach func()) {
+	attached := false
 	run := func() {
+		anyConnected := false
+		url := embedURL()
 		for _, p := range ports {
-			Sync(p, embedURL(), stats)
+			injected, connected := Sync(p, url, stats)
+			_ = injected
+			if connected {
+				anyConnected = true
+			}
 		}
+		// 从"挂着"变成"全断"：客户端重启后丢了调试端口，这是最常见的
+		// 静默失效（胶囊突然消失、面板打不开）。提示一次，让用户知道
+		// 不是坏了，只是需要从 wbmux 重启一次客户端。
+		if attached && !anyConnected && onDetach != nil {
+			onDetach()
+		}
+		attached = anyConnected
 	}
 	run()
 	t := time.NewTicker(3 * time.Second)
@@ -61,21 +75,26 @@ type pushedStats struct {
 	level string
 }
 
-// Sync 检查一次：按需注入，并把指标推进胶囊。返回是否真的注入了。
-func Sync(port int, embedURL string, stats StatsProvider) bool {
+// Sync 检查一次：按需注入，并把指标推进胶囊。
+//
+// 返回 injected 表示这一轮真的做了注入；connected 表示调试端口连通。
+// 两者分开是因为调用方要判断"客户端还在、但面板掉了"——那时 connected
+// 为 true 而 injected 可能一直 false。
+func Sync(port int, embedURL string, stats StatsProvider) (injected, connected bool) {
 	if embedURL == "" {
-		return false
+		return false, false
 	}
 	c, err := Dial(port, 2*time.Second)
 	if err != nil {
-		return false
+		return false, false
 	}
 	defer c.Close()
 
-	injected := false
+	// 端口连上就算 connected，后面无论注入成功与否都不影响这个事实。
+	injected = false
 	tag, err := InstalledTag(c, 2*time.Second)
 	if err != nil {
-		return false
+		return false, true
 	}
 	if tag != TagFor(embedURL) {
 		if ok, err := Inject(c, embedURL, 5*time.Second); err == nil && ok {
@@ -101,5 +120,5 @@ func Sync(port int, embedURL string, stats StatsProvider) bool {
 			}
 		}
 	}
-	return injected
+	return injected, true
 }
