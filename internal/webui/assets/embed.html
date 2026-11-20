@@ -136,6 +136,21 @@
     box-shadow: 0 6px 24px rgba(0,0,0,0.5);
   }
   .toast.bad { border-color: rgba(248,113,113,0.5); }
+
+  /* ---- 层次重构：主指标放大、卡片收紧、按使用频率排序 ---- */
+  .hero { display: grid; grid-template-columns: 1.05fr 1.05fr 0.9fr; gap: 8px; margin-bottom: 8px; }
+  .hero-cell { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; min-width: 0; }
+  .hero-num { display: block; font-size: 19px; font-weight: 700; letter-spacing: 0.3px; color: var(--ink-0); line-height: 1.3; }
+  .hero-cell.sub .hero-num { font-size: 16px; }
+  .hero-num.warn { color: var(--warn); }
+  .hero-num.bad { color: var(--bad); }
+  .hero-label { display: block; font-size: 10px; color: var(--ink-3); margin-top: 1px; }
+  .card { padding: 10px 12px; margin-bottom: 8px; }
+  .card.tight { padding: 8px 12px; }
+  .card.tight .client-row { font-size: 11.5px; }
+  .actions { gap: 6px; }
+  .actions button { padding: 7px 9px; font-size: 11.5px; border-radius: 8px; }
+  .actions button .sub { font-size: 9.5px; margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -147,33 +162,38 @@
   <a id="full-link" href="#" target="_blank" rel="noopener">完整面板 ↗</a>
 </div>
 
-<div class="metrics">
-  <div class="metric">
-    <span class="m-val" id="m-ctx">—</span>
-    <span class="m-label">上次请求</span>
+<div class="hero">
+  <div class="hero-cell">
+    <span class="hero-num" id="m-ctx">—</span>
+    <span class="hero-label">上下文</span>
   </div>
-  <div class="metric">
-    <span class="m-val" id="m-rate">—</span>
-    <span class="m-label">生成速率</span>
+  <div class="hero-cell">
+    <span class="hero-num" id="m-today">—</span>
+    <span class="hero-label">今日 tokens</span>
   </div>
-  <div class="metric">
-    <span class="m-val" id="m-today">—</span>
-    <span class="m-label">今日 tokens</span>
+  <div class="hero-cell sub">
+    <span class="hero-num" id="m-rate">—</span>
+    <span class="hero-label">生成速率</span>
   </div>
 </div>
 
 <div class="src-line" id="src-line" style="display:none"></div>
 
-<div class="card">
-  <div class="card-title">客户端状态</div>
+<div class="card" id="quota-card" style="display:none">
+  <div class="card-title">额度</div>
+  <div class="quota-model" id="quota-model" style="display:none"></div>
+  <div class="quota-rows" id="quota-rows"></div>
+</div>
+
+<div class="card tight">
   <div class="clients">
     <div class="client-row">
-      <span class="name">国内版 WorkBuddy</span>
+      <span class="name">国内</span>
       <span class="pid" id="cn-pid"></span>
       <span class="st off" id="cn-st">检测中</span>
     </div>
     <div class="client-row">
-      <span class="name">国际版 WorkBuddy AI</span>
+      <span class="name">国际</span>
       <span class="pid" id="intl-pid"></span>
       <span class="st off" id="intl-st">检测中</span>
     </div>
@@ -181,24 +201,31 @@
 </div>
 
 <div class="card">
-  <div class="card-title">高频操作</div>
+  <div class="card-title">操作</div>
   <div class="actions">
     <button class="primary" id="btn-inject">
-      注入免费模型 → 国内端
-      <span class="sub">国际限免大模型一键灌入</span>
+      注入免费模型
+      <span class="sub">→ 国内端</span>
     </button>
     <button id="btn-inject-back">
-      反向注入 → 国际端
-      <span class="sub">国内专属模型 (GLM/Kimi 等)</span>
+      反向注入
+      <span class="sub">→ 国际端</span>
     </button>
     <button id="btn-both">
-      智能双开客户端
-      <span class="sub">未开则启动，已开补另一侧</span>
+      智能双开
+      <span class="sub">未开则启动</span>
     </button>
     <button id="btn-restart">
-      重启国内客户端
-      <span class="sub">让新注入的模型生效</span>
+      重启客户端
+      <span class="sub">让注入生效</span>
     </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">最近请求</div>
+  <div class="recent" id="recent-list">
+    <div class="recent-empty">加载中…</div>
   </div>
 </div>
 
@@ -215,19 +242,6 @@
     <button data-copy="ep-search">复制</button>
   </div>
 </details>
-
-<div class="card" id="quota-card" style="display:none">
-  <div class="card-title">额度</div>
-  <div class="quota-model" id="quota-model" style="display:none"></div>
-  <div class="quota-rows" id="quota-rows"></div>
-</div>
-
-<div class="card">
-  <div class="card-title">最近请求</div>
-  <div class="recent" id="recent-list">
-    <div class="recent-empty">加载中…</div>
-  </div>
-</div>
 
 <div class="foot">本机回环免密调用 · 完整功能请打开完整面板</div>
 
