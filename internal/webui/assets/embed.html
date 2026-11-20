@@ -666,7 +666,10 @@
       } else if (p.cycleText) {
         tail = " · " + p.cycleText;
       }
-      text.textContent = "剩余 " + p.percent.toFixed(1) + "%" + tail;
+      // 有原始积分值时优先给"剩余 / 总量"——百分比看不出还剩多少分。
+      text.textContent = (p.total
+        ? fmtNum(p.remain) + " / " + fmtNum(p.total)
+        : "剩余 " + p.percent.toFixed(1) + "%") + tail;
 
       row.appendChild(side);
       row.appendChild(bar);

@@ -75,6 +75,10 @@ type embedQuotaPackage struct {
 	Side string `json:"side"`
 	// Percent 是 remain/total*100，保留一位小数。
 	Percent float64 `json:"percent"`
+	// Total / Remain 是原始积分值。只给百分比看不出"还剩多少积分"，
+	// 国内卡片是逐张显示数字的，两边风格要一致。
+	Total  float64 `json:"total,omitempty"`
+	Remain float64 `json:"remain,omitempty"`
 	// CycleText 是周期文案原文：优先 LivePackage.ExpiryRuleZh
 	// （如"每月 1 日重置（月底清零更新）"），没有才退 CycleEndTime
 	// （"到期 2026-10-27 03:33:47"）。照抄，不自己编。
@@ -314,7 +318,7 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 		if pct > 100 {
 			pct = 100
 		}
-		row := embedQuotaPackage{Side: side, Percent: pct}
+		row := embedQuotaPackage{Side: side, Percent: pct, Total: pkg.Total, Remain: pkg.Remain}
 		switch {
 		case pkg.ExpiryRuleZh != "":
 			row.CycleText = pkg.ExpiryRuleZh
