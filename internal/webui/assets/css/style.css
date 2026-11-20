@@ -2157,3 +2157,21 @@
     display: block; margin-top: 6px; font-size: 22px; font-weight: 650;
     color: var(--ink); font-family: var(--mono); line-height: 1.2;
   }
+
+  /* ---- 层级修正：数字是主角，操作入口退居其后 ----
+     原来 hero 卡用渐变深底、KPI 是普通底，视线会先落在"一个按钮"上。
+     现在第一格 KPI 承载最重要的数（当前上下文）并允许它用深底，
+     hero 退回普通卡片——skill 的"唯一强调放在最重要的数上"。 */
+  .hero-card {
+    background: var(--g1);
+    border-color: var(--g4);
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .hero-desc { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+  .ov-kpi--accent {
+    background: linear-gradient(145deg, #1b2a22 0%, #141c18 100%);
+    border-color: #2a4034;
+  }
+  .ov-kpi--accent .ov-kpi-label { color: #8fae9c; }
+  .ov-kpi--accent .ov-kpi-value { color: #d8f0e2; }
