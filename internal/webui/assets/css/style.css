@@ -978,6 +978,16 @@
     align-items: center;
     flex-shrink: 0;
   }
+  /* 国际端"已连签 N 天 · 距下级奖励剩 N 天"：
+     这一行所在 flex 容器在中等宽度下只剩 170px，中文会被挤成
+     每字一行（2026-11-21 实测）。用 CSS 兜底而不是内联样式，
+     因为它由 JS 通过 textContent 赋值，内联 white-space 不生效。 */
+  #intl-streak-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
   .dash-sec-title {
     font-size: 11px;
     font-weight: 650;

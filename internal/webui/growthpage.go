@@ -106,7 +106,11 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 	// 面板要能显示自动任务的结果，不然定时跑的完全不可见
 	// （2026-11-21 用户反馈"看不出今天国际版活跃了没"）。
 	if r.Method == http.MethodGet {
-		writeJSON(w, usage.QueryIntlSimStatus())
+		st := usage.QueryIntlSimStatus()
+		writeJSON(w, struct {
+			usage.IntlSimStatus
+			Last *usage.IntlSimRecord `json:"last,omitempty"`
+		}{st, usage.ReadIntlSimRecord()})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -124,7 +128,21 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 	res, err := s.AutoSimulateIntlActive(req.Model)
 	if err == nil {
 		// 手动和自动都记同一份，面板据此显示"今日已模拟"。
-		usage.MarkIntlSimDay(time.Now().Format("2006-01-02"))
+		now := time.Now()
+		usage.MarkIntlSimDay(now.Format("2006-01-02"))
+		// AutoSimulateIntlActive 返回 any（定时任务那边不关心具体类型），
+		// 这里断言回 *growth.SimulateResult 落盘一份摘要。
+		if r, ok := res.(*growth.SimulateResult); ok {
+			usage.SaveIntlSimRecord(usage.IntlSimRecord{
+				At:         now.Format("2006-01-02 15:04:05"),
+				Model:      r.Model,
+				DurationMs: r.DurationMs,
+				TTFTMs:     r.TTFTMs,
+				Reply:      r.Reply,
+				ReportNote: r.ReportMessage,
+				CreditNote: r.NextDayRewardNote,
+			})
+		}
 	}
 	if err != nil {
 		if errors.Is(err, ErrNoIntlCred) {

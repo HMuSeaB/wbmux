@@ -2221,10 +2221,9 @@
       var intlStreakSec = el("div", {
         style: "background:rgba(255,255,255,0.02);border:1px solid var(--g4);border-radius:var(--r-sm);padding:9px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px"
       });
-      var streakInfoBox = el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);min-width:0" }, [
+      var streakInfoBox = el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);min-width:0;flex:1 1 auto;overflow:hidden" }, [
         el("svg", { class: "ico ico-sm", html: '<use href="#i-zap"/>' }),
-        el("span", { id: "intl-streak-text", text: "连续活跃：读取中…" }),
-        el("span", { id: "intl-sim-hint", style: "font-size:11px;color:var(--ink-3);white-space:nowrap", text: "" })
+        el("span", { id: "intl-streak-text", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", text: "连续活跃：读取中…" })
       ]);
       var btnStreakAction = el("button", {
         class: "ghost",
@@ -2243,6 +2242,37 @@
       });
 
       // applySimState 把"今天跑过没 / 自动是否开启"落到按钮和说明文字上。
+      // renderSimRecord 用落盘的摘要重绘结果卡（字段与实时返回一致）。
+      function renderSimRecord(box, rec) {
+        if (!box || !rec || !rec.model) return;
+        box.hidden = false;
+        box.style.display = "block";
+        box.innerHTML =
+          '<div style="background:rgba(217,119,87,0.06);border:1px solid rgba(217,119,87,0.25);border-radius:var(--r-sm);padding:12px 14px">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">' +
+              '<span style="font-weight:600;color:var(--ok);display:flex;align-items:center;gap:5px;font-size:12.5px">' +
+                '<svg class="ico ico-sm"><use href="#i-check"/></svg> 模拟对话闭环达成（次日 +30 积分）' +
+              '</span>' +
+              '<span style="font-size:11px;color:var(--ink-3);font-family:var(--mono)">' +
+                (rec.at || "").replace("T", " ") + ' · 耗时 ' + rec.durationMs + 'ms（首字 ' + rec.ttftMs + 'ms）' +
+              '</span>' +
+            '</div>' +
+            '<div style="font-size:11.5px;color:var(--ink-2);margin-bottom:6px">' +
+              '<strong>调用模型：</strong><code style="color:var(--brand);font-size:12px">' + rec.model + '</code>' +
+            '</div>' +
+            (rec.reply
+              ? '<div style="font-size:11.5px;color:var(--ink-2);background:rgba(0,0,0,0.18);padding:8px 10px;border-radius:4px;margin-bottom:8px;line-height:1.5;font-style:italic">“' + rec.reply + '”</div>'
+              : '') +
+            (rec.reportNote
+              ? '<div style="font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:4px">' +
+                  '<svg class="ico ico-sm" style="color:var(--ok)"><use href="#i-check"/></svg> ' + rec.reportNote + '</div>'
+              : '') +
+            (rec.creditNote
+              ? '<div style="font-size:11px;color:var(--ink-3);margin-top:4px">💡 <strong>积分说明：</strong>' + rec.creditNote + '</div>'
+              : '') +
+          '</div>';
+      }
+
       function applySimState(st) {
         if (!st) return;
         if (st.today) {
@@ -2278,10 +2308,21 @@
       intlStreakSec.appendChild(streakInfoBox);
       intlStreakSec.appendChild(streakBtnGroup);
       intlCard.appendChild(intlStreakSec);
+      // 模拟活跃状态单独占一行：并进上面的 streak 行会把中文挤成竖排
+      // （2026-11-21 实测 513px 宽时「已连签3天」每个字各占一行）。
+      intlCard.appendChild(el("div", {
+        id: "intl-sim-hint",
+        style: "font-size:11px;color:var(--ink-3);margin:6px 2px 0;line-height:1.5",
+        text: ""
+      }));
       intlCard.appendChild(intlSimulateResultCard);
 
-      // 先问一句"今天模拟过没有"，让按钮文案立刻正确
-      api("/api/growth/intl/simulate-active").then(applySimState).catch(function () {});
+      // 先问一句"今天模拟过没有"，让按钮文案立刻正确；
+      // 顺带回显上一次的结果卡——以前它只活在内存里，切页就没了。
+      api("/api/growth/intl/simulate-active").then(function (st) {
+        applySimState(st);
+        if (st && st.last) renderSimRecord(intlSimulateResultCard, st.last);
+      }).catch(function () {});
 
       // 异步拉取 Streak 状态
       api("/api/growth/streak").then(function (st) {

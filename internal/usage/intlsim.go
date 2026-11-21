@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,4 +96,54 @@ func QueryIntlSimStatus() IntlSimStatus {
 		Auto:    !IntlSimDisabled(),
 		NextAt:  next.Format("2006-01-02 15:04"),
 	}
+}
+
+// intlSimRecordFile 存最近一次模拟活跃的结果，供面板回显。
+//
+// 结果卡之前只活在页面内存里，切个页就没了；用户想回看"上次调了什么模型、
+// 报了哪些事件"就找不着。落盘后关掉客户端再打开也还在。
+const intlSimRecordFile = "intl-sim-last.json"
+
+// IntlSimRecord 是最近一次成功模拟的摘要（只保留能展示的字段）。
+type IntlSimRecord struct {
+	At         string `json:"at"`         // 完成时刻，2006-01-02 15:04:05
+	Model      string `json:"model"`      //
+	DurationMs int64  `json:"durationMs"` //
+	TTFTMs     int64  `json:"ttftMs"`     //
+	Reply      string `json:"reply"`      // 模型回复原文
+	ReportNote string `json:"reportNote"` // 事件上报结果说明
+	CreditNote string `json:"creditNote"` // 积分发放说明
+}
+
+// SaveIntlSimRecord 写入最近一次结果。
+func SaveIntlSimRecord(rec IntlSimRecord) {
+	dir := intlSimDir()
+	if dir == "" {
+		return
+	}
+	intlSimMu.Lock()
+	defer intlSimMu.Unlock()
+	_ = os.MkdirAll(dir, 0o755)
+	b, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, intlSimRecordFile), b, 0o644)
+}
+
+// ReadIntlSimRecord 读回最近一次结果；没有或损坏返回 nil。
+func ReadIntlSimRecord() *IntlSimRecord {
+	dir := intlSimDir()
+	if dir == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(dir, intlSimRecordFile))
+	if err != nil {
+		return nil
+	}
+	var rec IntlSimRecord
+	if json.Unmarshal(b, &rec) != nil {
+		return nil
+	}
+	return &rec
 }
