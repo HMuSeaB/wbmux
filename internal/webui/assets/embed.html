@@ -6,12 +6,19 @@
 <meta name="referrer" content="no-referrer">
 <title>wbmux · 嵌入面板</title>
 <style>
+  /* ---- 配色：暖灰 + 陶土橙 ----
+     原来是 #0d1017 纯黑底配 #2dd4bf 青绿——那是 2024 年 AI 产品的默认长相，
+     也是"一眼看出是 AI 做的"最直接来源。换成船板那套：
+       · 背景不用纯黑，用带一点暖调的 #1F1E1D，层次靠亮度递进而不是描透明边框
+       · 强调色用陶土橙 #D97757，只在真正需要指路的地方出现
+       · 正文不用冷白 #e6e8ee，用微暖的 #E8E5E1，配暖底才不刺
+     状态色也一并压暗：亮绿 #34d399 换成苔绿 #7FA573，红换砖红 #C25B4E。 */
   :root {
-    --bg: #0d1017; --card: #161a23; --card-2: #1c212b;
-    --border: rgba(255,255,255,0.08);
-    --ink-0: #e6e8ee; --ink-1: #c3c9d4; --ink-2: #9aa3b2; --ink-3: #6b7484;
-    --brand: #2dd4bf; --brand-dim: rgba(45,212,191,0.14);
-    --ok: #34d399; --bad: #f87171; --warn: #ebb23a;
+    --bg: #1F1E1D; --card: #262422; --card-2: #2B2A26;
+    --border: rgba(255, 244, 232, 0.07);
+    --ink-0: #E8E5E1; --ink-1: #C9C4BC; --ink-2: #9E988D; --ink-3: #736E65;
+    --brand: #D97757; --brand-dim: rgba(217, 119, 87, 0.13);
+    --ok: #7FA573; --bad: #C25B4E; --warn: #D9A354;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; max-width: 100%; overflow-x: hidden; }
@@ -53,7 +60,7 @@
     margin-left: auto; color: var(--ink-2); text-decoration: none; font-size: 11.5px;
     padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);
   }
-  .head a:hover { color: var(--brand); border-color: rgba(45,212,191,0.4); }
+  .head a:hover { color: var(--brand); border-color: rgba(217,119,87,0.42); }
 
   .card {
     background: var(--card); border: 1px solid var(--border);
@@ -111,20 +118,24 @@
     padding: 8px 10px; font-size: 12px; line-height: 1.4; text-align: left;
     transition: border-color .15s, background .15s;
   }
-  button:hover:not(:disabled) { border-color: rgba(45,212,191,0.45); }
+  button:hover:not(:disabled) { border-color: rgba(217,119,87,0.45); }
   button:disabled { opacity: 0.55; cursor: wait; }
   button .sub { display: block; font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
+  /* 主按钮：陶土橙实心。原来是从 #14b8a6 到 #0d9488 的青绿渐变——
+     渐变和高饱和青绿这两样合在一起，是"AI 味"的主要来源。
+     实色 + 深色文字，跟船板的发送按钮一个路子（#D97757 底 / 深字）。 */
   button.primary {
-    background: linear-gradient(135deg, #14b8a6, #0d9488); color: #04211d;
-    border: none; font-weight: 650;
+    background: var(--brand); color: #221512;
+    border: none; font-weight: 560;
   }
-  button.primary .sub { color: rgba(4,33,29,0.65); }
+  button.primary:hover:not(:disabled) { background: #E08A6C; }
+  button.primary .sub { color: rgba(34, 21, 18, 0.62); }
   button.wide { grid-column: 1 / -1; text-align: center; }
 
   .endpoint { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .endpoint code {
     flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-size: 11px; color: var(--brand); background: rgba(45,212,191,0.07);
+    font-size: 11px; color: var(--brand); background: rgba(217,119,87,0.10);
     padding: 5px 8px; border-radius: 6px;
   }
   .endpoint button { flex: none; padding: 4px 10px; font-size: 11px; }
@@ -135,7 +146,7 @@
 
   .toast {
     position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 50;
-    background: #1f2937; border: 1px solid rgba(45,212,191,0.4); color: var(--ink-0);
+    background: var(--card-2); border: 1px solid rgba(217,119,87,0.42); color: var(--ink-0);
     border-radius: 8px; padding: 9px 12px; font-size: 12px;
     box-shadow: 0 6px 24px rgba(0,0,0,0.5);
   }
@@ -160,14 +171,17 @@
   .stats-strip b { color: var(--ink-1); font-weight: 650; font-size: 12px; margin-left: 2px; }
   .stats-strip .strip-label { margin-left: auto; font-size: 10px; }
   .spark { display: flex; align-items: flex-end; gap: 2px; height: 24px; margin: 0 2px 10px; }
-  .spark i { flex: 1; min-width: 2px; background: rgba(56, 225, 196, 0.26); border-radius: 1px; }
-  .spark i.on { background: var(--ok); }
+  .spark i { flex: 1; min-width: 2px; background: rgba(217, 119, 87, 0.28); border-radius: 1px; }
+  /* 当天那根用强调色，与"当前"语义一致；其余是陶土橙的低透明档，
+     整排读起来是一个色系，不再跳出一片亮绿。 */
+  .spark i.on { background: var(--brand); }
   /* 积分卡：逐张一行，进度条 + 已用/总量 */
   .qhead { display: flex; justify-content: space-between; align-items: baseline; margin: 8px 0 4px; font-size: 10.5px; color: var(--ink-3); }
   .qhead b { color: var(--ink-1); font-weight: 600; font-size: 11.5px; }
   .qcard { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
   .qbar { flex: 1; height: 5px; background: var(--card-2); border-radius: 3px; overflow: hidden; }
-  .qbar i { display: block; height: 100%; background: var(--ok); border-radius: 3px; }
+  /* 额度条：用低饱和的苔绿，不再用 #34d399 那种亮绿（在暖底上很跳） */
+  .qbar i { display: block; height: 100%; background: #7FA573; border-radius: 3px; }
   .qbar i.low { background: var(--warn); }
   .qmeta { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .qexp { font-size: 10px; color: var(--ink-3); min-width: 52px; font-variant-numeric: tabular-nums; }
