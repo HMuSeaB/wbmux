@@ -17,7 +17,7 @@
     /* 中性石墨灰：从最深到最浅，共 6 级。
        每级差约 3~4 点明度，肉眼可分但不刺眼。 */
     /* 暖石墨：从最深到最浅，共 6 级。
-       原来这套是 HSL 220 的冷灰（#0b0c0e / #131417 ...），配上品牌青
+       原来这套是 HSL 220 的冷灰（var(--g0) / #131417 ...），配上品牌青
        整体偏"机房监控"。现在色相挪到 30 左右，与 /embed 面板一致，
        两处不再是两套风格。 */
     --g0: #14130F;   /* 页面底 */
@@ -174,7 +174,7 @@
 
   /* ---------- 主动作看板 (Hero Card) ---------- */
   .hero-card {
-    background: linear-gradient(145deg, #161920 0%, #111317 100%);
+    background: linear-gradient(145deg, #161920 0%, var(--g0) 100%);
     border: 1px solid var(--g5);
     border-radius: var(--r-lg);
     padding: 18px 20px;
@@ -223,7 +223,7 @@
   .hero-more-body button { width: 100%; justify-content: flex-start; text-align: left; gap: 7px; }
   .hero-more-body button svg { flex: none; }
   .btn-hero {
-    background: var(--brand); color: #0b0c0e; font-weight: 650;
+    background: var(--brand); color: var(--g0); font-weight: 650;
     border: none; padding: 8px 16px; border-radius: var(--r-sm);
     font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
     transition: transform .1s, filter .1s;
@@ -603,7 +603,7 @@
   .radar-pill.normal {
     background: rgba(91, 141, 214, 0.12);
     border-color: rgba(91, 141, 214, 0.3);
-    color: #93c5fd;
+    color: #A8B6C4;
   }
   .radar-pill.slow {
     background: rgba(184, 134, 59, 0.15);
@@ -618,7 +618,7 @@
   .radar-pill.rate-limited {
     background: rgba(234, 88, 12, 0.16);
     border-color: rgba(234, 88, 12, 0.42);
-    color: #fb923c;
+    color: #D97757;
   }
   .radar-pill.untested {
     background: var(--g3);
@@ -732,10 +732,10 @@
   .log-warn .log-text { color: var(--warn); }
   .log-info .log-text { color: var(--ink-2); }
   .log-tag { display: inline-flex; align-items: center; padding: 0 5px; border-radius: 4px; font-size: 10px; line-height: 1.4; font-weight: 600; margin-right: 6px; flex: none; user-select: none; }
-  .log-tag.req { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+  .log-tag.req { background: rgba(126, 143, 166, 0.15); color: #8FA3B8; border: 1px solid rgba(126, 143, 166, 0.3); }
   .log-tag.done { background: rgba(74, 157, 106, 0.15); color: #4ade80; border: 1px solid rgba(74, 157, 106, 0.3); }
-  .log-tag.warn { background: rgba(234, 88, 12, 0.15); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.35); }
-  .log-tag.bad { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+  .log-tag.warn { background: rgba(234, 88, 12, 0.15); color: #D97757; border: 1px solid rgba(234, 88, 12, 0.35); }
+  .log-tag.bad { background: rgba(194, 91, 78, 0.15); color: #C25B4E; border: 1px solid rgba(194, 91, 78, 0.35); }
   /* ---- 提供方（BYOK）表单 ---- */
   /* 全局输入框统一暗色现代高质感样式（杜绝原生惨白背景遗漏，涵盖所有文本型 input 与无 type 默认 input） */
   input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="image"]),
@@ -754,7 +754,7 @@
   textarea:focus {
     outline: none !important;
     border-color: var(--brand) !important;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
+    box-shadow: 0 0 0 2px rgba(126, 143, 166, 0.25) !important;
     background: rgba(0, 0, 0, 0.45) !important;
   }
   input::placeholder, textarea::placeholder {
@@ -780,7 +780,7 @@
   }
   .client-path-group:focus-within {
     border-color: var(--brand);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 0 0 2px rgba(126, 143, 166, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.35);
     background: rgba(0, 0, 0, 0.52);
   }
   .client-path-group input {
@@ -800,7 +800,7 @@
     opacity: 0.6;
   }
   .client-path-group .btn-save {
-    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    background: linear-gradient(135deg, #7E8FA6, #5A6A80);
     color: #ffffff;
     border: none;
     border-radius: 6px;
@@ -817,7 +817,7 @@
     transition: all 0.15s ease;
   }
   .client-path-group .btn-save:hover {
-    background: linear-gradient(135deg, #60a5fa, #2563eb);
+    background: linear-gradient(135deg, #8FA3B8, #6B7C93);
     transform: translateY(-0.5px);
     box-shadow: 0 2px 6px rgba(37, 99, 235, 0.45);
   }
@@ -850,7 +850,7 @@
   /* 左列表右预览：列表行是给扫的，正文块是给读的，两者的行距差别要拉开。 */
   .zc-row { padding: 8px 10px; border-top: 1px solid var(--g4); cursor: pointer; }
   .zc-row:hover { background: var(--g3); }
-  .zc-row.active { background: rgba(59, 130, 246, 0.15); border-left: 3px solid var(--accent, #3b82f6); }
+  .zc-row.active { background: rgba(126, 143, 166, 0.15); border-left: 3px solid var(--accent, #7E8FA6); }
   .zc-row:first-of-type { border-top: 0; }
   .zc-title { font-size: 12.5px; color: var(--ink); line-height: 1.5; }
   .zc-meta { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 3px;
@@ -1042,7 +1042,7 @@
     background: rgba(230, 150, 70, 0.15);
   }
   .api-card {
-    background: #111317;
+    background: var(--g0);
     border: 1px solid var(--g4);
     border-radius: var(--r-md);
     padding: 13px 16px;
@@ -1149,12 +1149,12 @@
   .gw-latency-fast { color: var(--ok) !important; font-weight: 600; }
   .gw-latency-mid { color: var(--ink-2); }
   .gw-latency-slow { color: var(--warn) !important; font-weight: 600; }
-  .gw-latency-very-slow { color: #f87171 !important; font-weight: 650; }
+  .gw-latency-very-slow { color: #C25B4E !important; font-weight: 650; }
 
   /* 429 频控超限与长报错美化 */
   .gw-limit-card {
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.28);
+    background: rgba(194, 91, 78, 0.08);
+    border: 1px solid rgba(194, 91, 78, 0.28);
     border-radius: 6px;
     padding: 6px 10px;
     box-sizing: border-box;
@@ -1165,11 +1165,11 @@
     transition: all .15s ease;
   }
   .gw-limit-card:hover {
-    border-color: rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(194, 91, 78, 0.5);
+    background: rgba(194, 91, 78, 0.12);
   }
   .gw-err-card {
-    background: rgba(239, 68, 68, 0.06);
+    background: rgba(194, 91, 78, 0.06);
     border-left: 3px solid var(--bad);
     padding: 5px 8px;
     border-radius: 0 5px 5px 0;
@@ -1221,10 +1221,10 @@
   }
 
   .bar-fill.cn {
-    background: linear-gradient(90deg, #2563eb, #38bdf8) !important;
+    background: linear-gradient(90deg, #6B7C93, #8FA3B8) !important;
   }
   .bar-fill.intl {
-    background: linear-gradient(90deg, #059669, #10b981) !important;
+    background: linear-gradient(90deg, #059669, #7FA573) !important;
   }
   .pulse-dot {
     width: 6px;
@@ -1428,15 +1428,15 @@
   .upd-progress-bar {
     height: 100%;
     width: 0%;
-    background: linear-gradient(90deg, #3b82f6 0%, #10b981 100%);
+    background: linear-gradient(90deg, #7E8FA6 0%, #7FA573 100%);
     border-radius: 5px;
     transition: width 0.15s ease-out;
   }
   .upd-progress-bar.done {
-    background: #10b981;
+    background: #7FA573;
   }
   .upd-progress-bar.error {
-    background: #ef4444;
+    background: #C25B4E;
   }
   .upd-detail-text {
     font-size: 11.5px;
@@ -1580,7 +1580,7 @@
   .cm-stacked-bar {
     width: 100%;
     height: 7px;
-    background: #2a2b33;
+    background: var(--g4);
     border-radius: 999px;
     overflow: hidden;
     display: flex;
@@ -1590,9 +1590,9 @@
     height: 100%;
     transition: width .28s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .cm-seg.seg-prompt { background: #3b82f6; } /* 蓝: 系统提示词 */
-  .cm-seg.seg-tools { background: #10b981; }  /* 绿: 工具及子智能体 */
-  .cm-seg.seg-msgs { background: #f59e0b; }   /* 橙: 对话消息 */
+  .cm-seg.seg-prompt { background: #7E8FA6; } /* 蓝: 系统提示词 */
+  .cm-seg.seg-tools { background: #7FA573; }  /* 绿: 工具及子智能体 */
+  .cm-seg.seg-msgs { background: #D9A354; }   /* 橙: 对话消息 */
   .cm-seg.seg-mcp { background: #8b5cf6; }    /* 紫: 连接器及MCP */
   .cm-seg.seg-skills { background: #ec4899; } /* 粉: 技能 */
 
@@ -1648,14 +1648,14 @@
     position: relative;
     width: 100%;
     height: 6px;
-    background: #2a2b33;
+    background: var(--g4);
     border-radius: 999px;
     cursor: pointer;
   }
   .cm-slider-fill {
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    background: #10b981;
+    background: #7FA573;
     border-radius: 999px;
     transition: width .2s cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -1666,7 +1666,7 @@
     width: 20px;
     height: 20px;
     background: #fff;
-    border: 3px solid #10b981;
+    border: 3px solid #7FA573;
     border-radius: 50%;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     cursor: grab;
@@ -1691,7 +1691,7 @@
     transition: color .15s ease;
   }
   .cm-tick-item:hover, .cm-tick-item.active {
-    color: #10b981;
+    color: #7FA573;
     font-weight: 600;
   }
   .cm-slider-foot {
@@ -1732,7 +1732,7 @@
   .cm-toast-icon {
     width: 17px;
     height: 17px;
-    background: #10b981;
+    background: #7FA573;
     color: #fff;
     border-radius: 50%;
     display: flex;
@@ -1755,8 +1755,8 @@
   }
   .log-badge-tokens {
     font-size: 11px;
-    background: rgba(59, 130, 246, 0.1);
-    color: #93c5fd;
+    background: rgba(126, 143, 166, 0.1);
+    color: #A8B6C4;
     padding: 1px 6px;
     border-radius: 4px;
     font-family: var(--mono);
@@ -1789,7 +1789,7 @@
     box-shadow: 0 0 12px rgba(56, 189, 248, 0.15);
   }
   .trend-col.active .trend-date {
-    color: #38bdf8;
+    color: #8FA3B8;
     font-weight: 600;
   }
   .trend-bar-track {
@@ -1813,12 +1813,12 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.25);
   }
   .trend-bar-in {
-    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    background: linear-gradient(180deg, #7E8FA6, #5A6A80);
     width: 100%;
     transition: height .3s ease;
   }
   .trend-bar-out {
-    background: linear-gradient(180deg, #38bdf8, #0284c7);
+    background: linear-gradient(180deg, #8FA3B8, #0284c7);
     width: 100%;
     transition: height .3s ease;
   }
@@ -1831,7 +1831,7 @@
     transition: color .15s ease;
   }
   .trend-col:hover .trend-val, .trend-col.active .trend-val {
-    color: #38bdf8;
+    color: #8FA3B8;
     font-weight: 600;
   }
   .trend-date {
@@ -1898,7 +1898,7 @@
     line-height: 1.2;
   }
   .growth-stat-val.gold {
-    color: #ffd700;
+    color: #D9A354;
     text-shadow: 0 0 16px rgba(255, 215, 0, 0.35);
   }
   .growth-stat-val.cyan {
@@ -1906,7 +1906,7 @@
     /* 原来带 16px 发光，霓虹感很重；去掉，靠字重区分就够 */
   }
   .growth-stat-val.purple {
-    color: #c084fc;
+    color: #B48C6A;
     font-size: 14px;
     font-family: var(--sans);
     letter-spacing: normal;
@@ -2044,7 +2044,7 @@
     padding: 2.5px 8px;
     border-radius: 12px;
     background: rgba(235, 178, 58, 0.12);
-    color: #ffd700;
+    color: #D9A354;
     border: 1px solid rgba(235, 178, 58, 0.28);
     display: inline-flex;
     align-items: center;
@@ -2067,7 +2067,7 @@
   }
   .growth-pill.ready, .growth-pill.claimable {
     background: rgba(255, 215, 0, 0.18);
-    color: #ffd700;
+    color: #D9A354;
     border: 1px solid rgba(255, 215, 0, 0.5);
     animation: growth-pulse-border 2s infinite;
   }
@@ -2112,7 +2112,7 @@
   }
   .growth-filter-btn.active {
     background: rgba(235, 178, 58, 0.16);
-    color: #ffd700;
+    color: #D9A354;
     border-color: rgba(235, 178, 58, 0.4);
     font-weight: 600;
   }
@@ -2132,7 +2132,7 @@
   }
   .growth-period-badge.once {
     background: rgba(168, 85, 247, 0.14);
-    color: #c084fc;
+    color: #B48C6A;
     border: 1px solid rgba(168, 85, 247, 0.3);
   }
   .growth-period-badge.milestone {
@@ -2175,9 +2175,11 @@
     margin-bottom: 12px;
   }
   .hero-desc { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+  /* 承载最重要数字的那一格：用比周围略亮一档的暖表面 + 陶土橙数字，
+     不再用墨绿渐变底。渐变底会让这一格脱离整体，看起来像贴上去的。 */
   .ov-kpi--accent {
-    background: linear-gradient(145deg, #1b2a22 0%, #141c18 100%);
-    border-color: #2a4034;
+    background: var(--g2);
+    border-color: rgba(217, 119, 87, 0.32);
   }
-  .ov-kpi--accent .ov-kpi-label { color: #8fae9c; }
-  .ov-kpi--accent .ov-kpi-value { color: #d8f0e2; }
+  .ov-kpi--accent .ov-kpi-label { color: var(--ink-3); }
+  .ov-kpi--accent .ov-kpi-value { color: var(--brand); }
