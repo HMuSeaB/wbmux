@@ -150,8 +150,9 @@
   .nav-item .ico { color: var(--ink-3); transition: color .12s ease; }
   .nav-item:hover { color: var(--ink); background: var(--g2); }
   .nav-item:hover .ico { color: var(--ink-2); }
-  .nav-item.active { color: #fff; background: var(--g3); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
-  .nav-item.active .ico { color: var(--brand); }
+  .nav-item.active { color: var(--ink); background: var(--g3); font-weight: 560;
+    box-shadow: inset 2px 0 0 rgba(217, 119, 87, 0.85); }
+  .nav-item.active .ico { color: rgba(217, 119, 87, 0.85); }
   .nav-badge {
     margin-left: auto; font-size: 10px; padding: 1.5px 6px;
     border-radius: 10px; background: var(--g4); color: var(--ink-3);

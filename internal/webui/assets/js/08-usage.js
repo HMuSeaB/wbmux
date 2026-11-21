@@ -2009,10 +2009,15 @@
     ]);
     var intlKpiVal = el("div", { class: "kpi-val-row" }, [
       el("span", { class: "kpi-num", text: intlTotalSum > 0 ? intlRemainSum.toFixed(1) : (intlLv.ok ? "活跃通道" : "未探测") }),
-      el("span", { class: "kpi-unit", text: intlTotalSum > 0 ? ("点 · " + intlPct + "%") : "" })
+      // 只在合计口径下给百分比：下面"国际积分包余量"是逐包口径，
+      // 两个分母不同会让同一页出现 45% 和 60%，看着像算错了。
+      // 这里写明是"全部包合计"，读者就知道两者不是一回事。
+      el("span", { class: "kpi-unit", text: intlTotalSum > 0 ? ("点 · 合计 " + intlPct + "%") : "" })
     ]);
     var intlKpiFoot = el("div", { class: "kpi-foot" }, [
-      el("span", { text: intlTotalSum > 0 ? ("周期总额 " + intlTotalSum.toFixed(1) + " · 额度正常") : (intlLv.ok ? "海外账户已就绪" : "客户端登录后就绪") })
+      el("span", { text: intlTotalSum > 0
+        ? ("全部包合计 " + intlRemainSum.toFixed(1) + " / " + intlTotalSum.toFixed(1) + " · 额度正常")
+        : (intlLv.ok ? "海外账户已就绪" : "客户端登录后就绪") })
     ]);
     kpiBar.appendChild(el("div", { class: "kpi-card" }, [intlKpiTitle, intlKpiVal, intlKpiFoot]));
 
@@ -2196,8 +2201,12 @@
     } else {
       intlPkgs.slice(0, 5).forEach(function (p) {
         var pct = p.total > 0 ? Math.round(p.remain / p.total * 100) : 0;
+        // 包名要给"是什么包"，只给 code 尾巴（…h4Nl0）对用户没意义。
+        // kind 是 bonus / subscription，转成中文；百分比也标出来，
+        // 免得和上面"全部包合计"的百分比混淆。
+        var kindZh = p.kind === "subscription" ? "订阅包" : (p.kind === "bonus" ? "赠送包" : "积分包");
         intlSecPackages.appendChild(el("div", { class: "bar-row" }, [
-          el("span", { class: "bar-name", title: p.code, text: "积分包 …" + p.code.slice(-6) }),
+          el("span", { class: "bar-name", title: kindZh + " · " + p.code, text: kindZh + " " + pct + "%" }),
           el("span", { class: "bar-track" }, [
             el("span", { class: "bar-fill intl", style: "width:" + Math.max(1.5, pct) + "%" })
           ]),
@@ -2214,7 +2223,8 @@
       });
       var streakInfoBox = el("div", { style: "display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);min-width:0" }, [
         el("svg", { class: "ico ico-sm", html: '<use href="#i-zap"/>' }),
-        el("span", { id: "intl-streak-text", text: "连续活跃：读取中…" })
+        el("span", { id: "intl-streak-text", text: "连续活跃：读取中…" }),
+        el("span", { id: "intl-sim-hint", style: "font-size:11px;color:var(--ink-3);white-space:nowrap", text: "" })
       ]);
       var btnStreakAction = el("button", {
         class: "ghost",
@@ -2223,18 +2233,45 @@
         title: "连续活跃可阶梯领取 50/150 积分奖励"
       });
       var streakBtnGroup = el("div", { style: "display:flex;align-items:center;gap:6px;flex-shrink:0" });
+      // 按钮文案会随"今天跑过没"变化：自动任务在后台跑完后，
+      // 用户进来应该直接看到"今日已模拟"，而不是永远一个待点的按钮。
       var btnSimulateAction = el("button", {
         class: "primary",
-        style: "padding:3px 10px;font-size:11px;height:auto;white-space:nowrap;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:none",
+        style: "padding:3px 10px;font-size:11px;height:auto;white-space:nowrap",
         html: '<svg class="ico ico-sm" aria-hidden="true" style="margin-right:3px"><use href="#i-zap"/></svg>模拟活跃 (+30c)',
         title: "向国际后端发起免积分模拟对话并上报桌面链路事件，锁定次日 +30 积分每日活跃"
       });
+
+      // applySimState 把"今天跑过没 / 自动是否开启"落到按钮和说明文字上。
+      function applySimState(st) {
+        if (!st) return;
+        if (st.today) {
+          btnSimulateAction.innerHTML = '<svg class="ico ico-sm" aria-hidden="true" style="margin-right:3px"><use href="#i-check"/></svg>今日已模拟';
+          btnSimulateAction.className = "ghost";
+          btnSimulateAction.title = "今天已完成模拟活跃（" + (st.lastDay || "") + "），官方次日发放 +30 积分。明天 " + (st.nextAt || "08:00") + " 后自动再跑。";
+        } else {
+          btnSimulateAction.innerHTML = '<svg class="ico ico-sm" aria-hidden="true" style="margin-right:3px"><use href="#i-zap"/></svg>模拟活跃 (+30c)';
+          btnSimulateAction.className = "primary";
+          btnSimulateAction.title = st.auto
+            ? "今天还没跑。自动任务会在 08:00 后执行（下次 " + (st.nextAt || "") + "）"
+            : "自动任务已关闭（~/.wbmux/intl-sim-off），点这里手动执行";
+        }
+        var hint = document.getElementById("intl-sim-hint");
+        if (hint) {
+          hint.textContent = st.today
+            ? "今日已模拟" + (st.lastDay ? "（" + st.lastDay + "）" : "") + " · 次日发 +30 积分"
+            : (st.auto ? "今日待模拟 · 自动执行中" : "今日待模拟 · 自动已关闭");
+        }
+      }
+      applySimState(null);
       var intlSimulateResultCard = el("div", {
         id: "intl-simulate-result-card",
         style: "display:none;margin-top:8px"
       });
       btnSimulateAction.onclick = function () {
-        runIntlActiveSimulation(btnSimulateAction, intlSimulateResultCard);
+        runIntlActiveSimulation(btnSimulateAction, intlSimulateResultCard, function () {
+          api("/api/growth/intl/simulate-active").then(applySimState).catch(function () {});
+        });
       };
       streakBtnGroup.appendChild(btnSimulateAction);
       streakBtnGroup.appendChild(btnStreakAction);
@@ -2242,6 +2279,9 @@
       intlStreakSec.appendChild(streakBtnGroup);
       intlCard.appendChild(intlStreakSec);
       intlCard.appendChild(intlSimulateResultCard);
+
+      // 先问一句"今天模拟过没有"，让按钮文案立刻正确
+      api("/api/growth/intl/simulate-active").then(applySimState).catch(function () {});
 
       // 异步拉取 Streak 状态
       api("/api/growth/streak").then(function (st) {

@@ -737,7 +737,7 @@
   }
 
   // runIntlActiveSimulation 统一调度国际端模拟活跃对话（+30 积分）生命周期
-  function runIntlActiveSimulation(btnEl, resultBoxEl) {
+  function runIntlActiveSimulation(btnEl, resultBoxEl, onDone) {
     if (!btnEl) return;
     btnEl.disabled = true;
     var origHtml = btnEl.innerHTML;
@@ -757,6 +757,7 @@
       btnEl.style.background = "rgba(34,197,94,0.18)";
       btnEl.style.color = "var(--green, #22c55e)";
       toast("模拟对话成功！官方次日统一发放 +30 积分奖励", "ok");
+      if (typeof onDone === "function") onDone();
 
       if (resultBoxEl) {
         resultBoxEl.hidden = false;

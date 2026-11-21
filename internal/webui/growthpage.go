@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"time"
 	"errors"
 	"fmt"
 	"net/http"
@@ -101,8 +102,15 @@ func (s *Server) handleGrowthRedeem(w http.ResponseWriter, r *http.Request) {
 // handleGrowthIntlSimulateActive 处理国际端“一键模拟今日活跃会话”请求。
 // 写操作（发起会话与遥测上报，闭环官方活跃判定，次日官方跑批发放 +30 积分奖励）。
 func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.Request) {
+	// GET 返回"今天跑过没"，与 POST 共用一条路由：
+	// 面板要能显示自动任务的结果，不然定时跑的完全不可见
+	// （2026-11-21 用户反馈"看不出今天国际版活跃了没"）。
+	if r.Method == http.MethodGet {
+		writeJSON(w, usage.QueryIntlSimStatus())
+		return
+	}
 	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET / POST")
 		return
 	}
 
@@ -114,6 +122,10 @@ func (s *Server) handleGrowthIntlSimulateActive(w http.ResponseWriter, r *http.R
 	}
 
 	res, err := s.AutoSimulateIntlActive(req.Model)
+	if err == nil {
+		// 手动和自动都记同一份，面板据此显示"今日已模拟"。
+		usage.MarkIntlSimDay(time.Now().Format("2006-01-02"))
+	}
 	if err != nil {
 		if errors.Is(err, ErrNoIntlCred) {
 			writeErr(w, http.StatusNotFound, "未配置国际版账号凭证，请先登录国际版账号")
