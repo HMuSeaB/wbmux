@@ -128,6 +128,30 @@ code, kbd, pre, samp,
     monospace !important;
 }
 
+
+/* ---- 文字细腻度（学自船板 core/theme.css）----
+   深色背景上，Windows 的字体抗锯齿会让细字发虚：笔画边缘的灰度像素让字
+   看起来"飘"。船板给了一层极细的同色描边——0.44px 模糊半径的 text-shadow，
+   用 currentColor 混 54% 透明——相当于把字形边缘补实。这不是普通阴影，
+   参数是刻意取的小数，粗了会像描边、细了没效果。 */
+body,
+.cr-markdown,
+.cr-markdown p,
+.cr-markdown li {
+  text-shadow: 0 0 0.44px color-mix(in srgb, currentColor 54%, transparent);
+}
+
+/* 粗体已经有厚度，不需要再补；补了反而会糊成一团 */
+strong, b, h1, h2, h3, h4 { text-shadow: none; }
+
+/* ---- 字重阶梯：按用途给值，不跳整百 ----
+   Segoe UI Variable 与思源黑体/宋体都是可变字体，字重轴连续。
+   正文取 380（比 400 细一点，深色底上显得干净），控件 440、强调 540。
+   注意：等宽链上的 Maple Mono 不是可变字体，不能这么调，保持 400/700。 */
+body { font-weight: 380; }
+.cr-markdown { font-weight: 400; }
+strong, b { font-weight: 540; }
+
 /* 滚动条收细：默认的 15px 宽在窄侧栏里太抢空间 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb {
