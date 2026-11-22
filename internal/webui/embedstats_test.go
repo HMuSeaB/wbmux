@@ -49,7 +49,9 @@ func TestMainSubscriptionPackage(t *testing.T) {
 }
 
 // TestEmbedStatsQuotaSegment 钉住 /api/embed/stats 的 quota 段：
-// last.model 的限流态 + 两档主包余量（分开，不合并；没数据的档位省略）。
+// last.model 的限流态 + 两档主包余量。同一档里订阅包和赠送包合并成一行
+// （2026-11-20：只认订阅包会让国际档显示 0%，赠送额度被吞掉）；
+// 只有赠送包的档位也要出现，不能整档消失。
 func TestEmbedStatsQuotaSegment(t *testing.T) {
 	s := newQuotaTestServer(t)
 	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
@@ -122,8 +124,10 @@ func TestEmbedStatsQuotaSegment(t *testing.T) {
 		t.Fatalf("两档都应有额度行，得到 %d 行 %+v", len(resp.Quota.Packages), resp.Quota.Packages)
 	}
 	pkg := resp.Quota.Packages[0]
-	if pkg.Side != "cn" || pkg.Percent != 62.5 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
-		t.Errorf("国内包应为 cn/62.5%%/每月 1 日重置，得到 %+v", pkg)
+	// 订阅 100（余 62.5）+ 赠送 50（余 50）= 150 里还剩 112.5 → 75%。
+	// 周期文案取订阅包的（赠送包没有可靠到期规则）。
+	if pkg.Side != "cn" || pkg.Percent != 75 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
+		t.Errorf("国内包应为 cn/75%%/每月 1 日重置，得到 %+v", pkg)
 	}
 	if il := resp.Quota.Packages[1]; il.Side != "intl" || il.Percent != 100 {
 		t.Errorf("国际档赠送包应为 intl/100%%，得到 %+v", il)
@@ -357,6 +361,154 @@ func TestCapsulePackages(t *testing.T) {
 
 // TestMainPackageMergesBonus 验证纯赠送包账号（国内正是这种）把多张卡
 // 合并成一个主包：余额求和、到期取最早那张。只认订阅包会让整个国内档消失。
+// TestMainPackageKeepsCycleStartTime 验证合并主包时订阅包的周期起点
+// 不丢：第一张是 bonus、订阅包在后时，旧代码只抄了 CycleEndTime，
+// 起点丢了，pace 就永远算不出。
+func TestMainPackageKeepsCycleStartTime(t *testing.T) {
+	now := time.Now()
+	start := now.Add(-15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	end := now.Add(15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	acc := &usage.LiveAccount{OK: true, Packages: []usage.LivePackage{
+		{Kind: "bonus", Total: 500, Remain: 500, DeductPriority: 2},
+		{Kind: "subscription", Total: 100, Remain: 62, DeductPriority: 1, CycleStartTime: start, CycleEndTime: end},
+	}}
+	got := mainPackage(acc)
+	if got == nil {
+		t.Fatal("应有主包")
+	}
+	if got.CycleStartTime != start || got.CycleEndTime != end {
+		t.Errorf("合并主包应保留订阅包的周期起止，得到 start=%q end=%q", got.CycleStartTime, got.CycleEndTime)
+	}
+}
+
+// TestQuotaCycle 钉住 pace 的算口：订阅周期起止都齐全、且 now 落在
+// 周期内才算；bonus 包没有起点、周期已过/未到，都返回 ok=false，
+// 调用方把字段留空、不编数字。
+func TestQuotaCycle(t *testing.T) {
+	now := time.Now()
+	cycle := func(start, end time.Time) *usage.LivePackage {
+		return &usage.LivePackage{
+			CycleStartTime: start.Format("2006-01-02 15:04:05"),
+			CycleEndTime:   end.Format("2006-01-02 15:04:05"),
+		}
+	}
+	// 30 天周期，走了 10 天：还剩 2/3 时间。
+	sub := cycle(now.Add(-10*24*time.Hour), now.Add(20*24*time.Hour))
+	tl, pace, ok := quotaCycle(sub, now, 62)
+	if !ok || tl < 66 || tl > 67.5 || pace != "on" {
+		t.Errorf("62%% vs 66.7%% 时间应为 on，得到 timeLeft=%.1f pace=%q ok=%v", tl, pace, ok)
+	}
+	if _, pace, _ := quotaCycle(sub, now, 50); pace != "ahead" {
+		t.Errorf("50%% vs 66.7%% 时间应为 ahead，得到 %q", pace)
+	}
+	if _, pace, _ := quotaCycle(sub, now, 80); pace != "under" {
+		t.Errorf("80%% vs 66.7%% 时间应为 under，得到 %q", pace)
+	}
+
+	// 缺起点：算不出。
+	if _, _, ok := quotaCycle(&usage.LivePackage{CycleEndTime: now.Add(20 * 24 * time.Hour).Format("2006-01-02 15:04:05")}, now, 62); ok {
+		t.Error("缺 CycleStartTime 时 quotaCycle 应返回 ok=false")
+	}
+	// 起止颠倒、已过期、未开始：都算不出。
+	if _, _, ok := quotaCycle(cycle(now.Add(20*24*time.Hour), now.Add(-10*24*time.Hour)), now, 62); ok {
+		t.Error("起止颠倒时 quotaCycle 应返回 ok=false")
+	}
+	if _, _, ok := quotaCycle(cycle(now.Add(-30*24*time.Hour), now.Add(-time.Hour)), now, 62); ok {
+		t.Error("周期已过时 quotaCycle 应返回 ok=false")
+	}
+	if _, _, ok := quotaCycle(cycle(now.Add(time.Hour), now.Add(30*24*time.Hour)), now, 62); ok {
+		t.Error("周期未开始时 quotaCycle 应返回 ok=false")
+	}
+	if _, _, ok := quotaCycle(nil, now, 62); ok {
+		t.Error("无订阅包时 quotaCycle 应返回 ok=false")
+	}
+}
+
+// TestEmbedQuotaForPace 验证面板行上的 TimeLeftPct / Pace：
+// 订阅包周期可算时下发，bonus 合并包缺省（0 / ""），前端不画 rail。
+func TestEmbedQuotaForPace(t *testing.T) {
+	now := time.Now()
+	start := now.Add(-15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	end := now.Add(15 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	s := newQuotaTestServer(t)
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{
+			"cn": {OK: true, Packages: []usage.LivePackage{
+				{Kind: "subscription", Total: 100, Remain: 62, DeductPriority: 1, CycleStartTime: start, CycleEndTime: end},
+			}},
+			"intl": {OK: true, Packages: []usage.LivePackage{
+				{Kind: "bonus", Total: 50, Remain: 50, DeductPriority: 1, ExpiresAtMs: now.Add(20 * 24 * time.Hour).UnixMilli()},
+			}},
+		}
+	}
+	q := s.embedQuotaFor("")
+	if q == nil || len(q.Packages) != 2 {
+		t.Fatalf("应有两档，得到 %+v", q)
+	}
+	cn := q.Packages[0]
+	if cn.Side != "cn" {
+		t.Fatalf("第一档应为 cn，得到 %+v", cn)
+	}
+	// 30 天周期走了 15 天：还剩约 50% 时间；62% 余量比时间多 12 个点 → under。
+	if cn.TimeLeftPct < 49 || cn.TimeLeftPct > 51 {
+		t.Errorf("cn TimeLeftPct 应≈50，得到 %.2f", cn.TimeLeftPct)
+	}
+	if cn.Pace != "under" {
+		t.Errorf("cn Pace 应为 under，得到 %q", cn.Pace)
+	}
+	intl := q.Packages[1]
+	if intl.TimeLeftPct != 0 || intl.Pace != "" {
+		t.Errorf("bonus 档 TimeLeftPct/Pace 应缺省，得到 %.2f/%q", intl.TimeLeftPct, intl.Pace)
+	}
+}
+
+// TestCapsulePackagesPace 验证胶囊段的 Pace：订阅周期可算时带上，
+// bonus 档缺省；文案格式不动（仍是"国62%·际41%"，见 cmd 侧单测）。
+func TestCapsulePackagesPace(t *testing.T) {
+	now := time.Now()
+	cycle := func(daysAgo, daysLeft int) (string, string) {
+		return now.Add(-time.Duration(daysAgo) * 24 * time.Hour).Format("2006-01-02 15:04:05"),
+			now.Add(time.Duration(daysLeft) * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	}
+	s := newQuotaTestServer(t)
+	start, end := cycle(20, 10)  // 还剩 1/3 时间；余量 62% → under
+	start2, end2 := cycle(25, 5) // 还剩 1/6 时间；余量 5% → ahead
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{
+			"cn": {OK: true, Packages: []usage.LivePackage{
+				{Kind: "subscription", Total: 100, Remain: 62, DeductPriority: 1, CycleStartTime: start, CycleEndTime: end},
+			}},
+			"intl": {OK: true, Packages: []usage.LivePackage{
+				{Kind: "subscription", Total: 100, Remain: 5, DeductPriority: 1, CycleStartTime: start2, CycleEndTime: end2},
+			}},
+		}
+	}
+	got := s.CapsulePackages()
+	if len(got) != 2 {
+		t.Fatalf("应有两档，得到 %+v", got)
+	}
+	if got[0].Pace != "under" {
+		t.Errorf("cn Pace 应为 under，得到 %q", got[0].Pace)
+	}
+	if got[1].Pace != "ahead" {
+		t.Errorf("intl Pace 应为 ahead，得到 %q", got[1].Pace)
+	}
+
+	// bonus 档：Pace 缺省。
+	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
+		return map[string]*usage.LiveAccount{
+			"cn": {OK: true, Packages: []usage.LivePackage{
+				{Kind: "bonus", Total: 50, Remain: 50, DeductPriority: 1, ExpiresAtMs: now.Add(20 * 24 * time.Hour).UnixMilli()},
+			}},
+			"intl": nil,
+		}
+	}
+	got = s.CapsulePackages()
+	if len(got) != 1 || got[0].Pace != "" {
+		t.Errorf("bonus 档 Pace 应缺省，得到 %+v", got)
+	}
+}
+
 func TestMainPackageMergesBonus(t *testing.T) {
 	now := time.Now()
 	acc := &usage.LiveAccount{OK: true, Packages: []usage.LivePackage{
@@ -374,8 +526,10 @@ func TestMainPackageMergesBonus(t *testing.T) {
 	if d := resetsInDays(got); d != 20 {
 		t.Errorf("到期应取最早那张（20 天），得到 %d", d)
 	}
-	if got.Name != "3 个赠送包" {
-		t.Errorf("合并后应标出张数，得到 %q", got.Name)
+	// 合并包是纯赠送包 → 仍按赠送包归类（面板/胶囊都靠 Kind 决定周期文案，
+	// 不能因为合并就变成订阅包）。Name 不参与展示，这里不做断言。
+	if got.Kind != "bonus" {
+		t.Errorf("合并后仍应是 bonus 档，得到 %q", got.Kind)
 	}
 }
 

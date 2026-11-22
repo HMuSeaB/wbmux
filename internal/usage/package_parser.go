@@ -28,7 +28,29 @@ func ParsePackageMeta(pkg *LivePackage, now time.Time) {
 		pkg.KindZh = "月度订阅基础包"
 		pkg.ExpiryRuleZh = "每月 1 日重置（月底清零更新）"
 		pkg.DeductPriority = 1
-		pkg.ExpiresAtMs = monthEnd.UnixMilli()
+		// 面板的 pace（剩余% 对 剩余时间%）要周期起止都齐全才算，
+		// 而官方明细接口实测对 TCACA_code_035 并不返回 CycleStartTime
+		// （见 live.go 的 fetchPackageDetailsMap），旧代码只在这里填
+		// ExpiresAtMs，起点永远空着 → quotaCycle 恒 false、pace 永不出现。
+		//
+		// 这里按上面同一条官方规则「每月 1 日重置」取当月自然月：
+		// 起点 = 当月 1 日 00:00:00，终点 = 当月最后一天 23:59:59。
+		// 与 ExpiresAtMs 用的是同一个 monthEnd，没有引入新假设。
+		// 若将来明细接口真的给了官方周期，已有值优先，不覆盖。
+		monthStart := time.Date(year, month, 1, 0, 0, 0, 0, now.Location())
+		if pkg.CycleStartTime == "" {
+			pkg.CycleStartTime = monthStart.Format("2006-01-02 15:04:05")
+		}
+		if pkg.CycleEndTime == "" {
+			pkg.CycleEndTime = monthEnd.Format("2006-01-02 15:04:05")
+		}
+		// 到期时刻跟周期终点保持一致：官方给了周期就用官方的终点，
+		// 没给（常见情况）才退回当月月底——两者不能各说一套。
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", pkg.CycleEndTime, time.Local); err == nil {
+			pkg.ExpiresAtMs = t.UnixMilli()
+		} else {
+			pkg.ExpiresAtMs = monthEnd.UnixMilli()
+		}
 		return
 	}
 

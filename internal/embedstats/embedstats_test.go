@@ -47,6 +47,46 @@ func TestLevel(t *testing.T) {
 	}
 }
 
+func TestQuotaLevel(t *testing.T) {
+	cases := []struct {
+		pct  float64
+		want string
+	}{
+		{100, ""},
+		{62.5, ""},
+		{20, ""}, // 边界：20% 本身不黄
+		{19.9, "warn"},
+		{10, "warn"}, // 边界：10% 本身不红
+		{9.9, "bad"},
+		{0, "bad"}, // 0% 本身是红的；调用方按"用尽档不参与"先过滤
+	}
+	for _, c := range cases {
+		if got := QuotaLevel(c.pct); got != c.want {
+			t.Errorf("QuotaLevel(%v) = %q, want %q", c.pct, got, c.want)
+		}
+	}
+}
+
+func TestQuotaPace(t *testing.T) {
+	cases := []struct {
+		remaining, timeLeft float64
+		want                string
+	}{
+		{62, 80, "ahead"}, // headroom −18：烧得比时间快
+		{70, 80, "ahead"}, // headroom −10：边界也算 ahead
+		{71, 80, "on"},    // headroom −9：还不预警
+		{62, 55, "on"},    // headroom +7：还不够省
+		{62, 54, "under"}, // headroom +8：边界算 under
+		{90, 70, "under"}, // headroom +20：省着用
+		{50, 50, "on"},
+	}
+	for _, c := range cases {
+		if got := QuotaPace(c.remaining, c.timeLeft); got != c.want {
+			t.Errorf("QuotaPace(%v, %v) = %q, want %q", c.remaining, c.timeLeft, got, c.want)
+		}
+	}
+}
+
 func TestAgeMinutes(t *testing.T) {
 	if got := AgeMinutes(42*time.Minute + 30*time.Second); got != 42 {
 		t.Errorf("AgeMinutes = %d, want 42", got)
