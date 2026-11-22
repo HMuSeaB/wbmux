@@ -303,3 +303,26 @@ func TestFromDataDirHintIgnoresMalformedMarkers(t *testing.T) {
 		}
 	}
 }
+
+// TestProbeHasNilSafe 钉住探测器的可选注入语义：零值 Probe 没有 Exists
+// 时退回 os.Stat，而不是空指针崩掉。CI 上 webui 的空 Probe 就是死在
+// 这一步（2026-11-22）。
+func TestProbeHasNilSafe(t *testing.T) {
+	if (&Probe{}).Has(filepath.Join(t.TempDir(), "missing")) {
+		t.Error("不存在的路径应返回 false")
+	}
+	dir := t.TempDir()
+	p := &Probe{}
+	if !p.Has(dir) {
+		t.Errorf("已存在目录 %q 应返回 true", dir)
+	}
+	called := false
+	withHook := &Probe{Exists: func(string) bool { called = true; return false }}
+	if withHook.Has(dir) || !called {
+		t.Error("注入 Exists 时应优先使用注入实现")
+	}
+	var nilProbe *Probe
+	if nilProbe.Has(dir) {
+		t.Error("nil Probe 应返回 false")
+	}
+}

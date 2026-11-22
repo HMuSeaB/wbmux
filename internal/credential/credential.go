@@ -120,7 +120,7 @@ func File(p *variant.Probe, id variant.ID) string {
 		return ""
 	}
 	for _, c := range cands {
-		if p.Exists(c) {
+		if p.Has(c) {
 			return c
 		}
 	}
