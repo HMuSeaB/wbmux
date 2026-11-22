@@ -69,6 +69,19 @@ func exists(p string) bool {
 	return err == nil
 }
 
+// Has 判断路径是否存在。零值 Probe（测试里常见的 &Probe{}）不会 panic：
+// 没有注入 Exists 时退回 os.Stat。探针是"可选注入"的，调用方不该假定
+// 每个回调都填过——2026-11-22 CI 上就是空 Probe 直接把进程打崩了。
+func (p *Probe) Has(path string) bool {
+	if p == nil {
+		return false
+	}
+	if p.Exists != nil {
+		return p.Exists(path)
+	}
+	return exists(path)
+}
+
 // DataDir 返回该档位的数据目录绝对路径。
 func (p *Probe) DataDir(id ID) string {
 	b, err := Get(id)

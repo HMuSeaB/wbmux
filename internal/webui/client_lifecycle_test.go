@@ -1,22 +1,55 @@
 package webui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/HMuSeaB/wbmux/internal/clientproc"
+	"github.com/HMuSeaB/wbmux/internal/variant"
 )
 
-func TestClientsStatusAPI(t *testing.T) {
-	e := newTestEnv(t, Options{})
-	cleanup := clientproc.SetInspectHookForTest(func(name string) (clientproc.Status, bool) {
-		if name == "WorkBuddy.exe" {
-			return clientproc.Status{Running: true, PIDs: []int{8888}}, true
+// pidBySideHook 按档位的真实可执行名模拟进程状态。写死 "WorkBuddy.exe"
+// 或者只认带后缀的名字都会随平台漂移：Windows 的 Inspect 会补 .exe
+// 再交给钩子，非 Windows 原样传（2026-11-22 CI 三平台只有 Windows 过）。
+func pidBySideHook(cnPIDs, intlPIDs []int) func() {
+	cn := exeAliases(variant.CN)
+	intl := exeAliases(variant.Intl)
+	contains := func(list []string, name string) bool {
+		for _, n := range list {
+			if n == name {
+				return true
+			}
 		}
-		if name == "WorkBuddyAI.exe" {
-			return clientproc.Status{Running: false}, true
+		return false
+	}
+	return clientproc.SetInspectHookForTest(func(name string) (clientproc.Status, bool) {
+		switch {
+		case contains(cn, name):
+			return clientproc.Status{Running: len(cnPIDs) > 0, PIDs: cnPIDs}, true
+		case contains(intl, name):
+			return clientproc.Status{Running: len(intlPIDs) > 0, PIDs: intlPIDs}, true
 		}
 		return clientproc.Status{}, false
 	})
+}
+
+// exeAliases 返回该档位可执行名的两种写法（带/不带 .exe），
+// 因为 Inspect 在不同平台对名字的规范化不一致。
+func exeAliases(id variant.ID) []string {
+	b, err := variant.Get(id)
+	if err != nil {
+		return nil
+	}
+	n := b.WinExecutableName
+	if strings.HasSuffix(strings.ToLower(n), ".exe") {
+		return []string{n}
+	}
+	return []string{n, n + ".exe"}
+}
+
+func TestClientsStatusAPI(t *testing.T) {
+	e := newTestEnv(t, Options{})
+	cleanup := pidBySideHook([]int{8888}, nil)
 	defer cleanup()
 
 	resp := e.do(t, "GET", "/api/clients/status", "", true)
@@ -44,12 +77,7 @@ func TestLaunchBothSmartAdaptiveMode(t *testing.T) {
 	e := newTestEnv(t, Options{})
 
 	// 模拟国内端正在运行（PID: 1001），国际端未运行
-	cleanup := clientproc.SetInspectHookForTest(func(name string) (clientproc.Status, bool) {
-		if name == "WorkBuddy.exe" {
-			return clientproc.Status{Running: true, PIDs: []int{1001}}, true
-		}
-		return clientproc.Status{Running: false}, false
-	})
+	cleanup := pidBySideHook([]int{1001}, nil)
 	defer cleanup()
 
 	resp := e.do(t, "POST", "/api/launch-both", "{}", true)
