@@ -87,6 +87,13 @@ type embedQuotaPackage struct {
 	DaysLeft int `json:"daysLeft,omitempty"`
 	// Expiring 表示一周内就会清零——面板上要醒目标出来。
 	Expiring bool `json:"expiring,omitempty"`
+	// TimeLeftPct 是订阅周期还剩百分之几（0..100），由订阅包的
+	// CycleStartTime/CycleEndTime 算出；bonus 合并包没有起点，
+	// 算不出就缺省（omitempty），前端不画 rail、不编数字。
+	TimeLeftPct float64 `json:"timeLeftPct,omitempty"`
+	// Pace 是额度相对时间的烧法（"ahead"/"on"/"under"，见
+	// internal/embedstats.QuotaPace）；只在 TimeLeftPct 可算时出现。
+	Pace string `json:"pace,omitempty"`
 	// Cards 是这一档下的每一张积分卡（国内是"平台奖励积分"，多张卡各自
 	// 独立到期）。合并成一行会丢掉"哪张快没了"，所以展开给面板逐张显示。
 	Cards []embedQuotaCard `json:"cards,omitempty"`
@@ -135,6 +142,29 @@ func resetsInDays(pkg *usage.LivePackage) int {
 		return 0
 	}
 	return days
+}
+
+// quotaCycle 由订阅包的官方周期起止算剩余时间%与 pace。
+//
+// 只有起止都齐全、且 now 落在周期内才算：bonus 合并包没有起点、
+// 逐张卡只有终点，算不出就返回 ok=false——调用方把字段留空，
+// 前端不画 rail、胶囊不抬等级，绝不编数字。percent 是该档主包的
+// 剩余%（合并后的值），周期是订阅包的周期：bonus 部分并不跟着
+// 这个周期走，所以 pace 只是"对照订阅节奏"的提示，不是精确账。
+func quotaCycle(sub *usage.LivePackage, now time.Time, percent float64) (timeLeft float64, pace string, ok bool) {
+	if sub == nil {
+		return 0, "", false
+	}
+	start, err1 := time.ParseInLocation("2006-01-02 15:04:05", sub.CycleStartTime, time.Local)
+	end, err2 := time.ParseInLocation("2006-01-02 15:04:05", sub.CycleEndTime, time.Local)
+	if err1 != nil || err2 != nil || !end.After(start) {
+		return 0, "", false
+	}
+	if now.Before(start) || !now.Before(end) {
+		return 0, "", false
+	}
+	timeLeft = float64(end.Sub(now)) / float64(end.Sub(start)) * 100
+	return timeLeft, embedstats.QuotaPace(percent, timeLeft), true
 }
 
 // mainSubscriptionPackage 挑一侧的订阅主包：kind=="subscription" 里
@@ -192,6 +222,7 @@ func mainPackage(acc *usage.LiveAccount) *usage.LivePackage {
 			merged.Kind = p.Kind
 			merged.KindZh = p.KindZh
 			merged.ExpiryRuleZh = p.ExpiryRuleZh
+			merged.CycleStartTime = p.CycleStartTime
 			merged.CycleEndTime = p.CycleEndTime
 			merged.ExpiresAtMs = p.ExpiresAtMs
 		}
@@ -266,6 +297,9 @@ type CapsulePackage struct {
 	DaysLeft int
 	// Expiring 表示一周内清零且还有余额——胶囊要标出来，别让额度悄悄没了。
 	Expiring bool
+	// Pace 是额度相对时间的烧法（"ahead"/"on"/"under"）；只在该档
+	// 有订阅包周期可算时出现，bonus 包缺省（""），胶囊按现有逻辑走。
+	Pace string
 }
 
 // CapsulePackages 返回各档主包余量百分比（国内在前、国际在后），
@@ -289,7 +323,13 @@ func (s *Server) CapsulePackages() []CapsulePackage {
 		// 到期信息可能有也可能没有（"每月 1 日重置"这种纯规则文案推不出日期），
 		// 推不出就留 0，胶囊不显示天数。
 		d := resetsInDays(pkg)
-		out = append(out, CapsulePackage{Side: side, Percent: pct, DaysLeft: d, Expiring: d > 0 && d <= expiringDays})
+		row := CapsulePackage{Side: side, Percent: pct, DaysLeft: d, Expiring: d > 0 && d <= expiringDays}
+		// pace 只在该档有订阅周期可算时出现；bonus 包留空，胶囊按现有逻辑走。
+		if tl, pace, ok := quotaCycle(mainSubscriptionPackage(accounts[side]), time.Now(), float64(pct)); ok {
+			_ = tl
+			row.Pace = pace
+		}
+		out = append(out, row)
 	}
 	return out
 }
@@ -319,6 +359,12 @@ func (s *Server) embedQuotaFor(lastModel string) *embedQuota {
 			pct = 100
 		}
 		row := embedQuotaPackage{Side: side, Percent: pct, Total: pkg.Total, Remain: pkg.Remain}
+		// pace / 剩余时间% 只在该档有订阅周期可算时下发；bonus 合并包
+		// 没有起点，字段缺省，前端不画 rail、不编数字。
+		if tl, pace, ok := quotaCycle(mainSubscriptionPackage(accounts[side]), time.Now(), pct); ok {
+			row.TimeLeftPct = tl
+			row.Pace = pace
+		}
 		switch {
 		case pkg.ExpiryRuleZh != "":
 			row.CycleText = pkg.ExpiryRuleZh

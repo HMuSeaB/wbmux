@@ -106,10 +106,29 @@
   /* 一周内清零：整行文字转琥珀色加粗，让"余额要没了"自己跳出来 */
   .quota-row.expiring .q-text { color: var(--warn); font-weight: 650; }
   .q-side { flex: none; color: var(--ink-1); width: 44px; }
+  /* .q-bar/.q-fill 是旧的单条进度条：Usage Bar v2 改用下面的 dial + LED，
+     但类名保留，回退时把 LED 段整体隐藏、换回 .q-bar 即回旧形态。 */
   .q-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
   .q-fill { display: block; height: 100%; border-radius: 3px; background: var(--brand); }
   .q-fill.warn { background: var(--warn); }
   .q-text { flex: none; color: var(--ink-2); font-size: 10.5px; }
+  /* ---- Usage Bar v2：dial + 20 格 LED（t3 fork 风格，暖色版） ----
+     只上主包行，逐张积分卡行（.qcard）不动。dial 20px SVG 圆环，
+     弧长 = 剩余%；LED 每格 5%，满格实色、半格 45% 透明、空格白 10%。
+     着色与 Go 端 internal/embedstats.QuotaLevel 同口径（<20 黄、<10 红），
+     pace under（省着用）才绿；默认白/灰，不越阈值不上色。
+     到期文字单独一格（.q-tail）：快到期时琥珀加粗，用户要的是
+     "这包啥时候过期、赶紧用完"，不能把它藏在灰色小字里。 */
+  .q-dial { flex: none; width: 20px; height: 20px; }
+  .q-led { flex: 1; display: flex; gap: 2px; min-width: 0; height: 10px; }
+  .q-led i { flex: 1; min-width: 0; border-radius: 2px; background: rgba(255,255,255,0.10); }
+  .q-led i.on { background: var(--ink-0); opacity: 0.8; }
+  .q-led i.half { opacity: 0.45; }
+  .q-led i.warn { background: var(--warn); opacity: 1; }
+  .q-led i.bad { background: var(--bad); opacity: 1; }
+  .q-led i.ok { background: var(--ok); opacity: 1; }
+  .q-tail { flex: none; color: var(--ink-2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .q-tail.hot { color: var(--warn); font-weight: 650; }
 
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   button {
@@ -203,6 +222,11 @@
     .card { padding: 10px; }
     /* 所有 grid 子项都必须能收缩，否则内容会把轨道撑开 */
     .metrics > *, .hero > *, .actions > * { min-width: 0; }
+    /* 额度行窄栏下换行：dial 藏掉，LED 独占一行（每格仍 ≥10px），
+       数字与到期文字留在第一行，不被 LED 挤出可视区。 */
+    .quota-row { flex-wrap: wrap; }
+    .q-dial { display: none; }
+    .q-led { flex: 1 1 100%; order: 4; margin-top: 2px; }
   }
   @media (max-width: 300px) {
     .metrics, .hero, .actions { grid-template-columns: minmax(0, 1fr); }
@@ -269,7 +293,7 @@
 <!-- 主指标：一张卡承载最重要的信息（skill：唯一强调落在最重要的数上）。
      旧版是三张等宽卡、其中一张还是空的"—"，三块视觉权重一样，
      用户不知道该看哪个。现在上下文独占一块，其余降为下面的次级行。 -->
-<div class="ctx-hero">
+<div class="ctx-hero" id="ctx-hero">
   <div class="ctx-head">
     <span class="ctx-label">当前上下文</span>
     <span class="ctx-sub" id="m-ctx-sub">—</span>
@@ -457,6 +481,46 @@
   // 由 internal/webui 的 TestEmbedHTMLThresholds 锁死一致，别手改一边。
   var CTX_WARN = 256000, CTX_BAD = 512000;
   var STALE_AGED_SEC = 1800, STALE_IDLE_SEC = 7200; // 30 分钟变旧值，120 分钟才算空闲
+  // 额度告警阈值：与 Go 端 internal/embedstats.QuotaLevel 一致（<20 黄、<10 红），
+  // 改一边忘另一边时面板与胶囊会先对不上，别手改一边。
+  // 注意 TestEmbedHTMLThresholds 只锁上下文阈值（256000/512000）与 stale
+  // 分档，额度阈值由 Go 端 TestQuotaLevel 与这里的常量共同钉住。
+  var QUOTA_WARN = 20, QUOTA_BAD = 10;
+  // 额度等级：百分比口径 + pace ahead（烧得比时间快）至少黄；
+  // aged 时调用方传 ""，旧值不着色。
+  function quotaLevel(pct, pace) {
+    if (pct < QUOTA_BAD) return "bad";
+    if (pct < QUOTA_WARN || pace === "ahead") return "warn";
+    if (pace === "under") return "ok";
+    return "";
+  }
+  // 圆形 dial：20px SVG（t3 QuotaArcDial 同款几何：viewBox 16、半径 5.6、
+  // 线宽 1.9、弧尖小珠）。弧长 = 剩余%，颜色与 LED 同口径。
+  function dialSVG(pct, level) {
+    var r = 5.6, c = 2 * Math.PI * r;
+    var color = level === "bad" ? "#C25B4E" : level === "warn" ? "#D9A354" : level === "ok" ? "#7FA573" : "#E8E5E1";
+    var p = Math.max(0, Math.min(100, pct));
+    var off = c * (1 - p / 100);
+    var ang = (p / 100 * 360 - 90) * Math.PI / 180;
+    var bx = 8 + r * Math.cos(ang), by = 8 + r * Math.sin(ang);
+    return '<svg class="q-dial" viewBox="0 0 16 16" aria-hidden="true">'
+      + '<circle cx="8" cy="8" r="' + r + '" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.9"/>'
+      + '<circle cx="8" cy="8" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="1.9" stroke-linecap="round" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + off.toFixed(2) + '" transform="rotate(-90 8 8)"/>'
+      + '<circle cx="' + bx.toFixed(2) + '" cy="' + by.toFixed(2) + '" r="1.5" fill="#1F1E1D" stroke="' + color + '"/></svg>';
+  }
+  // 20 格 LED：每格 5%，满格实色、半格 45% 透明、空格白 10%。
+  function ledHTML(pct, level) {
+    var filled = Math.max(0, Math.min(100, pct)) / 5;
+    var full = Math.floor(filled);
+    var html = '<span class="q-led">';
+    for (var i = 0; i < 20; i++) {
+      var cls = "";
+      if (i < full) cls = "on" + (level ? " " + level : "");
+      else if (i === full && filled % 1 >= 0.5) cls = "half" + (level ? " " + level : "");
+      html += '<i class="' + cls + '"></i>';
+    }
+    return html + "</span>";
+  }
   // 去掉无意义的小数尾零：1000000 显示 1M 而不是 1.00M，
   // 1.5M 保留一位。上限这类整数最容易被 ".00" 弄脏。
   // 千分位 + 最多两位小数：积分卡上 4893.78000056 这种浮点尾巴要收掉。
@@ -549,6 +613,17 @@
       if (rate && !idle && !aged) {
         ctxSub.textContent = (ctxSub.textContent ? ctxSub.textContent + " · " : "") + rate;
       }
+      // 主卡 hover 明细：只挂已有字段（TTFT/速率/模型/来源），不编没有的
+      // （缓存命中、think token 这些记录里没有）。
+      var hero = document.getElementById("ctx-hero");
+      if (hero) {
+        var hbits = [];
+        if (last.ttftMs) hbits.push("TTFT " + (last.ttftMs / 1000).toFixed(1) + "s");
+        if (last.tokPerSec) hbits.push(Math.round(last.tokPerSec) + "/s");
+        if (last.model) hbits.push(last.model);
+        if (last.source) hbits.push(sourceLabel(last.source, last.side));
+        hero.title = hbits.length ? hbits.join(" · ") : "";
+      }
       var today = (s && s.today) || {};
       document.getElementById("m-today").textContent = today.tokens ? compact(today.tokens) : "—";
       var totals = (s && s.totals) || {};
@@ -578,7 +653,7 @@
         setSrcLine(last);
       }
       renderRecent((s && s.recent) || []);
-      renderQuota(s && s.quota);
+      renderQuota(s && s.quota, aged);
       scheduleStats(5000);
     }).catch(function () {
       // 失败不吞旧数：连续失败 ≥2 次（约 10 秒）就把顶栏药丸标成"数据过期"，
@@ -665,7 +740,7 @@
     var m = /(\d{2}):(\d{2}):\d{2}/.exec(q.untilText || "");
     return m ? m[1] + ":" + m[2] : "";
   }
-  function renderQuota(quota) {
+  function renderQuota(quota, aged) {
     var card = document.getElementById("quota-card");
     var rows = document.getElementById("quota-rows");
     var modelLine = document.getElementById("quota-model");
@@ -769,39 +844,45 @@
 
       var row = document.createElement("div");
       row.className = "quota-row";
+      // aged 时不着色：旧值按快照显示，但不配报警（与 Go 端 Level 一致）。
+      var level = aged ? "" : quotaLevel(p.percent, p.pace);
 
       var side = document.createElement("span");
       side.className = "q-side";
       side.textContent = p.side === "intl" ? "国际包" : "国内包";
+      row.appendChild(side);
 
-      var bar = document.createElement("span");
-      bar.className = "q-bar";
-      var fill = document.createElement("span");
-      fill.className = "q-fill" + (p.percent < 20 ? " warn" : "");
-      fill.style.width = Math.max(0, Math.min(100, p.percent)) + "%";
-      bar.appendChild(fill);
+      // dial + LED：只上主包行；horizon rail 不做（2026-11-22 用户定）——
+      // 用户只需要知道何时过期、赶紧用完，到期文字在行尾单独一格，不藏。
+      row.insertAdjacentHTML("beforeend", dialSVG(p.percent, level));
+      row.insertAdjacentHTML("beforeend", ledHTML(p.percent, level));
 
       var text = document.createElement("span");
       text.className = "q-text";
-      // 有到期信息就显示天数："X 天后重置"（普通色）；一周内清零且还有
-      // 余额，换成"X 天后清零"并转琥珀色。余额为 0 也显示天数——用户
-      // 需要知道什么时候能重新有额度，但不再强调（已经用尽）。
-      var tail = "";
-      if (p.daysLeft > 0) {
-        var hot = p.expiring && p.percent > 0;
-        tail = hot ? " · " + p.daysLeft + " 天后清零" : " · " + p.daysLeft + " 天后重置";
-        if (hot) row.className = "quota-row expiring";
-      } else if (p.cycleText) {
-        tail = " · " + p.cycleText;
-      }
       // 有原始积分值时优先给"剩余 / 总量"——百分比看不出还剩多少分。
       text.textContent = (p.total
         ? fmtNum(p.remain) + " / " + fmtNum(p.total)
-        : "剩余 " + p.percent.toFixed(1) + "%") + tail;
+        : "剩余 " + p.percent.toFixed(1) + "%");
 
-      row.appendChild(side);
-      row.appendChild(bar);
+      // 到期文字单独一格：有到期信息就显示天数，"X 天后重置"（普通色）；
+      // 一周内清零且还有余额，换成"X 天后清零"并转琥珀色加粗。余额为 0
+      // 也显示天数——用户需要知道什么时候能重新有额度，但不再强调
+      // （已经用尽）。没有天数时退回周期文案原文，照抄不编。
+      var tail = document.createElement("span");
+      tail.className = "q-tail";
+      if (p.daysLeft > 0) {
+        var hot = p.expiring && p.percent > 0;
+        tail.textContent = hot ? p.daysLeft + " 天后清零" : p.daysLeft + " 天后重置";
+        if (hot) {
+          tail.className = "q-tail hot";
+          row.className = "quota-row expiring";
+        }
+      } else if (p.cycleText) {
+        tail.textContent = p.cycleText;
+      }
+
       row.appendChild(text);
+      if (tail.textContent) row.appendChild(tail);
       rows.appendChild(row);
     });
   }

@@ -18,6 +18,23 @@ const (
 	ContextBadTokens  = 512_000
 )
 
+// 额度告警阈值（t3 fork 的用法，面板与胶囊共用）：剩余 <20% 转黄、
+// <10% 转红。胶囊以前是 <5% 才红，同一份额度在两边两种说法，
+// 2026-11-22 起统一成这里（行为变更：5–10% 的档位会提前变红）。
+const (
+	QuotaWarnPercent = 20.0
+	QuotaBadPercent  = 10.0
+)
+
+// Pace 是额度相对时间的烧法：ahead = 烧得比时间快，on = 差不多，
+// under = 省着用。只在订阅包的周期起止都齐全时才算得出，
+// bonus 包没有起点，算不出就不给（空串），不编。
+const (
+	PaceAhead = "ahead"
+	PaceOn    = "on"
+	PaceUnder = "under"
+)
+
 // 新鲜度分档：30 分钟内是"现在"，30–120 分钟是"旧值（标多久前）"，
 // 超过 120 分钟才算空闲。旧数据直接抹掉会丢信息，但把它当"现在"
 // 展示会误导人——三档是两者的折中。
@@ -60,6 +77,36 @@ func Level(promptTokens int, f Freshness) string {
 		return "warn"
 	default:
 		return ""
+	}
+}
+
+// QuotaLevel 按剩余额度百分比给告警等级：<10% 红、<20% 黄，
+// 其余空串。面板与胶囊共用这一口径，别在各处另写一份。
+// 0% 也返回 "bad"——调用方按"用尽的档不参与"先过滤，
+// 这里只回答"这个百分比本身有多急"。
+func QuotaLevel(percent float64) string {
+	switch {
+	case percent < QuotaBadPercent:
+		return "bad"
+	case percent < QuotaWarnPercent:
+		return "warn"
+	default:
+		return ""
+	}
+}
+
+// QuotaPace 按 t3 的 pace 公式算额度相对时间的烧法：
+// headroomDelta = 剩余% − 剩余时间%，负数表示烧得比时间快。
+// ≤ −10 为 ahead（提前预警），≥ +8 为 under（省着用），
+// 其余为 on。调用方只在 timeLeftPct 可算时才调它。
+func QuotaPace(remainingPct, timeLeftPct float64) string {
+	switch d := remainingPct - timeLeftPct; {
+	case d <= -10:
+		return PaceAhead
+	case d >= 8:
+		return PaceUnder
+	default:
+		return PaceOn
 	}
 }
 

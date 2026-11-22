@@ -13,7 +13,9 @@ import (
 // 客户端里已注入的旧面板会在 3 秒内被自动替换，不需要用户刷新窗口。
 //
 // v17：额度行显示 剩余/总量，不再只有百分比。
-const PanelVersion = "20"
+// v21：胶囊配色从旧青绿统一到面板暖色（陶土橙 #D97757 系），
+// 与 2026-11-20/21 面板换暖色是同一决策。
+const PanelVersion = "21"
 
 // TagFor 返回某个 embed 地址对应的注入标记。
 //
@@ -47,14 +49,14 @@ const panelScriptTemplate = `(() => {
 
   const badge = document.createElement('div');
   badge.id = 'wbmux-panel-badge';
-  badge.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#2dd4bf;display:inline-block"></span>'
+  badge.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:#D97757;display:inline-block"></span>'
     + '<span>wbmux</span>'
-    + '<span id="wbmux-panel-stats" style="color:#8b93a1;font-weight:500;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">连接中…</span>';
+    + '<span id="wbmux-panel-stats" style="color:#9E988D;font-weight:500;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">连接中…</span>';
   Object.assign(badge.style, {
     position: 'fixed', top: '7px', right: '160px', zIndex: 99998,
     display: 'flex', alignItems: 'center', gap: '6px',
-    background: '#1c212b', color: '#c3c9d4',
-    border: '1px solid rgba(45,212,191,0.35)', borderRadius: '999px',
+    background: '#262422', color: '#C9C4BC',
+    border: '1px solid rgba(217,119,87,0.35)', borderRadius: '999px',
     padding: '3px 12px', font: '600 11.5px/1.5 system-ui, sans-serif',
     cursor: 'pointer', userSelect: 'none', pointerEvents: 'auto',
   });
@@ -69,9 +71,9 @@ const panelScriptTemplate = `(() => {
     position: 'fixed', top: '42px', right: '16px', zIndex: 99999,
     width: '400px', height: '600px', maxHeight: 'calc(100vh - 60px)',
     borderRadius: '12px', overflow: 'hidden',
-    border: '1px solid rgba(45,212,191,0.25)',
+    border: '1px solid rgba(217,119,87,0.25)',
     boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
-    background: '#0d1017',
+    background: '#1F1E1D',
     display: 'none', pointerEvents: 'none',
   });
   pop.style.setProperty('-webkit-app-region', 'no-drag');
@@ -80,7 +82,7 @@ const panelScriptTemplate = `(() => {
   // 带版本参数：面板页升级后 src 变化，iframe 会重新请求，不会留在旧页面上。
   frame.src = EMBED_URL + (EMBED_URL.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(VERSION);
   frame.setAttribute('allow', 'clipboard-write');
-  Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#0d1017' });
+  Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#1F1E1D' });
   pop.appendChild(frame);
 
   let open = false;
@@ -88,7 +90,7 @@ const panelScriptTemplate = `(() => {
     open = v;
     pop.style.display = v ? 'block' : 'none';
     pop.style.pointerEvents = v ? 'auto' : 'none';
-    badge.style.borderColor = v ? '#2dd4bf' : 'rgba(45,212,191,0.35)';
+    badge.style.borderColor = v ? '#D97757' : 'rgba(217,119,87,0.35)';
   }
   function onDocClick(ev) {
     if (!open) return;
@@ -109,7 +111,7 @@ const panelScriptTemplate = `(() => {
     const el = document.getElementById('wbmux-panel-stats');
     if (!el) return false;
     el.textContent = text;
-    el.style.color = level === 'bad' ? '#f87171' : (level === 'warn' ? '#ebb23a' : '#8b93a1');
+    el.style.color = level === 'bad' ? '#C25B4E' : (level === 'warn' ? '#D9A354' : '#9E988D');
     return true;
   };
 

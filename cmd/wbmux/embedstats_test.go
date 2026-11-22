@@ -285,7 +285,7 @@ func TestCapsuleQuotaText(t *testing.T) {
 		{[]webui.CapsulePackage{}, ""},
 		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}}, "国62%"},
 		{[]webui.CapsulePackage{{Side: "intl", Percent: 41}}, "际41%"},
-		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}, "国62% 际41%"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 41}}, "国62%·际41%"},
 		{[]webui.CapsulePackage{{Side: "xx", Percent: 50}}, ""},
 	}
 	for _, c := range cases {
@@ -296,7 +296,7 @@ func TestCapsuleQuotaText(t *testing.T) {
 }
 
 // TestEmbedStatsTextCapsuleQuotaBoth 两边有数据时胶囊末尾多一段
-// "国62% 际41%"，且是最后一段。
+// "国62%·际41%"，且是最后一段。
 func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	seedCapsuleRecord(t)
 	pkgs := func() []webui.CapsulePackage {
@@ -306,7 +306,7 @@ func TestEmbedStatsTextCapsuleQuotaBoth(t *testing.T) {
 	if !strings.Contains(text, "100k") {
 		t.Errorf("基础文案应含 100k，得到 %q", text)
 	}
-	if !strings.HasSuffix(text, "国62% 际41%") {
+	if !strings.HasSuffix(text, "国62%·际41%") {
 		t.Errorf("两边有数据时胶囊末尾应为 国62%%·际41%%，得到 %q", text)
 	}
 }
@@ -462,12 +462,58 @@ func TestCapsuleQuotaTextExpiring(t *testing.T) {
 		{Side: "cn", Percent: 62, DaysLeft: 3, Expiring: true},
 		{Side: "intl", Percent: 41, DaysLeft: 20},
 	})
-	if got != "国62%·3d 际41%" {
+	if got != "国62%·3d·际41%" {
 		t.Errorf("应只给快到期的国内档贴天数，得到 %q", got)
 	}
 	if got := capsuleQuotaText([]webui.CapsulePackage{
 		{Side: "intl", Percent: 0, DaysLeft: 3, Expiring: true},
 	}); got != "际0%" {
 		t.Errorf("0%% 时不应贴天数，得到 %q", got)
+	}
+}
+
+// TestQuotaLevel 钉住胶囊额度告警口径：与面板共用
+// internal/embedstats.QuotaLevel（<20% 黄、<10% 红；2026-11-22 起
+// 从 <5% 才红统一过来）。用尽（0%）的档不参与。
+func TestQuotaLevel(t *testing.T) {
+	cases := []struct {
+		in   []webui.CapsulePackage
+		want string
+	}{
+		{nil, ""},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}}, ""},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 20}}, ""},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 19}}, "warn"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 10}}, "warn"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 9}}, "bad"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 0}}, ""}, // 用尽档不参与
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 0}, {Side: "intl", Percent: 9}}, "bad"},
+		{[]webui.CapsulePackage{{Side: "cn", Percent: 62}, {Side: "intl", Percent: 19}}, "warn"},
+	}
+	for _, c := range cases {
+		if got := quotaLevel(c.in); got != c.want {
+			t.Errorf("quotaLevel(%+v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestEmbedStatsTextPaceAhead 验证 pace-ahead 时胶囊等级至少 warn：
+// 62% 远没到 20% 阈值，但额度烧得比时间快（剩余% 比剩余时间% 低
+// 10 个点以上），也要提前预警。Pace 缺省（bonus 包算不出）时
+// 回到现有逻辑，不抬级。
+func TestEmbedStatsTextPaceAhead(t *testing.T) {
+	seedCapsuleRecord(t)
+	ahead := func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62, Pace: embedstats.PaceAhead}}
+	}
+	if _, level := embedStatsText(nil, nil, ahead, nil); level != "warn" {
+		t.Errorf("pace-ahead 时胶囊等级应至少 warn，得到 %q", level)
+	}
+	// 62% + Pace 缺省：不抬级。
+	none := func() []webui.CapsulePackage {
+		return []webui.CapsulePackage{{Side: "cn", Percent: 62}}
+	}
+	if _, level := embedStatsText(nil, nil, none, nil); level != "" {
+		t.Errorf("Pace 缺省时胶囊等级应保持现有逻辑（空），得到 %q", level)
 	}
 }

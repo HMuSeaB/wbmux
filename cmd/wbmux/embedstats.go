@@ -187,12 +187,23 @@ func embedStatsTextFrom(sum gatewayaudit.Summary, sessMetric *sessiontelemetry.S
 	if lv := quotaLevel(packages); quotaRank(lv) > quotaRank(level) {
 		level = lv
 	}
+	// pace-ahead：额度烧得比时间快（剩余% 比剩余时间% 低 10 个点以上）
+	// 时等级至少 warn——百分比还没到 20% 阈值也提前预警。bonus 包
+	// 没有 Pace（算不出），缺省时走现有逻辑，不影响。
+	for _, p := range packages {
+		if p.Pace == embedstats.PaceAhead && quotaRank(level) < quotaRank("warn") {
+			level = "warn"
+			break
+		}
+	}
 	return strings.Join(parts, " · "), level
 }
 
-// quotaLevel 把"还有余额的档里最低的那个"翻成告警等级：
-// 低于 20% 黄、低于 5% 红。用尽（0%）的档不参与——那档可能根本没在用，
-// 让它在顶栏把整条染红只会误导。
+// quotaLevel 把"还有余额的档里最低的那个"翻成告警等级。
+// 口径与面板共用 internal/embedstats.QuotaLevel：低于 20% 黄、
+// 低于 10% 红（2026-11-22 统一，以前这里是 <5% 才红）。
+// 用尽（0%）的档不参与——那档可能根本没在用，让它在顶栏把整条
+// 染红只会误导。
 func quotaLevel(pkgs []webui.CapsulePackage) string {
 	min, seen := 0, false
 	for _, p := range pkgs {
@@ -206,13 +217,7 @@ func quotaLevel(pkgs []webui.CapsulePackage) string {
 	if !seen {
 		return ""
 	}
-	switch {
-	case min < 5:
-		return "bad"
-	case min < 20:
-		return "warn"
-	}
-	return ""
+	return embedstats.QuotaLevel(float64(min))
 }
 
 func quotaRank(level string) int {
