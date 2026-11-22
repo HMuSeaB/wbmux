@@ -26,10 +26,11 @@ permissions:
 
 jobs:
   # 格式、静态检查、跨平台构建。
-  # 仅在手动派发 (workflow_dispatch) 或 commit 信息明确携带 [build]/[ci] 参数时触发。
+  # PR 一律跑（合并前的门禁）；push 到 main 只有 commit 带 [build]/[ci] 才跑，
+  # 这样 PR 合并那次 push 不会把同一份代码再验一遍。手动 dispatch 始终跑。
   build:
     name: build (${{ matrix.os }})
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,7 +92,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -115,7 +116,7 @@ jobs:
   # 方便排查平台差异。
   detect:
     name: 安装探测（Windows）
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || contains(github.event.head_commit.message, '[build]') || contains(github.event.head_commit.message, '[ci]')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7

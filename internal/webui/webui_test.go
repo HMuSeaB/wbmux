@@ -37,6 +37,12 @@ func newTestEnv(t *testing.T, opts Options) *testEnv {
 	if opts.Probe == nil {
 		opts.Probe = env.Probe
 	}
+	// 测试不该占真实默认端口 35907：本机正跑着 wbmux 时绑定会失败并回退，
+	// 而连续两个用例复用同一端口会在 macOS 上偶发 "connection reset by peer"
+	// （2026-11-22 PR CI 实测）。随机端口才是 hermetic。
+	if opts.Addr == "" {
+		opts.Addr = "127.0.0.1:0"
+	}
 
 	srv, err := New(opts)
 	if err != nil {
