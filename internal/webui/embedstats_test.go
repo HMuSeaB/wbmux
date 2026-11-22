@@ -49,7 +49,9 @@ func TestMainSubscriptionPackage(t *testing.T) {
 }
 
 // TestEmbedStatsQuotaSegment 钉住 /api/embed/stats 的 quota 段：
-// last.model 的限流态 + 两档主包余量（分开，不合并；没数据的档位省略）。
+// last.model 的限流态 + 两档主包余量。同一档里订阅包和赠送包合并成一行
+// （2026-11-20：只认订阅包会让国际档显示 0%，赠送额度被吞掉）；
+// 只有赠送包的档位也要出现，不能整档消失。
 func TestEmbedStatsQuotaSegment(t *testing.T) {
 	s := newQuotaTestServer(t)
 	s.liveAccountsFn = func(*variant.Probe) map[string]*usage.LiveAccount {
@@ -122,8 +124,10 @@ func TestEmbedStatsQuotaSegment(t *testing.T) {
 		t.Fatalf("两档都应有额度行，得到 %d 行 %+v", len(resp.Quota.Packages), resp.Quota.Packages)
 	}
 	pkg := resp.Quota.Packages[0]
-	if pkg.Side != "cn" || pkg.Percent != 62.5 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
-		t.Errorf("国内包应为 cn/62.5%%/每月 1 日重置，得到 %+v", pkg)
+	// 订阅 100（余 62.5）+ 赠送 50（余 50）= 150 里还剩 112.5 → 75%。
+	// 周期文案取订阅包的（赠送包没有可靠到期规则）。
+	if pkg.Side != "cn" || pkg.Percent != 75 || pkg.CycleText != "每月 1 日重置（月底清零更新）" {
+		t.Errorf("国内包应为 cn/75%%/每月 1 日重置，得到 %+v", pkg)
 	}
 	if il := resp.Quota.Packages[1]; il.Side != "intl" || il.Percent != 100 {
 		t.Errorf("国际档赠送包应为 intl/100%%，得到 %+v", il)
@@ -522,8 +526,10 @@ func TestMainPackageMergesBonus(t *testing.T) {
 	if d := resetsInDays(got); d != 20 {
 		t.Errorf("到期应取最早那张（20 天），得到 %d", d)
 	}
-	if got.Name != "3 个赠送包" {
-		t.Errorf("合并后应标出张数，得到 %q", got.Name)
+	// 合并包是纯赠送包 → 仍按赠送包归类（面板/胶囊都靠 Kind 决定周期文案，
+	// 不能因为合并就变成订阅包）。Name 不参与展示，这里不做断言。
+	if got.Kind != "bonus" {
+		t.Errorf("合并后仍应是 bonus 档，得到 %q", got.Kind)
 	}
 }
 
