@@ -21,7 +21,6 @@ func inTestBinary() bool {
 	return InTestBinary()
 }
 
-
 func filepathBase(p string) string {
 	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
 		return p[i+1:]

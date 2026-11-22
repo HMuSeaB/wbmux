@@ -389,4 +389,3 @@ if (Test-Path $desktop) {
 	}
 	return res, nil
 }
-

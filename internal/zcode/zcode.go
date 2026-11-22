@@ -431,4 +431,3 @@ func DeleteSession(probe *variant.Probe, sessionID string) (int, error) {
 	}
 	return total, nil
 }
-

@@ -349,7 +349,7 @@ type ExportRequest struct {
 	DBPath   string        `json:"dbPath,omitempty"`
 	AppTypes []string      `json:"appTypes"` // e.g. ["claude", "claude-desktop", "opencode", "codex"]
 	Models   []ExportModel `json:"models"`
-	BaseURL  string        `json:"baseURL"`  // e.g. "http://127.0.0.1:23333"
+	BaseURL  string        `json:"baseURL"` // e.g. "http://127.0.0.1:23333"
 	Token    string        `json:"token"`
 	Mode     string        `json:"mode,omitempty"` // "merged" 或 "split"
 }

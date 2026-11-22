@@ -225,4 +225,3 @@ func TestDownloadWithProgress(t *testing.T) {
 		t.Errorf("最终进度百分比应接近 100%%，实际得到 %.1f%%", maxPercent)
 	}
 }
-

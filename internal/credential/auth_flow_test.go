@@ -18,7 +18,6 @@ func TestLoginFlow_EndToEnd(t *testing.T) {
 	restore := config.SetRoot(t.TempDir())
 	defer restore()
 
-
 	// Mock 官方服务
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -189,7 +188,6 @@ func TestExtractUIDFromJWT(t *testing.T) {
 		t.Errorf("expected uid usr_12345678, got %s", uid)
 	}
 
-
 	// 2. 构造只有 sub 的 JWT
 	fakeJWTSub := "header." + "eyJzdWIiOiJzdWJfOTk5OTk5In0" + ".sig"
 	sub := extractUIDFromJWT(fakeJWTSub)
@@ -220,5 +218,3 @@ func TestGetWebClientLoginURL_Fallback(t *testing.T) {
 		t.Errorf("expected fallback url, got %s", urlCN)
 	}
 }
-
-

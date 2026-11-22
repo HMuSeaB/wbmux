@@ -173,7 +173,6 @@ func (m *LoginFlowManager) StartLoginFlow(ctx context.Context) (*LoginFlow, erro
 		req.Header.Set("X-Device-Id", devID)
 	}
 
-
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("向官方网关请求授权地址失败: %w", err)
@@ -400,7 +399,7 @@ func extractUIDFromJWT(token string) string {
 		return ""
 	}
 	seg := parts[1]
-	if l := len(seg)%4; l > 0 {
+	if l := len(seg) % 4; l > 0 {
 		seg += strings.Repeat("=", 4-l)
 	}
 	raw, err := base64.URLEncoding.DecodeString(seg)
@@ -509,5 +508,3 @@ func GetWebClientLoginURL(p *variant.Probe, side variant.ID, target string) stri
 		url.QueryEscape(target),
 	)
 }
-
-

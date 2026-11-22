@@ -178,7 +178,7 @@ func (c *Client) ShortChatProbe(cred credential.Credential, model, expertID stri
 	}
 
 	// 容错兜底：若上游返回非标准 SSE 格式，派生确定性 ID，不阻塞流程
-	fallbackID := "cmb-" + deriveDeviceID(cred.UID, "chat")+fmt.Sprintf("%d", time.Now().UnixMilli())[:10]
+	fallbackID := "cmb-" + deriveDeviceID(cred.UID, "chat") + fmt.Sprintf("%d", time.Now().UnixMilli())[:10]
 	return convID, fallbackID, nil
 }
 

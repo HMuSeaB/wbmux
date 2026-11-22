@@ -170,4 +170,3 @@ func TestZCodeDeleteEndpoint(t *testing.T) {
 		t.Errorf("期望 needConfirm 为 true，得到 %v", res)
 	}
 }
-

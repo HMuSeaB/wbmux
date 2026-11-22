@@ -123,4 +123,3 @@ func TestTerminateClientAPI(t *testing.T) {
 		t.Errorf("响应不符合预期：%+v", out)
 	}
 }
-

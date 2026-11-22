@@ -47,8 +47,9 @@ func (s *Server) handleGatewayClear(w http.ResponseWriter, r *http.Request) {
 
 // handleGatewayExport 将网关调用审计记录导出为 CSV 或 JSON 文件。
 // query 参数：
-//   format: "csv"（默认，带 UTF-8 BOM，Excel 双击直接可读）| "json"
-//   limit: 记录条数，默认 0 表示导出全部内存中的审计流水
+//
+//	format: "csv"（默认，带 UTF-8 BOM，Excel 双击直接可读）| "json"
+//	limit: 记录条数，默认 0 表示导出全部内存中的审计流水
 func (s *Server) handleGatewayExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeErr(w, http.StatusMethodNotAllowed, "只接受 GET")
@@ -144,4 +145,3 @@ func (s *Server) handleGatewayExport(w http.ResponseWriter, r *http.Request) {
 		writer.Flush()
 	}
 }
-

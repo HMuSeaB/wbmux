@@ -291,4 +291,3 @@ func TestPatchClientShortcuts(t *testing.T) {
 		t.Errorf("未在隔离桌面找到创建的 WorkBuddy.lnk: %v", err)
 	}
 }
-

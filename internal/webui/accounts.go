@@ -196,4 +196,3 @@ func (s *Server) handleAuthWebLogin(w http.ResponseWriter, r *http.Request) {
 	// 否则作为普通超链接或 window.open，执行 HTTP 302 临时重定向直达
 	http.Redirect(w, r, loginURL, http.StatusFound)
 }
-

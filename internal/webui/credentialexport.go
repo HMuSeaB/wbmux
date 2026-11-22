@@ -196,12 +196,12 @@ func (s *Server) handleCredentialExport(w http.ResponseWriter, r *http.Request) 
 
 	// Web 响应模式
 	exportResult := map[string]any{
-		"ok":             true,
-		"side":           string(targetID),
-		"version":        1,
-		"exportedAt":     time.Now().Format(time.RFC3339),
-		"options":        accountOptions,
-		"selectedId":     targetAccountID,
+		"ok":         true,
+		"side":       string(targetID),
+		"version":    1,
+		"exportedAt": time.Now().Format(time.RFC3339),
+		"options":    accountOptions,
+		"selectedId": targetAccountID,
 		"account": map[string]any{
 			"uid":            uid,
 			"nickname":       nickname,

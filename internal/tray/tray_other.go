@@ -39,4 +39,3 @@ func NotifyInfo(title, message string) {}
 
 // UpdateTooltip 在非 Windows 平台是空操作。
 func UpdateTooltip(tip string) {}
-

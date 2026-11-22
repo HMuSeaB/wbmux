@@ -597,8 +597,6 @@ func TestSyncAutoFreeModelInjection(t *testing.T) {
 	}
 }
 
-
-
 // locked 造一个"需要更高档位"的模型（官方 modelTiers 标了 Pro Only）。
 func locked(id string) usage.LiveModel {
 	return usage.LiveModel{
@@ -744,7 +742,7 @@ func TestSyncCNIntoIntl(t *testing.T) {
 	cnModels := []usage.LiveModel{
 		{ID: "minimax-m2.5", Name: "MiniMax-M2.5", Tools: true, Ctx: 200000, MaxOutput: 64000},
 		{ID: "kling-video-v1", Name: "快手可灵生视频", Tools: false}, // 纯视频多媒体，应过滤
-		{ID: "flux-image-pro", Name: "Flux绘图", Tools: false},   // 纯生图，应过滤
+		{ID: "flux-image-pro", Name: "Flux绘图", Tools: false},  // 纯生图，应过滤
 		{ID: "glm-5.1", Name: "GLM-5.1", Tools: true, Ctx: 256000},
 	}
 

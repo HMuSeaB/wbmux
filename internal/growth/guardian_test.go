@@ -14,9 +14,9 @@ import (
 
 func TestTravelGuardian_Decisions(t *testing.T) {
 	var (
-		statusCalls atomic.Int32
-		claimCalls  atomic.Int32
-		departCalls atomic.Int32
+		statusCalls  atomic.Int32
+		claimCalls   atomic.Int32
+		departCalls  atomic.Int32
 		currentState = "arrived"
 	)
 

@@ -113,7 +113,6 @@ func Default() *Auditor {
 	return defaultAuditor
 }
 
-
 // NewAuditor 创建一个指定容量的纯内存审计追踪器（主要供单元测试使用）。
 func NewAuditor(maxRecords int) *Auditor {
 	return NewAuditorWithStorage(maxRecords, "")

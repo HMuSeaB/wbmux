@@ -155,9 +155,9 @@ type Server struct {
 	// 不导出是因为它们只服务于测试与 CLI 接线，不是调用方该关心的旋钮。
 	//
 	// logFn 接上后代理事件由 note() 双写：一份进内存给界面看，一份落日志文件。
-	logFn          func(format string, args ...any)
-	upstreamBaseFn func() string
-	intlCredFn     func(*variant.Probe) (usage.ProxyCredentials, error)
+	logFn              func(format string, args ...any)
+	upstreamBaseFn     func() string
+	intlCredFn         func(*variant.Probe) (usage.ProxyCredentials, error)
 	domesticCredFn     func(*variant.Probe) (credential.Credential, error)
 	domesticEndpointFn func() string
 	liveAccountsFn     func(*variant.Probe) map[string]*usage.LiveAccount
@@ -169,12 +169,16 @@ type Server struct {
 	// 没有这个接缝，唯一能验证这条链路的办法就是拿**真账号去签一次**——
 	// 那是个写操作，不能出现在测试里。
 	checkinDepsFn func() checkin.Deps
+	// terminateClientFn 覆盖"关闭一侧客户端"。零值按进程名真杀。
+	// 测试必须给假实现：客户端宿主就是 wbmux.exe 本身，整包测试真跑
+	// 一次会把本机正在用的实例关掉（2026-11-22 实测被带走）。
+	terminateClientFn func(exe string) (int, error)
 
 	// 网关模式（POST /v1/messages）的三个测试接缝：零值走环境变量
 	// WBMUX_GATEWAY_UPSTREAM / WBMUX_GATEWAY_API_KEY / WBMUX_GATEWAY_BEARER。
 	gatewayUpstreamFn func() string
-	gatewayAPIKeyFn  func() string
-	gatewayBearerFn  func() bool
+	gatewayAPIKeyFn   func() string
+	gatewayBearerFn   func() bool
 }
 
 // upstreamBase 返回国际后端地址。测试要能指到本地假上游，
@@ -656,10 +660,10 @@ type SettingsView struct {
 	HostVariant       string   `json:"hostVariant"`
 	HostExe           string   `json:"hostExe"`
 	ExtraEndpoints    []string `json:"extraEndpoints"`
-	ProxyChatRequests bool   `json:"proxyChatRequests"`
-	ChatProxyAddr     string `json:"chatProxyAddr"`
-	ProxyDescribe     string `json:"proxyDescribe"`
-	DetectedProxyAddr string `json:"detectedProxyAddr"`
+	ProxyChatRequests bool     `json:"proxyChatRequests"`
+	ChatProxyAddr     string   `json:"chatProxyAddr"`
+	ProxyDescribe     string   `json:"proxyDescribe"`
+	DetectedProxyAddr string   `json:"detectedProxyAddr"`
 }
 
 // State 是界面首屏所需的全部数据。
@@ -893,7 +897,6 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // 自定义模型注入与同步（handleInjectCustomModels, handleIntlModelSelection, syncInto, SyncCustomModels）
 // 已解耦迁移至 client_models.go。
 
-
 // handleProbe 一键测试：两侧各发一条最小消息并对比账单。
 // 逐侧汇报（模型/积分/账单差值），一侧失败不影响另一侧；
 // 消息本身已获用户授权（"让他消耗一点 token 去测试"）。
@@ -989,7 +992,6 @@ func toPreview(res runner.Result) PreviewView {
 
 // 配置迁移（handleMigrateSurvey, handleMigrateApply）
 // 已解耦迁移至 migratepage.go。
-
 
 // ---------- 输出辅助 ----------
 
@@ -1189,7 +1191,6 @@ func (s *Server) handleCredentialImport(w http.ResponseWriter, r *http.Request) 
 // （handleAccountsList, handleAccountSwitch, handleAccountDelete, handleAccountRefresh, handleAuthStart, handleAuthPoll）
 // 已解耦迁移至 accounts.go。
 
-
 // 国际端成长中心连续活跃打卡与阶梯积分兑换
 // （handleGrowthStreak, handleGrowthRedeem）
 // 已解耦迁移至 growthpage.go。
@@ -1250,5 +1251,3 @@ func (s *Server) handleChatProxyToggle(w http.ResponseWriter, r *http.Request) {
 		"detectedProxyAddr": netroute.DetectedProxy(),
 	})
 }
-
-

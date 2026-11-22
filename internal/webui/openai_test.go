@@ -873,10 +873,10 @@ func TestWithIdentityHeadersNeverForwardsAuth(t *testing.T) {
 // TestExtractUsageFromBytes 验证从各类 SSE chunk 中提取 Token 消耗的健壮性。
 func TestExtractUsageFromBytes(t *testing.T) {
 	cases := []struct {
-		name      string
-		chunk     []byte
-		wantP     int
-		wantC     int
+		name  string
+		chunk []byte
+		wantP int
+		wantC int
 	}{
 		{
 			name:  "标准单行 SSE chunk",
@@ -1250,6 +1250,3 @@ func TestHandleOpenAIModelsDoubleVariant(t *testing.T) {
 		t.Errorf("期望包含 auto 虚拟路由项")
 	}
 }
-
-
-
