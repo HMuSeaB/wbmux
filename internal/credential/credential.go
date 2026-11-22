@@ -665,4 +665,3 @@ func Write(p *variant.Probe, id variant.ID, cred Credential) error {
 	cacheForget(id)
 	return nil
 }
-

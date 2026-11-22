@@ -106,7 +106,7 @@ type LivePromo struct {
 // LivePackage 是一个积分包的周期用量。
 type LivePackage struct {
 	Code           string  `json:"code"`
-	Name           string  `json:"name,omitempty"`           // 官方真实包名（如 Bonus Pack、Free Plan Subscription）
+	Name           string  `json:"name,omitempty"` // 官方真实包名（如 Bonus Pack、Free Plan Subscription）
 	Unit           string  `json:"unit"`
 	Total          float64 `json:"total"`
 	Remain         float64 `json:"remain"`
@@ -503,7 +503,6 @@ func extractUIDFromJWT(token string) string {
 	}
 	return payload.UserID
 }
-
 
 // fetchLiveAccount 实际拉取一侧的数据。网络错误一律降级成 Err，
 // 不让单侧的失败拖垮整个面板。

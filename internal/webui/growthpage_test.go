@@ -290,12 +290,28 @@ func TestHandleGrowthIntlSimulateActive(t *testing.T) {
 		return usage.ProxyCredentials{Token: "intl-tok-999", UID: "intl-uid-999"}, nil
 	}
 
-	// 1. 测试错误方法 GET 应拒绝
+	// 1. GET 是只读状态查询（2026-11-21 加的口子：面板要能看出今天
+	// 自动任务跑过没），不能返回 405；写操作才走 POST。
 	reqGet := httptest.NewRequest(http.MethodGet, "/api/growth/intl/simulate-active", nil)
 	recGet := httptest.NewRecorder()
 	srv.handleGrowthIntlSimulateActive(recGet, reqGet)
-	if recGet.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 MethodNotAllowed for GET, got %d", recGet.Code)
+	if recGet.Code != http.StatusOK {
+		t.Errorf("GET 状态查询应返回 200，得到 %d：%s", recGet.Code, recGet.Body.String())
+	}
+	var status struct {
+		Today bool `json:"today"`
+		Auto  bool `json:"auto"`
+	}
+	if err := json.Unmarshal(recGet.Body.Bytes(), &status); err != nil {
+		t.Errorf("GET 应返回状态 JSON，解析失败：%v（原文 %s）", err, recGet.Body.String())
+	}
+
+	// 除 GET/POST 之外的方法仍要拒绝。
+	reqPut := httptest.NewRequest(http.MethodPut, "/api/growth/intl/simulate-active", nil)
+	recPut := httptest.NewRecorder()
+	srv.handleGrowthIntlSimulateActive(recPut, reqPut)
+	if recPut.Code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT 应返回 405，得到 %d", recPut.Code)
 	}
 
 	// 2. 测试正常 POST 模拟对话

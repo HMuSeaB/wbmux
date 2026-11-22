@@ -596,4 +596,3 @@ func TestWriteAndReadRoundTrip(t *testing.T) {
 		t.Error("空 Token 应该报错")
 	}
 }
-

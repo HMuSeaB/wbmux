@@ -201,16 +201,16 @@ func pickWindowsAsset(assets []ghAsset) string {
 
 // ProgressEvent 是一次在线升级过程中各阶段的进度事件。
 type ProgressEvent struct {
-	Phase      string  `json:"phase"`            // "init", "downloading", "verifying", "extracting", "replacing", "done", "error"
-	Downloaded int64   `json:"downloaded"`       // 已下载字节数
-	Total      int64   `json:"total"`            // 文件总字节数（未知为 0）
-	Percent    float64 `json:"percent"`          // 0.0 ~ 100.0
-	Speed      string  `json:"speed,omitempty"`  // 瞬时下载速率，如 "1.8 MB/s"
-	Message    string  `json:"message"`          // 阶段说明文案
-	TargetExe  string  `json:"targetExe"`        // 目标 wbmux.exe 绝对物理路径
-	TempDir    string  `json:"tempDir"`          // 临时下载目录
-	ZipFile    string  `json:"zipFile"`          // 下载的压缩包绝对路径
-	Error      string  `json:"error,omitempty"`  // 错误详情（如有）
+	Phase      string  `json:"phase"`           // "init", "downloading", "verifying", "extracting", "replacing", "done", "error"
+	Downloaded int64   `json:"downloaded"`      // 已下载字节数
+	Total      int64   `json:"total"`           // 文件总字节数（未知为 0）
+	Percent    float64 `json:"percent"`         // 0.0 ~ 100.0
+	Speed      string  `json:"speed,omitempty"` // 瞬时下载速率，如 "1.8 MB/s"
+	Message    string  `json:"message"`         // 阶段说明文案
+	TargetExe  string  `json:"targetExe"`       // 目标 wbmux.exe 绝对物理路径
+	TempDir    string  `json:"tempDir"`         // 临时下载目录
+	ZipFile    string  `json:"zipFile"`         // 下载的压缩包绝对路径
+	Error      string  `json:"error,omitempty"` // 错误详情（如有）
 }
 
 // TargetInfo 返回当前运行的 exe 绝对路径和临时下载目录，供界面在升级前展示。

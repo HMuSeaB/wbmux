@@ -565,7 +565,7 @@ func buildContextWindowDoc(maxInputTokens int) map[string]any {
 
 	return map[string]any{
 		"supportedLengths": supported,
-		"defaultLength":   maxInputTokens,
+		"defaultLength":    maxInputTokens,
 	}
 }
 

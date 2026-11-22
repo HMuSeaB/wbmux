@@ -472,11 +472,11 @@ func (c *Client) dispatchTaskAction(cred credential.Credential, code string) (st
 			id   string
 			name string
 		}{
-			"WorkBuddy_Valorant":           {id: "ex_xQHHD1u5Jkua", name: "无畏契约拼豆专家"},
-			"expert_use_maidehao":          {id: "ex_GDl31WahyIH0", name: "中国电商运营专家"},
-			"expert_use_douyinyin":         {id: "ex_FbY5nlWTqDod", name: "抖音策略师"},
+			"WorkBuddy_Valorant":            {id: "ex_xQHHD1u5Jkua", name: "无畏契约拼豆专家"},
+			"expert_use_maidehao":           {id: "ex_GDl31WahyIH0", name: "中国电商运营专家"},
+			"expert_use_douyinyin":          {id: "ex_FbY5nlWTqDod", name: "抖音策略师"},
 			"expert_use_shangjia_xuanchuan": {id: "ex_Weo3x2EZuSDm", name: "商家宣传页与海报设计师"},
-			"expert_use_bowangwang":        {id: "ex_WZY136wV5aMt", name: "直播电商教练"},
+			"expert_use_bowangwang":         {id: "ex_WZY136wV5aMt", name: "直播电商教练"},
 		}
 		cfg, ok := expertConfigs[code]
 		if !ok {
@@ -860,4 +860,3 @@ func (c *Client) ClaimAllPending(cred credential.Credential) (*SweepResult, erro
 
 	return result, nil
 }
-

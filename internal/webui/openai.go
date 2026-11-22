@@ -176,7 +176,6 @@ func isAutoFreeAlias(m string) bool {
 	return lower == "auto" || lower == "auto-free" || lower == "fastest-free" || lower == "auto-fastest"
 }
 
-
 // normalizeModelName 把客户端送来的模型名还原成官方 id。
 //
 // # 为什么必须还原
@@ -679,7 +678,6 @@ func (s *Server) forwardChat(w http.ResponseWriter, req *http.Request, rawBody [
 	p.execute()
 }
 
-
 // providers 读一次自备提供方配置。
 //
 // 每个请求都读一遍文件（约 1 KB）：卡片改完要立刻生效，而这点开销相比
@@ -1088,13 +1086,13 @@ func evaluateContextScale(bytesLen int64) contextScale {
 // directChatClient 与 proxiedChatClient 是转发长会话与大模型补全专用的 HTTP 客户端。
 //
 // ⚠️ 极其关键的技术决策（解决长请求断连与代理干扰）：
-// 1. 大模型会话数据量大（动辄 1MB+ 上下文）、持续时间长（首字思考 + SSE 持续吐字可达数分钟）；
-// 2. 默认直连（directChatClient）：显式设置 Proxy: nil，彻底避开本地代理工具（如 Clash 7890 端口）
-//    意外退出、重启或规则错误引发的 "proxyconnect refused" 与中途 "EOF" 假死报错；
-// 3. 可选系统代理（proxiedChatClient）：仅当用户在设置中显式开启 ProxyChatRequests 时才走系统代理，
-//    并享受 netroute 的动态自适应探活保护；
-// 4. Client.Timeout 设为 0（无整体硬截断），生命周期完全由 req.Context() 控制；
-// 5. ResponseHeaderTimeout 设为 300s（允许长深度思考），并共享 KeepAlive 长连接池。
+//  1. 大模型会话数据量大（动辄 1MB+ 上下文）、持续时间长（首字思考 + SSE 持续吐字可达数分钟）；
+//  2. 默认直连（directChatClient）：显式设置 Proxy: nil，彻底避开本地代理工具（如 Clash 7890 端口）
+//     意外退出、重启或规则错误引发的 "proxyconnect refused" 与中途 "EOF" 假死报错；
+//  3. 可选系统代理（proxiedChatClient）：仅当用户在设置中显式开启 ProxyChatRequests 时才走系统代理，
+//     并享受 netroute 的动态自适应探活保护；
+//  4. Client.Timeout 设为 0（无整体硬截断），生命周期完全由 req.Context() 控制；
+//  5. ResponseHeaderTimeout 设为 300s（允许长深度思考），并共享 KeepAlive 长连接池。
 var (
 	directChatClient  = newDirectChatClient()
 	proxiedChatClient = newProxiedChatClient()
@@ -1172,5 +1170,3 @@ func probeHTTPClient() *http.Client {
 	}
 	return directChatClient
 }
-
-

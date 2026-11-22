@@ -24,10 +24,10 @@ type Status struct {
 
 // Guardian 是后台自适应遥测与活跃心跳守护器。
 type Guardian struct {
-	mu         sync.RWMutex
-	homeDir    string
-	goos       string
-	endpoint   string
+	mu             sync.RWMutex
+	homeDir        string
+	goos           string
+	endpoint       string
 	credGetter     func() (token, uid string, err error)
 	tokenRefresher func(ctx context.Context) (bool, error)
 	status         Status

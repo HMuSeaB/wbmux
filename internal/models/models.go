@@ -11,21 +11,21 @@ import (
 
 // ModelDef 是官方大模型的全维度元数据定义。
 type ModelDef struct {
-	ID          string   // 官方标准唯一 ID，如 "hy4free", "deepseek-v4.1-flash", "glm-5.3"
-	Name        string   // 纯净官方显示名，如 "Hy4", "GLM-5.3", "DeepSeek-V4.1-Flash"
-	Label       string   // 带说明完整展示名，如 "Hy4 (官方限免 0.00x · 1M 上下文)"
-	Category    string   // 分类: "free" (限免), "intl" (国际特惠), "cn" (国内专享/包月)
-	Channel     string   // 主归属通道: "intl" 或 "cn"
+	ID               string   // 官方标准唯一 ID，如 "hy4free", "deepseek-v4.1-flash", "glm-5.3"
+	Name             string   // 纯净官方显示名，如 "Hy4", "GLM-5.3", "DeepSeek-V4.1-Flash"
+	Label            string   // 带说明完整展示名，如 "Hy4 (官方限免 0.00x · 1M 上下文)"
+	Category         string   // 分类: "free" (限免), "intl" (国际特惠), "cn" (国内专享/包月)
+	Channel          string   // 主归属通道: "intl" 或 "cn"
 	CtxTokens        int      // 上下文窗口 tokens, 如 1000000 (1M), 192000 (192k), 256000
 	DefaultLength    int      // 官方默认上下文长度 (如 300000, 200000)
 	SupportedLengths []int    // 官方支持的上下文阶梯档位 (如 [300000, 1000000])
 	Rate             float64  // 费率倍率, 如 0.0, 0.11, 0.08, 0.69, 0.79
-	RateTag     string   // 费率说明标签, 如 "官方限免 0.00x", "夜间折扣 0.11x", "订阅优先 0.08x"
-	Aliases     []string // 高频简写/别名列表, 如 ["hy4", "hy-4"], ["ds4.1flash", "ds4.1"]
-	CuratedCN   bool     // 是否默认属于国内端精选推荐白名单
-	CuratedIntl bool     // 是否默认属于国际端精选推荐
-	ExclusiveCN bool     // 聚合导出模式下是否作为国内独占款保留
-	Selected    bool     // 导出至外部工具（cc-switch）时默认是否勾选
+	RateTag          string   // 费率说明标签, 如 "官方限免 0.00x", "夜间折扣 0.11x", "订阅优先 0.08x"
+	Aliases          []string // 高频简写/别名列表, 如 ["hy4", "hy-4"], ["ds4.1flash", "ds4.1"]
+	CuratedCN        bool     // 是否默认属于国内端精选推荐白名单
+	CuratedIntl      bool     // 是否默认属于国际端精选推荐
+	ExclusiveCN      bool     // 聚合导出模式下是否作为国内独占款保留
+	Selected         bool     // 导出至外部工具（cc-switch）时默认是否勾选
 }
 
 // Registry 官方大模型全量知识库。
@@ -366,4 +366,3 @@ func ExclusiveCNList() []ModelDef {
 	}
 	return list
 }
-

@@ -280,4 +280,3 @@ func TestLiveCredentialExport(t *testing.T) {
 	}
 	t.Logf("凭据导出成功: UID=%s, TokenLen=%d", res.Account.UID, len(res.Account.Token))
 }
-

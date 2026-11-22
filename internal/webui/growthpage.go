@@ -2,11 +2,11 @@ package webui
 
 import (
 	"encoding/json"
-	"time"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/HMuSeaB/wbmux/internal/credential"
 	"github.com/HMuSeaB/wbmux/internal/growth"
@@ -701,4 +701,3 @@ func (s *Server) handleGrowthDomesticGuardianTrigger(w http.ResponseWriter, r *h
 		"status":  s.growthGuardian.GetStatus(),
 	})
 }
-

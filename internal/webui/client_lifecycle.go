@@ -134,6 +134,19 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
+// terminateClient 关闭一侧客户端：优先按该侧的宿主可执行名杀，
+// 没在跑就退回"任意已知客户端名"。零值走真实 clientproc；
+// 测试通过 terminateClientFn 换成假实现，不能真动本机进程。
+func (s *Server) terminateClient(exe string) (int, error) {
+	if s.terminateClientFn != nil {
+		return s.terminateClientFn(exe)
+	}
+	if stat := clientproc.Inspect(exe); stat.Running {
+		return clientproc.Terminate(exe)
+	}
+	return clientproc.TerminateAny(variant.ExecutableNames()...)
+}
+
 // handleTerminateClient 关闭指定侧的客户端进程。
 func (s *Server) handleTerminateClient(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.decodeRequest(w, r)
@@ -146,12 +159,7 @@ func (s *Server) handleTerminateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetExe := target.WinExecutableName
-	var killed int
-	if stat := clientproc.Inspect(targetExe); stat.Running {
-		killed, err = clientproc.Terminate(targetExe)
-	} else {
-		killed, err = clientproc.TerminateAny(variant.ExecutableNames()...)
-	}
+	killed, err := s.terminateClient(targetExe)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "关闭客户端失败: "+err.Error())
 		return

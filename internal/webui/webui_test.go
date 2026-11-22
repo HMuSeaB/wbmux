@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HMuSeaB/wbmux/internal/clientproc"
 	"github.com/HMuSeaB/wbmux/internal/config"
 	"github.com/HMuSeaB/wbmux/internal/variant"
 	"github.com/HMuSeaB/wbmux/internal/variant/varianttest"
@@ -41,6 +42,14 @@ func newTestEnv(t *testing.T, opts Options) *testEnv {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// 测试绝不能真去关客户端：宿主就是 wbmux.exe，整包跑一次会把本机
+	// 正在用的实例一起杀掉（2026-11-22 实测）。
+	srv.terminateClientFn = func(string) (int, error) { return 0, nil }
+	// 默认当作"没有任何客户端在跑"：本机真有一份在跑时，双开/状态类
+	// 断言会随机器漂移。需要模拟运行中的用例自己再设一层 hook。
+	t.Cleanup(clientproc.SetInspectHookForTest(func(string) (clientproc.Status, bool) {
+		return clientproc.Status{Running: false}, true
+	}))
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -645,7 +654,6 @@ func TestHandleAuthWebLogin(t *testing.T) {
 	}
 }
 
-
 func TestGrowthEndpoints(t *testing.T) {
 	e := newTestEnv(t, Options{})
 
@@ -910,8 +918,3 @@ func TestChatProxyToggleAPI(t *testing.T) {
 		t.Errorf("清空后应恢复纯直连，实际得到 %+v", st.Settings)
 	}
 }
-
-
-
-
-

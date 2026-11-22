@@ -265,5 +265,3 @@ func openBrowserURL(rawURL string) error {
 		return exec.Command("xdg-open", rawURL).Start()
 	}
 }
-
-

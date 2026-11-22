@@ -154,7 +154,6 @@ func (c *Client) FetchEnergyBalance(cred credential.Credential) (int64, error) {
 	return resDoc.Data.Balance, nil
 }
 
-
 // OpenBlindBox 消耗能量开启盲盒（每次消耗 10 能量）。
 func (c *Client) OpenBlindBox(cred credential.Credential, count int) (*OpenBlindBoxResponse, error) {
 	if cred.Token == "" {

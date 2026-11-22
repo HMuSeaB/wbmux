@@ -40,7 +40,7 @@ func TestSlimLargeChatBody(t *testing.T) {
 			"content": "read file batch " + string(rune('0'+i)),
 		})
 		msgs = append(msgs, map[string]any{
-			"role": "assistant",
+			"role":    "assistant",
 			"content": "",
 			"tool_calls": []map[string]any{
 				{

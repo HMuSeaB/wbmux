@@ -56,4 +56,3 @@ func TestSetUTF16SafeTruncate(t *testing.T) {
 		t.Fatalf("末尾应为 0 终止符，得到 %d", buf[4])
 	}
 }
-

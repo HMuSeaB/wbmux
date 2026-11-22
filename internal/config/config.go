@@ -424,4 +424,3 @@ var DefaultCuratedCNModels = models.DefaultCuratedCNIDs()
 func IsCuratedCNModel(modelID string) bool {
 	return models.IsCuratedCN(modelID)
 }
-
